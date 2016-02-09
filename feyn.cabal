@@ -15,6 +15,6 @@ build-type:          Simple
 cabal-version:       >=1.8
 
 executable feyn
-  -- main-is:             
+  main-is:             Feyn.hs
   -- other-modules:       
-  build-depends:       base ==4.6.*
+  build-depends:       base ==4.6.*, containers, parsec
