@@ -1,7 +1,12 @@
 module Syntax where
 
-import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.List
+
+import Data.Set (Set)
+import qualified Data.Set as Set
+
+import Text.ParserCombinators.Parsec hiding (space)
+import Control.Monad
 
 type ID = String
 
@@ -27,7 +32,7 @@ data Decl = Decl { name   :: ID,
                    body   :: Stmt }
  
 data Circuit = Circuit { qubits :: [ID],
-                         inputs :: Map ID Bool,
+                         inputs :: Set ID,
                          decls  :: [Decl] }
 
 foldCirc f b c = foldl (foldStmt f . body) b (decls c)
@@ -48,32 +53,83 @@ instance Show Primitive where
   show (T x)      = "T " ++ x
   show (Tinv x)   = "T* " ++ x
 
+instance Show Stmt where
+  show (Gate gate)               = show gate
+  show (Seq lst)                 = intercalate "\n" (map show lst)
+  show (Call id args)            = show id ++ showLst args
+  show (Repeat i (Call id args)) = show id ++ "^" ++ show i ++ showLst args
+  show (Repeat i stmt)           = "BEGIN^" ++ show i ++ "\n" ++ show stmt ++ "\n" ++ "END"
 
-printStmt stmt = case stmt of
-    Gate gate               -> putStrLn $ show gate
-    Seq lst                 -> mapM_ printStmt lst
-    Call id args            -> putStrLn $ show id ++ showLst args
-    Repeat i (Call id args) -> putStrLn $ show id ++ "^" ++ show i ++ showLst args
-    Repeat i stmt           -> putStrLn ("Begin^" ++ show i) >> printStmt stmt >> putStrLn "End"
-
-printDecl decl = do
-    putStrLn $ "BEGIN " ++ putName (name decl) ++ showLst (params decl)
-    printStmt (body decl)
-    putStrLn $ "END"
+instance Show Decl where
+  show decl = "BEGIN " ++ putName (name decl) ++ showLst (params decl) ++ "\n" ++ show (body decl) ++ "\n" ++ "END"
     where putName "main" = ""
           putName s      = s
 
-printCirc circ = do
-    putStrLn  $ ".v" ++ showLst (qubits circ)
-    putStrLn  $ ".i" ++ showLst (filter (\t -> Map.notMember t (inputs circ)) (qubits circ))
-    mapM_ (\decl -> putStrLn "" >> printDecl decl) (decls circ)
+instance Show Circuit where
+  show circ = intercalate "\n" (qubitline:inputline:body)
+    where qubitline = ".v " ++ showLst (qubits circ)
+          inputline = ".i " ++ showLst (filter (`Set.member` inputs circ) (qubits circ))
+          body      = map show (decls circ)
 
-showLst = concatMap (" " ++)
+showLst = intercalate " "
+
+-- Parsing
+
+space = char ' '
+semicolon = char ';'
+sep = space <|> tab
+skipSpaces = skipMany (sep <|> semicolon <|> newline)
+parseLineEnd = skipMany sep >> (semicolon <|> newline) >> skipSpaces
+parseToken s = string s >> return s
+parseCircuitID = letter >>= \c -> many alphaNum >>= \cs -> return (c:cs)
+parseArgList = sepBy (many1 alphaNum) (many1 sep) 
+parseIDlst :: Int -> Parser [String]
+parseIDlst n = count n (many1 alphaNum >>= \id -> many sep >> return id)
+
+parseGate =
+  (parseToken "H" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ H (lst !! 0)) <|>
+  (parseToken "X" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ X (lst !! 0)) <|>
+  (parseToken "Y" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Y (lst !! 0)) <|>
+  (parseToken "Z" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Z (lst !! 0)) <|>
+  ((parseToken "P" <|> parseToken "S") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ S (lst !! 0)) <|>
+  ((parseToken "P*" <|> parseToken "S*") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Sinv (lst !! 0)) <|>
+  (parseToken "T" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ T (lst !! 0)) <|>
+  (parseToken "T*" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Tinv (lst !! 0)) <|>
+  ((parseToken "tof" <|> parseToken "cnot") >> skipMany1 sep >> parseIDlst 2 >>= \lst -> return $ CNOT (lst !! 0) (lst !! 1))
+
+parseStmt = liftM Gate $ try parseGate
+parseStmtSeq = liftM Seq $ endBy parseStmt skipSpaces
+
+parseDecl = do
+  parseToken "BEGIN"
+  id <- option "main" (try (skipMany1 sep >> parseCircuitID))
+  args <- option [] (try (skipMany1 sep >> parseArgList))
+  skipSpaces
+  stmt <- parseStmtSeq
+  skipSpaces
+  parseToken "END"
+  return $ Decl id args stmt
+
+parseFile = do
+  skipSpaces
+  parseToken ".v"
+  skipMany1 sep
+  qubits <- parseArgList
+  skipSpaces
+  parseToken ".i"
+  skipMany1 sep
+  inputs <- parseArgList
+  skipSpaces
+  decls <- endBy parseDecl skipSpaces
+  eof
+  return $ Circuit qubits (Set.fromList inputs) decls
+
+parseQC = parse parseFile ".qc parser" 
 
 -- Test
 
 toffoli = Circuit { qubits = ["x", "y", "z"],
-                    inputs = Map.fromList [("x", True), ("y", True), ("z", True)],
+                    inputs = Set.fromList ["x", "y", "z"],
                     decls  = [tof] }
     where tof = Decl { name = "main",
                        params = [],
