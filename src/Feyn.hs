@@ -5,6 +5,10 @@ import System.Environment
 import Syntax
 
 main :: IO ()
+main = printCirc toffoli
+
+{-
+main :: IO ()
 main = do
   putStrLn "Feyn -- copywrite 2016 Matthew Amy"
   (f:xs) <- getArgs
@@ -12,3 +16,4 @@ main = do
   case parseQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
     Right circuit -> printCircIR circuit
+-}
