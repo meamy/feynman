@@ -3,9 +3,12 @@ module Main (main) where
 import System.Environment
 
 import Syntax
+--import TPar
+import PhaseFold
 
 main :: IO ()
 main = do
+  putStrLn $ show runFoo
   putStrLn "Feyn -- copywrite 2016 Matthew Amy"
   (f:xs) <- getArgs
   s      <- readFile f

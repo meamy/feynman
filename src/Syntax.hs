@@ -9,6 +9,7 @@ import Text.ParserCombinators.Parsec hiding (space)
 import Control.Monad
 
 type ID = String
+type Loc = Int
 
 data Primitive =
     H    ID
@@ -40,6 +41,14 @@ foldCirc f b c = foldl (foldStmt f . body) b (decls c)
 foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
 foldStmt f (Repeat i st) b = f (Repeat i st) (foldStmt f st b)
 foldStmt f s             b = f s b
+
+-- Transformations
+
+--inline :: Circuit -> Circuit
+--inline circ = List.map expandCalls
+
+--subst sub stmt = case stmt of
+--  | Gate 
 
 -- Printing
 
@@ -87,25 +96,25 @@ parseIDlst :: Int -> Parser [String]
 parseIDlst n = count n (many1 alphaNum >>= \id -> many sep >> return id)
 
 parseGate =
-  (parseToken "H" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ H (lst !! 0)) <|>
-  (parseToken "X" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ X (lst !! 0)) <|>
-  (parseToken "Y" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Y (lst !! 0)) <|>
-  (parseToken "Z" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Z (lst !! 0)) <|>
-  ((parseToken "P" <|> parseToken "S") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ S (lst !! 0)) <|>
-  ((parseToken "P*" <|> parseToken "S*") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Sinv (lst !! 0)) <|>
-  (parseToken "T" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ T (lst !! 0)) <|>
-  (parseToken "T*" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Tinv (lst !! 0)) <|>
-  ((parseToken "tof" <|> parseToken "cnot") >> skipMany1 sep >> parseIDlst 2 >>= \lst -> return $ CNOT (lst !! 0) (lst !! 1))
+  (parseToken "H" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ H (head lst)) <|>
+  (parseToken "X" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ X (head lst)) <|>
+  (parseToken "Y" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Y (head lst)) <|>
+  (parseToken "Z" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Z (head lst)) <|>
+  ((parseToken "P" <|> parseToken "S") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ S (head lst)) <|>
+  ((parseToken "P*" <|> parseToken "S*") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Sinv (head lst)) <|>
+  (parseToken "T" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ T (head lst)) <|>
+  (parseToken "T*" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Tinv (head lst)) <|>
+  ((parseToken "tof" <|> parseToken "cnot") >> skipMany1 sep >> parseIDlst 2 >>= \lst -> return $ CNOT (head lst) (lst !! 1))
 
-parseStmt = liftM Gate $ try parseGate
-parseStmtSeq = liftM Seq $ endBy parseStmt skipSpaces
+parseStmt = (liftM Gate $ try parseGate)-- <|> (liftM
+--parseStmtSeq = liftM Seq $ endBy parseStmt skipSpaces
 
 parseDecl = do
   parseToken "BEGIN"
   id <- option "main" (try (skipMany1 sep >> parseCircuitID))
   args <- option [] (try (skipMany1 sep >> parseArgList))
   skipSpaces
-  stmt <- parseStmtSeq
+  stmt <- parseStmt
   skipSpaces
   parseToken "END"
   return $ Decl id args stmt
