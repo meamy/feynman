@@ -4,6 +4,7 @@ module Linear where
 
 import Data.List
 import Control.Monad
+import qualified Data.Tuple as Tuple
 
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -13,7 +14,7 @@ import qualified Data.BitVector as BitVector
 
 import Test.QuickCheck
 
-newtype F2Vec = F2Vec {-# UNPACK #-} BV deriving (Eq)
+newtype F2Vec = F2Vec { getBV :: BV } deriving (Eq)
 
 instance Show F2Vec where
   show (F2Vec b) = map (f . (b @.)) [0..BitVector.size b - 1]
@@ -35,7 +36,6 @@ row mat = ((vals mat) !!) . ((rowIx mat) !)
 
 index :: F2Mat -> Int -> Int -> Bool
 index mat i j = (getBV $ row mat i) @. ((colIx mat) ! j)
-
 
 f2Mat :: Int -> Int -> [F2Vec] -> F2Mat
 f2Mat m n vals = F2Mat m n vals rowIx colIx
@@ -68,6 +68,19 @@ toVecList :: F2Mat -> [F2Vec]
 toVecList (F2Mat m n vals rowIx colIx) = map (F2Vec . f) [colIx ! j | j <- [0..n-1]]
   where f j = BitVector.fromBits $ map (\i -> getBV (vals !! i) @. j) [rowIx ! i | i <- reverse [0..m-1]]
 
+{- Applies the row and column permutations -}
+applyPermutations :: F2Mat -> F2Mat
+applyPermutations mat@(F2Mat m n vals rowIx colIx) =
+  mat { vals = vals', rowIx = rowIx', colIx = colIx' }
+  where rowIx' = Map.fromList [(i, i) | i <- [0..m-1]]
+        colIx' = Map.fromList [(j, j) | j <- [0..n-1]]
+        vals'  = map (F2Vec . vec' . (vals !!)) $ Map.elems rowIx
+        vec' v =
+          let bits = BitVector.toBits (getBV v)
+              f i  = bits !! (n-1-i)
+          in
+            BitVector.fromBits $ reverse $ map f $ Map.elems colIx
+
 {- Row & column operations -}
 swapRow :: F2Mat -> Int -> Int -> F2Mat
 swapRow mat i j
@@ -93,11 +106,13 @@ addRow mat i j =
     (mat { vals = addTo j' (vals mat !! i') (vals mat) }, (i', j'))
 
 {- Linear algebra operations -}
-(<*) :: [F2Vec] -> F2Vec -> F2Vec
-a <* b = foldl f (BitVector.bitVec m 0) (zip a [0..n-1])
-  where f sum (v, i) = if b @. i then sum `xor` v else sum
-        n = minimum $ map (BitVector.size . getBV) 
+(~*) :: [F2Vec] -> F2Vec -> F2Vec
+a ~* b = F2Vec $ foldl f (BitVector.bitVec m 0) (zip a [0..])
+  where f sum (v, i) = if (getBV b) @. i then sum `xor` (getBV v) else sum
+        m = minimum $ map (BitVector.size . getBV) a
 
+(~*~) :: [F2Vec] -> [F2Vec] -> [F2Vec]
+a ~*~ b = map (a ~*) b
   
 toUpperEchelon :: F2Mat -> (F2Mat, [(Int, Int)])
 toUpperEchelon mat@(F2Mat m n vals rowIx colIx) =
@@ -107,20 +122,20 @@ toUpperEchelon mat@(F2Mat m n vals rowIx colIx) =
           if index mat i j
           then Just i
           else returnFirstNonzero mat (i+1) j
-      zeroBelow mat i j =
+      zeroAll mat i j =
         let zeroRow (mat, xs) i' =
-              if index mat i' j
+              if i /= i' && index mat i' j
               then (\(m, p) -> (m, p:xs)) $ addRow mat i i'
               else (mat, xs)
         in
-         foldl zeroRow (mat, []) [i+1..m-1]
+         foldl zeroRow (mat, []) [0..m-1]
       toUpper (mat, xs) i j
         | (i >= m) || (j >= n) = (mat, xs)
         | otherwise =
           case returnFirstNonzero mat i j of
             Nothing -> toUpper (mat, xs) i (j+1)
             Just i' ->
-              let (mat', xs') = zeroBelow mat i' j in
+              let (mat', xs') = zeroAll mat i' j in
                 toUpper (swapRow mat' i i', xs' ++ xs) (i+1) (j+1)
   in 
     toUpper (mat, []) 0 0
@@ -156,18 +171,43 @@ applyOps = foldr (\(i, j) vecs -> addTo i (vecs !! j) vecs)
 permute :: Map Int Int -> [a] -> [a]
 permute m xs = snd $ unzip $ Map.toList $ Map.map (xs !!) m
 
+permutePairs :: Map Int Int -> [(Int, Int)] -> [(Int, Int)]
+permutePairs m = map (\(i, j) -> (m ! i, m ! j))
+
+extend :: Int -> Map Int Int -> Map Int Int
+extend n mp = foldl (\mp i -> Map.alter (f i) i mp) mp [0..n-1]
+  where f i val = case val of
+          Nothing -> Just i
+          Just i' -> Just i'
+
+zeroAfterI :: Int -> Int -> Int -> [F2Vec] -> [F2Vec]
+zeroAfterI i m n vecs = take i vecs ++ replicate (n - i) (F2Vec $ BitVector.zeros m)
+
+invertMap :: Ord a => Map k a -> Map a k
+invertMap = Map.fromList . map Tuple.swap . Map.toList
+
 pseudoinverse :: [F2Vec] -> [F2Vec]
 pseudoinverse vecs =
-  let (mat, rank, xs) = toBlockSingular $ fromVecList vecs
-      vecs' = toVecList $ mat { rowIx = Map.map (colIx mat !) $ rowIx mat }
-      vecs'' = take rank vecs' ++ replicate ((n mat) - rank) (F2Vec $ BitVector.zeros $ m mat)
+  let (mat, rank, xs) = toBlockSingular $ fromVecList vecs -- top left rank x rank submatrix is B
+      (F2Mat m n vals rIx cIx) = applyPermutations mat
+      vecs' = toVecList $ F2Mat n m (zeroAfterI rank n n vals) (colIx mat) cIx
   in
-    permute (rowIx mat) $ applyOps vecs'' xs
+    permute (rowIx mat) $ applyOps (zeroAfterI rank n m vecs') $ permutePairs (invertMap $ rowIx mat) xs
 
 -- Tests
 idem :: F2Mat -> Bool
-idem mat = mat' == fst (toUpperEchelon mat')
-  where mat' = fst $ toUpperEchelon mat
+idem mat = mat' == ((\(m, _, _) -> m) $ toBlockSingular mat')
+  where (mat', rank, xs) = toBlockSingular mat
+
+correctDim :: F2Mat -> Bool
+correctDim mat = (m mat) == length vecs && (n mat) == height
+  where vecs   = pseudoinverse (toVecList mat)
+        height = minimum $ map (BitVector.size . getBV) vecs
+
+isPseudoinverse :: F2Mat -> Bool
+isPseudoinverse mat = a == a ~*~ ag ~*~ a
+  where a  = toVecList mat
+        ag = pseudoinverse a
 
 {-
 toF2Mat :: [F2Vec] -> ST s (F2Mat s)
