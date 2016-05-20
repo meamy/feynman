@@ -24,6 +24,9 @@ instance Show F2Vec where
 bb :: Int -> Int -> F2Vec
 bb i j = F2Vec $ BitVector.bitVec i j
 
+allVecs :: Int -> [F2Vec]
+allVecs n = map (bb n) [0..2^n-1]
+
 {- Matrices over GF(2) -}
 data F2Mat = F2Mat {
   m :: Int,
@@ -58,8 +61,8 @@ fromList vecs@(x:xs) =
   where m = BitVector.size $ getBV x
 
 fromVec :: F2Vec -> F2Mat
-fromVec x = F2Mat m 1 [x]
-  where m = BitVector.size $ getBV x
+fromVec x = F2Mat 1 n [x]
+  where n = BitVector.size $ getBV x
 
 {- Accessors -}
 row :: F2Mat -> Int -> F2Vec
@@ -75,7 +78,6 @@ index mat@(F2Mat m n vals) i j
 {- Linear algebra -}
 
 {- Expensive (relatively speaking) -}
-{- fromBits is big-endian, so we need to build up the reverse of a column -}
 transpose :: F2Mat -> F2Mat
 transpose (F2Mat m n vals) = F2Mat n m vals'
   where vals'    = map f [0..n-1]
@@ -92,22 +94,28 @@ mult a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
   | an /= bm  = error "Incompatible matrix dimensions"
   | otherwise = F2Mat am bn $ map (F2Vec . multRow) avals
     where multRow v       = foldl' (f v) (BitVector.bitVec bn 0) $ zip bvals [0..]
-          f v sum (v', i) = if (getBV v) @. i then sum `xor` (getBV v) else sum
+          f v sum (v', i) = if (getBV v) @. i then sum `xor` (getBV v') else sum
 
 {- Swap the arguments of mult. If A and B are stored column-major, multT A B = A * B -}
 multT :: F2Mat -> F2Mat -> F2Mat
 multT a b = mult b a
 
 applyCoc :: F2Vec -> F2Mat -> F2Vec
-applyCoc v = head . toList . mult (fromVec v)
+applyCoc v = head . toList . mult (fromVec v) . transpose
+
+{- Matrix addition -}
+add :: F2Mat -> F2Mat -> F2Mat
+add a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
+  | am /= bm || an /= bn = error "Incompatible matrix dimensions"
+  | otherwise = F2Mat am an $ map (\(x,y) -> F2Vec $ getBV x `xor` getBV y) $ zip avals bvals
 
 {- Row operations -}
 data ROp = Swap Int Int | Add Int Int deriving (Eq, Show)
 
-swap :: Int -> Int -> F2Mat -> F2Mat
-swap i j mat@(F2Mat m n vals)
-  | i > j           = swap j i mat
-  | 0 > i || j >= m = error "Swap indices out of bounds"
+swapRow :: Int -> Int -> F2Mat -> F2Mat
+swapRow i j mat@(F2Mat m n vals)
+  | i > j           = swapRow j i mat
+  | 0 > i || j >= m = error "SwapRow indices out of bounds"
   | i == j          = mat
   | otherwise       =
     let (v1, v') = splitAt i vals
@@ -115,8 +123,8 @@ swap i j mat@(F2Mat m n vals)
     in
       mat { vals = v1 ++ (head v3):(tail v2) ++ (head v2):(tail v3) }
 
-add :: Int -> Int -> F2Mat -> F2Mat
-add i j mat@(F2Mat m n vals)
+addRow :: Int -> Int -> F2Mat -> F2Mat
+addRow i j mat@(F2Mat m n vals)
   | 0 <= i && 0 <= j && i < m && j < m =
     let (v1, v2) = splitAt j vals
         newV     = F2Vec $ getBV (head v2) `xor` getBV (vals !! i)
@@ -125,8 +133,8 @@ add i j mat@(F2Mat m n vals)
   | otherwise                          = error "Add indices out of bounds"
 
 applyROp :: ROp -> F2Mat -> F2Mat
-applyROp (Swap i j) = swap i j
-applyROp (Add  i j) = add  i j
+applyROp (Swap i j) = swapRow i j
+applyROp (Add  i j) = addRow  i j
 
 applyROps = foldl' (flip applyROp) 
 
@@ -158,13 +166,13 @@ toUpperEchelon mat@(F2Mat m n vals) =
         | otherwise =
           case returnFirstNonzero i j mat of
             Nothing -> toUpper i (j+1) mat
-            Just i' -> return mat >>= zeroAll i' j >=> swap i i' >=> toUpper i+1 j+1
+            Just i' -> return mat >>= zeroAll i' j >=> swapRow i i' >=> toUpper i+1 j+1
   in 
     toUpper mat 0 0
 -}
 
 {- Avoids expensive indexing -}
-toEchelon :: F2Mat -> Writer [ROp] F2Mat
+toEchelon, toReducedEchelon :: F2Mat -> Writer [ROp] F2Mat
 toEchelon mat@(F2Mat m n vals) =
   let isOne j (v,_) = getBV v @. j
 
@@ -196,7 +204,6 @@ toEchelon mat@(F2Mat m n vals) =
   in
     toUpper 0 (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
 
-toReducedEchelon :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelon mat@(F2Mat m n vals) =
   let isOne j (v,_) = getBV v @. j
 
@@ -248,13 +255,35 @@ columnReduceDry mat@(F2Mat m n vals) =
   in
     toLeft 0 (Map.fromList $ zip [0..n-1] [0..]) vals
 
-pseudoinverse :: F2Mat -> F2Mat
-pseudoinverse mat@(F2Mat m n vals) =
+pseudoinverseT, pseudoinverse :: F2Mat -> F2Mat
+pseudoinverseT mat@(F2Mat m n vals) =
   let (mat', rops) = runWriter $ toReducedEchelon mat
       (rank, cops) = runWriter $ columnReduceDry mat'
-      partialInv   = applyROps (resizeMat n m $ identity rank) cops
+      partialInv   = applyROps (resizeMat n m $ identity rank) $ transposeROps cops
   in
-    transpose $ applyROps (transpose partialInv) $ transposeROps rops
+    applyROps (transpose partialInv) $ transposeROps rops
+
+pseudoinverse = transpose . pseudoinverseT
+
+{- Solving linear systems -}
+existsSolutions :: F2Mat -> F2Vec -> Bool
+existsSolutions a@(F2Mat m n vals) b
+  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
+  | otherwise = b == (applyCoc b $ mult a $ pseudoinverse a)
+
+allSolutions :: F2Mat -> F2Vec -> [F2Vec]
+allSolutions a@(F2Mat m n vals) b
+  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
+  | otherwise = do
+      let ag  = pseudoinverse a
+      let agb = applyCoc b ag
+      if b == applyCoc agb a
+        then do
+          let ker = add (identity n) (mult ag a)
+          map (\w -> F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)) (allVecs n)
+        else
+          []
+        
 
 {- Testing -}
 instance Arbitrary F2Mat where
@@ -265,17 +294,38 @@ instance Arbitrary F2Mat where
     vals <- sequence $ replicate m genRow
     return $ F2Mat m n vals
 
-invol :: Eq a => (a -> a) -> a -> Bool
-invol f a = a == (f $ f a)
+{- Properties of unary operators -}
+invol, idemp :: Eq a => (a -> a) -> (a -> Bool)
 
-idemp :: Eq a => (a -> a) -> a -> Bool
-idemp f a = (f a) == (f $ f a)
+invol f = \a -> a == (f $ f a)
+idemp f = \a -> (f a) == (f $ f a)
+
+{- Properties of binary operators -}
+lid, rid   :: Eq a => (a -> a -> a) -> a -> (a -> Bool)
+linv, rinv :: Eq a => (a -> a -> a) -> a -> (a -> a) -> (a -> Bool)
+assoc      :: Eq a => (a -> a -> a) -> (a -> a -> a -> Bool)
+commut     :: Eq a => (a -> a -> a) -> (a -> a -> Bool)
+
+lid    f i = \a -> f i a == a
+rid    f i = \a -> f a i == a
+linv   f i inv = \a -> f (inv a) a == i
+rinv   f i inv = \a -> f a (inv a) == i
+assoc  f = \a b c -> f a (f b c) == f (f a b) c
+commut f = \a b   -> f a b == f b a
+
+prop_TransposeInvolutive = invol transpose
+prop_ToEchelonIdempotent = idemp (fst . runWriter . toEchelon)
+prop_ToReducedEchelonIdempotent = idemp (fst . runWriter . toReducedEchelon)
+prop_MultAssociative = assoc mult
+prop_PseudoinverseCorrect = \m -> m == mult (mult m $ pseudoinverse m) m
 
 tests :: () -> IO ()
 tests _ = do
-  quickCheck $ invol transpose
-  quickCheck $ idemp (fst . runWriter . toEchelon)
-  quickCheck $ idemp (fst . runWriter . toReducedEchelon)
+  quickCheck $ prop_TransposeInvolutive
+  quickCheck $ prop_ToEchelonIdempotent
+  quickCheck $ prop_ToReducedEchelonIdempotent
+  --quickCheck $ prop_MultAssociative
+  quickCheck $ prop_PseudoinverseCorrect
 
 {-
 toBlockSingular :: F2Mat -> (F2Mat, Int, [(Int, Int)])
