@@ -142,14 +142,28 @@ addRow i j mat@(F2Mat m n vals)
 applyROp :: ROp -> F2Mat -> F2Mat
 applyROp (Swap i j) = swapRow i j
 applyROp (Add  i j) = addRow  i j
-
 applyROps = foldl' (flip applyROp) 
 
 transposeROp :: ROp -> ROp
 transposeROp (Swap i j) = Swap j i
 transposeROp (Add  i j) = Add  j i
-
 transposeROps = foldl' (\acc rop -> (transposeROp rop):acc) []
+
+moveAddsIn :: [ROp] -> [ROp]
+moveAddsIn xs =
+  let move sx []     = reverse sx
+      move sx (x:xs) = case x of
+        Swap _ _ -> move (x:sx) xs
+        Add  _ _ -> move (toLeft x sx) xs
+      toLeft y [] = [y]
+      toLeft y (x:xs) = case x of
+        Swap _ _ -> x:toLeft (apply x y) xs
+        Add  _ _ -> y:x:xs
+      apply (Swap i j) (Add l k) =
+        let sw x = if x == i then j else if x == j then i else x in
+          Add (sw l) (sw k)
+  in
+    move [] xs
 
 {- Gaussian elimination methods -}
 {-
