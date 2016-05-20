@@ -2,9 +2,10 @@
 
 module Linear where
 
-import Data.List
+import Data.List hiding (transpose)
+--import Data.Tuple
 import Control.Monad
-import qualified Data.Tuple as Tuple
+import Control.Monad.Writer
 
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -27,119 +28,256 @@ bb i j = F2Vec $ BitVector.bitVec i j
 data F2Mat = F2Mat {
   m :: Int,
   n :: Int,
-  vals :: [F2Vec],
-  rowIx :: Map Int Int,
-  colIx :: Map Int Int } deriving (Eq)
-
-row :: F2Mat -> Int -> F2Vec
-row mat = ((vals mat) !!) . ((rowIx mat) !)
-
-index :: F2Mat -> Int -> Int -> Bool
-index mat i j = (getBV $ row mat i) @. ((colIx mat) ! j)
-
-f2Mat :: Int -> Int -> [F2Vec] -> F2Mat
-f2Mat m n vals = F2Mat m n vals rowIx colIx
-  where rowIx = Map.fromList [(i, i) | i <- [0..m-1]]
-        colIx = Map.fromList [(j, j) | j <- [0..n-1]]
+  vals :: [F2Vec]
+  } deriving (Eq)
 
 instance Show F2Mat where
-  show mat@(F2Mat m n vals rowIx colIx) =
-    intercalate "\n" $ map (\i -> map (f . (index mat i)) [0..n-1]) [0..m-1]
-    where f b = if b then '1' else '0'
+  show (F2Mat m n vals) = intercalate "\n" $ map show vals
 
-instance Arbitrary F2Mat where
-  arbitrary = do
-    m <- choose (10, 100)
-    n <- choose (10, 100)
-    let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
-    vals <- sequence $ replicate m genRow
-    return $ f2Mat m n vals
+{- Constructors -}
+identity :: Int -> F2Mat
+identity n = F2Mat n n $ map (\i -> F2Vec $ BitVector.shift (BitVector.bitVec n 1) i) [0..n-1]
 
-{- Converts a list of vectors (column-major) into a matrix (row-major).
-   Truncates all vectors to the length of the shortest vector -}
-fromVecList :: [F2Vec] -> F2Mat
-fromVecList vecs = f2Mat m n vals
-  where m = minimum $ map (BitVector.size . getBV) vecs
-        n = length vecs
-        f i = foldl (\xs v -> (getBV v @. i):xs) [] vecs
-        vals = map (F2Vec . BitVector.fromBits . f) [0..m-1]
+{- Conversions -}
+resizeMat :: Int -> Int -> F2Mat -> F2Mat
+resizeMat m' n' (F2Mat m n vals) = F2Mat m' n' vals'
+  where vals' = (map f $ take m' vals) ++ (replicate (m'-m) $ F2Vec $ BitVector.bitVec n' 0)
+        f     = if n' > n
+                then F2Vec . (BitVector.zeroExtend (n'-n)) . getBV
+                else F2Vec . (BitVector.extract (n'-1) 0) . getBV
 
-toVecList :: F2Mat -> [F2Vec]
-toVecList (F2Mat m n vals rowIx colIx) = map (F2Vec . f) [colIx ! j | j <- [0..n-1]]
-  where f j = BitVector.fromBits $ map (\i -> getBV (vals !! i) @. j) [rowIx ! i | i <- reverse [0..m-1]]
+toList :: F2Mat -> [F2Vec]
+toList (F2Mat m n vals) = vals
 
-{- Applies the row and column permutations -}
-applyPermutations :: F2Mat -> F2Mat
-applyPermutations mat@(F2Mat m n vals rowIx colIx) =
-  mat { vals = vals', rowIx = rowIx', colIx = colIx' }
-  where rowIx' = Map.fromList [(i, i) | i <- [0..m-1]]
-        colIx' = Map.fromList [(j, j) | j <- [0..n-1]]
-        vals'  = map (F2Vec . vec' . (vals !!)) $ Map.elems rowIx
-        vec' v =
-          let bits = BitVector.toBits (getBV v)
-              f i  = bits !! (n-1-i)
-          in
-            BitVector.fromBits $ reverse $ map f $ Map.elems colIx
+fromList :: [F2Vec] -> F2Mat
+fromList []   = F2Mat 0 0 []
+fromList vecs@(x:xs) =
+  if all ((m ==) . BitVector.size . getBV) xs
+    then F2Mat m (length vecs) vecs
+    else error "Vectors have differing lengths"
+  where m = BitVector.size $ getBV x
 
-{- Row & column operations -}
-swapRow :: F2Mat -> Int -> Int -> F2Mat
-swapRow mat i j
-  | i == j    = mat
-  | otherwise = mat { rowIx = Map.insert i (perm ! j) $ Map.insert j (perm ! i) perm }
-  where perm = rowIx mat
+fromVec :: F2Vec -> F2Mat
+fromVec x = F2Mat m 1 [x]
+  where m = BitVector.size $ getBV x
 
-swapCol :: F2Mat -> Int -> Int -> F2Mat
-swapCol mat i j
-  | i == j    = mat
-  | otherwise = mat { colIx = Map.insert i (perm ! j) $ Map.insert j (perm ! i) perm }
-  where perm = colIx mat
+{- Accessors -}
+row :: F2Mat -> Int -> F2Vec
+row (F2Mat m n vals) i
+  | 0 <= i && i < m = vals !! i
+  | otherwise       = error "Row index out of bounds"
 
-addRow :: F2Mat -> Int -> Int -> (F2Mat, (Int, Int))
-addRow mat i j =
-  let i' = (rowIx mat) ! i
-      j' = (rowIx mat) ! j
-      addTo i v xs = case (i, xs) of
-        (_, []) -> []
-        (0, x:xs) -> (F2Vec $ (getBV x) `xor` (getBV v)):xs
-        (i, x:xs) -> x:(addTo (i-1) v xs)
-  in
-    (mat { vals = addTo j' (vals mat !! i') (vals mat) }, (i', j'))
+index :: F2Mat -> Int -> Int -> Bool
+index mat@(F2Mat m n vals) i j
+  | 0 <= j && j < n = getBV (row mat i) @. j
+  | otherwise       = error "Column index out of bounds"
 
-{- Linear algebra operations -}
-(~*) :: [F2Vec] -> F2Vec -> F2Vec
-a ~* b = F2Vec $ foldl f (BitVector.bitVec m 0) (zip a [0..])
-  where f sum (v, i) = if (getBV b) @. i then sum `xor` (getBV v) else sum
-        m = minimum $ map (BitVector.size . getBV) a
+{- Linear algebra -}
 
-(~*~) :: [F2Vec] -> [F2Vec] -> [F2Vec]
-a ~*~ b = map (a ~*) b
-  
-toUpperEchelon :: F2Mat -> (F2Mat, [(Int, Int)])
-toUpperEchelon mat@(F2Mat m n vals rowIx colIx) =
-  let returnFirstNonzero mat i j
+{- Expensive (relatively speaking) -}
+{- fromBits is big-endian, so we need to build up the reverse of a column -}
+transpose :: F2Mat -> F2Mat
+transpose (F2Mat m n vals) = F2Mat n m vals'
+  where vals'    = map f [0..n-1]
+        f j      = F2Vec $ BitVector.fromBits $ foldl' (g j) [] vals
+        g j xs v = (getBV v @. j):xs
+
+{- If A is a set of vectors over B, coc A gives the change of coordinates matrix from A to B -}
+coc :: [F2Vec] -> F2Mat
+coc = transpose . fromList
+
+{- Matrix multiplication -}
+mult :: F2Mat -> F2Mat -> F2Mat
+mult a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
+  | an /= bm  = error "Incompatible matrix dimensions"
+  | otherwise = F2Mat am bn $ map (F2Vec . multRow) avals
+    where multRow v       = foldl' (f v) (BitVector.bitVec bn 0) $ zip bvals [0..]
+          f v sum (v', i) = if (getBV v) @. i then sum `xor` (getBV v) else sum
+
+{- Swap the arguments of mult. If A and B are stored column-major, multT A B = A * B -}
+multT :: F2Mat -> F2Mat -> F2Mat
+multT a b = mult b a
+
+applyCoc :: F2Vec -> F2Mat -> F2Vec
+applyCoc v = head . toList . mult (fromVec v)
+
+{- Row operations -}
+data ROp = Swap Int Int | Add Int Int deriving (Eq, Show)
+
+swap :: Int -> Int -> F2Mat -> F2Mat
+swap i j mat@(F2Mat m n vals)
+  | i > j           = swap j i mat
+  | 0 > i || j >= m = error "Swap indices out of bounds"
+  | i == j          = mat
+  | otherwise       =
+    let (v1, v') = splitAt i vals
+        (v2, v3) = splitAt (j-i) v'
+    in
+      mat { vals = v1 ++ (head v3):(tail v2) ++ (head v2):(tail v3) }
+
+add :: Int -> Int -> F2Mat -> F2Mat
+add i j mat@(F2Mat m n vals)
+  | 0 <= i && 0 <= j && i < m && j < m =
+    let (v1, v2) = splitAt j vals
+        newV     = F2Vec $ getBV (head v2) `xor` getBV (vals !! i)
+    in
+      mat { vals = v1 ++ newV:(tail v2) }
+  | otherwise                          = error "Add indices out of bounds"
+
+applyROp :: ROp -> F2Mat -> F2Mat
+applyROp (Swap i j) = swap i j
+applyROp (Add  i j) = add  i j
+
+applyROps = foldl' (flip applyROp) 
+
+transposeROp :: ROp -> ROp
+transposeROp (Swap i j) = Swap j i
+transposeROp (Add  i j) = Add  j i
+
+transposeROps = foldl' (\acc rop -> (transposeROp rop):acc) []
+
+{- Gaussian elimination methods -}
+{-
+toUpperEchelon :: F2Mat -> Writer F2Mat [ROp]
+toUpperEchelon mat@(F2Mat m n vals) =
+  let returnFirstNonzero i j mat
         | i >= m    = Nothing
         | otherwise =
           if index mat i j
           then Just i
-          else returnFirstNonzero mat (i+1) j
-      zeroAll mat i j =
+          else returnFirstNonzero (i+1) j mat
+      zeroAll i j mat =
         let zeroRow (mat, xs) i' =
               if i /= i' && index mat i' j
               then (\(m, p) -> (m, p:xs)) $ addRow mat i i'
               else (mat, xs)
         in
          foldl zeroRow (mat, []) [0..m-1]
-      toUpper (mat, xs) i j
-        | (i >= m) || (j >= n) = (mat, xs)
+      toUpper i j mat
+        | (i >= m) || (j >= n) = return mat
         | otherwise =
-          case returnFirstNonzero mat i j of
-            Nothing -> toUpper (mat, xs) i (j+1)
-            Just i' ->
-              let (mat', xs') = zeroAll mat i' j in
-                toUpper (swapRow mat' i i', xs' ++ xs) (i+1) (j+1)
+          case returnFirstNonzero i j mat of
+            Nothing -> toUpper i (j+1) mat
+            Just i' -> return mat >>= zeroAll i' j >=> swap i i' >=> toUpper i+1 j+1
   in 
-    toUpper (mat, []) 0 0
+    toUpper mat 0 0
+-}
 
+{- Avoids expensive indexing -}
+toEchelon :: F2Mat -> Writer [ROp] F2Mat
+toEchelon mat@(F2Mat m n vals) =
+  let isOne j (v,_) = getBV v @. j
+
+      zeroAll j y []     = return []
+      zeroAll j y (x:xs) =
+        if getBV (fst x) @. j
+        then do
+          tell [Add (snd y) (snd x)]
+          xs' <- zeroAll j y xs
+          return $ (F2Vec $ getBV (fst y) `xor` getBV (fst x), snd x):xs'
+        else do
+          xs' <- zeroAll j y xs
+          return $ x:xs'
+
+      toUpper j [] = return []
+      toUpper j xs
+        | j >= n    = return $ xs
+        | otherwise = case break (isOne j) xs of
+            (_, [])      -> toUpper (j+1) xs
+            ([], x:xs)   -> do
+              xs' <- toUpper (j+1) =<< zeroAll j x xs
+              return $ x:xs
+            (x:xs, y:ys) -> do
+              let x' = (fst y, snd x)
+              let y' = (fst x, snd y)
+              tell [Swap (snd x) (snd y)]
+              xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
+              return $ x':xs'
+  in
+    toUpper 0 (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
+
+toReducedEchelon :: F2Mat -> Writer [ROp] F2Mat
+toReducedEchelon mat@(F2Mat m n vals) =
+  let isOne j (v,_) = getBV v @. j
+
+      zeroAll j y []     = return []
+      zeroAll j y (x:xs) =
+        if getBV (fst x) @. j
+        then do
+          tell [Add (snd y) (snd x)]
+          xs' <- zeroAll j y xs
+          return $ (F2Vec $ getBV (fst y) `xor` getBV (fst x), snd x):xs'
+        else do
+          xs' <- zeroAll j y xs
+          return $ x:xs'
+
+      toUpper j sx [] = return $ reverse sx
+      toUpper j sx xs
+        | j >= n    = return $ (reverse sx) ++ xs
+        | otherwise = case break (isOne j) xs of
+            (_, [])      -> toUpper (j+1) sx xs
+            ([], x:xs)   -> do
+              sx' <- zeroAll j x sx
+              xs' <- zeroAll j x xs
+              toUpper (j+1) (x:sx') xs'
+            (x:xs, y:ys) -> do
+              let x' = (fst y, snd x)
+              let y' = (fst x, snd y)
+              tell [Swap (snd x) (snd y)]
+              sx' <- zeroAll j x' sx
+              xs' <- zeroAll j x' (xs ++ y':ys)
+              toUpper (j+1) (x':sx') xs'
+  in
+    toUpper 0 [] (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
+
+columnReduceDry :: F2Mat -> Writer [ROp] Int
+columnReduceDry mat@(F2Mat m n vals) =
+  let isOne v imap j = getBV v @. (imap ! j)
+
+      swapVals i j imap = Map.insert i (imap ! j) $ Map.insert j (imap ! i) imap
+
+      toLeft j imap [] = return j
+      toLeft j imap (x:xs) 
+        | j >= n    = return j
+        | otherwise = case break (isOne x imap) [j..n-1] of
+            (_, [])   -> toLeft j imap xs
+            ([], _)   -> toLeft (j+1) imap xs
+            (_, j':_) -> do
+              tell [Swap j j']
+              toLeft (j+1) (swapVals j j' imap) xs
+  in
+    toLeft 0 (Map.fromList $ zip [0..n-1] [0..]) vals
+
+pseudoinverse :: F2Mat -> F2Mat
+pseudoinverse mat@(F2Mat m n vals) =
+  let (mat', rops) = runWriter $ toReducedEchelon mat
+      (rank, cops) = runWriter $ columnReduceDry mat'
+      partialInv   = applyROps (resizeMat n m $ identity rank) cops
+  in
+    transpose $ applyROps (transpose partialInv) $ transposeROps rops
+
+{- Testing -}
+instance Arbitrary F2Mat where
+  arbitrary = do
+    m <- choose (10, 100)
+    n <- choose (10, 100)
+    let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
+    vals <- sequence $ replicate m genRow
+    return $ F2Mat m n vals
+
+invol :: Eq a => (a -> a) -> a -> Bool
+invol f a = a == (f $ f a)
+
+idemp :: Eq a => (a -> a) -> a -> Bool
+idemp f a = (f a) == (f $ f a)
+
+tests :: () -> IO ()
+tests _ = do
+  quickCheck $ invol transpose
+  quickCheck $ idemp (fst . runWriter . toEchelon)
+  quickCheck $ idemp (fst . runWriter . toReducedEchelon)
+
+{-
 toBlockSingular :: F2Mat -> (F2Mat, Int, [(Int, Int)])
 toBlockSingular mat@(F2Mat m n vals rowIx colIx) =
   let returnFirstNonzero mat i j
@@ -184,7 +322,7 @@ zeroAfterI :: Int -> Int -> Int -> [F2Vec] -> [F2Vec]
 zeroAfterI i m n vecs = take i vecs ++ replicate (n - i) (F2Vec $ BitVector.zeros m)
 
 invertMap :: Ord a => Map k a -> Map a k
-invertMap = Map.fromList . map Tuple.swap . Map.toList
+invertMap = Map.fromList . map swap . Map.toList
 
 pseudoinverse :: [F2Vec] -> [F2Vec]
 pseudoinverse vecs =
@@ -194,7 +332,15 @@ pseudoinverse vecs =
   in
     permute (rowIx mat) $ applyOps (zeroAfterI rank n m vecs') $ permutePairs (invertMap $ rowIx mat) xs
 
--- Tests
+{- Testing -}
+instance Arbitrary F2Mat where
+  arbitrary = do
+    m <- choose (10, 100)
+    n <- choose (10, 100)
+    let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
+    vals <- sequence $ replicate m genRow
+    return $ F2Mat m n vals
+
 idem :: F2Mat -> Bool
 idem mat = mat' == ((\(m, _, _) -> m) $ toBlockSingular mat')
   where (mat', rank, xs) = toBlockSingular mat
@@ -355,4 +501,5 @@ idem :: F2VecCol -> Bool
 idem (F2VecCol m) = mG == (elems $ test mG)
   where mG = elems $ test m
 
+-}
 -}
