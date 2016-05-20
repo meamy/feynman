@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Linear where
 
@@ -10,12 +11,15 @@ import Control.Monad.Writer
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 
+import Data.Set (Set)
+import qualified Data.Set as Set
+
 import Data.BitVector (BV, (@.), xor)
 import qualified Data.BitVector as BitVector
 
 import Test.QuickCheck
 
-newtype F2Vec = F2Vec { getBV :: BV } deriving (Eq)
+newtype F2Vec = F2Vec { getBV :: BV } deriving (Eq, Ord)
 
 instance Show F2Vec where
   show (F2Vec b) = map (f . (b @.)) [0..BitVector.size b - 1]
@@ -26,6 +30,9 @@ bb i j = F2Vec $ BitVector.bitVec i j
 
 allVecs :: Int -> [F2Vec]
 allVecs n = map (bb n) [0..2^n-1]
+
+minWt :: F2Vec -> F2Vec -> F2Vec
+minWt u v = if BitVector.popCount (getBV u) < BitVector.popCount (getBV v) then u else v
 
 {- Matrices over GF(2) -}
 data F2Mat = F2Mat {
@@ -171,7 +178,7 @@ toUpperEchelon mat@(F2Mat m n vals) =
     toUpper mat 0 0
 -}
 
-{- Avoids expensive indexing -}
+{- Avoids indexing -}
 toEchelon, toReducedEchelon :: F2Mat -> Writer [ROp] F2Mat
 toEchelon mat@(F2Mat m n vals) =
   let isOne j (v,_) = getBV v @. j
@@ -271,28 +278,71 @@ existsSolutions a@(F2Mat m n vals) b
   | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
   | otherwise = b == (applyCoc b $ mult a $ pseudoinverse a)
 
-allSolutions :: F2Mat -> F2Vec -> [F2Vec]
+oneSolution :: F2Mat -> F2Vec -> Maybe F2Vec
+oneSolution a@(F2Mat m n vals) b
+  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
+  | otherwise =
+      let ag  = pseudoinverse a
+          agb = applyCoc b ag
+      in
+        if b == applyCoc agb a then Just b else Nothing
+
+minSolution :: F2Mat -> F2Vec -> Maybe F2Vec
+minSolution a@(F2Mat m n vals) b
+  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
+  | otherwise =
+      let ag       = pseudoinverse a
+          agb      = applyCoc b ag
+          ker      = add (identity n) (mult ag a)
+          genSol w = F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)
+      in
+        if b == applyCoc agb a
+          then foldM (\min w -> Just $ minWt min $ genSol w) agb $ allVecs n
+          else Nothing
+  
+
+allSolutions :: F2Mat -> F2Vec -> Set F2Vec
 allSolutions a@(F2Mat m n vals) b
   | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
-  | otherwise = do
-      let ag  = pseudoinverse a
-      let agb = applyCoc b ag
-      if b == applyCoc agb a
-        then do
-          let ker = add (identity n) (mult ag a)
-          map (\w -> F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)) (allVecs n)
-        else
-          []
-        
+  | otherwise =
+      let ag       = pseudoinverse a
+          agb      = applyCoc b ag
+          ker      = add (identity n) (mult ag a)
+          genSol w = F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)
+      in
+        if b == applyCoc agb a
+          then foldr (\w -> Set.insert $ genSol w) Set.empty $ allVecs n
+          else Set.empty
 
 {- Testing -}
+rowRange = (10, 100)
+colRange = (10, 100)
+
 instance Arbitrary F2Mat where
   arbitrary = do
-    m <- choose (10, 100)
-    n <- choose (10, 100)
+    m <- choose rowRange
+    n <- choose colRange
     let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
     vals <- sequence $ replicate m genRow
     return $ F2Mat m n vals
+
+arbitraryFixedN, arbitraryFixedM :: Int -> Gen F2Mat
+arbitraryFixedN n = do
+  m <- choose rowRange
+  let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
+  vals <- sequence $ replicate m genRow
+  return $ F2Mat m n vals
+arbitraryFixedM m = do
+  n <- choose colRange
+  let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
+  vals <- sequence $ replicate m genRow
+  return $ F2Mat m n vals
+
+arbitraryFixed :: Int -> Int -> Gen F2Mat
+arbitraryFixed m n = do
+  let genRow = (vector n) >>= return . F2Vec . BitVector.fromBits
+  vals <- sequence $ replicate m genRow
+  return $ F2Mat m n vals
 
 {- Properties of unary operators -}
 invol, idemp :: Eq a => (a -> a) -> (a -> Bool)
@@ -316,7 +366,11 @@ commut f = \a b   -> f a b == f b a
 prop_TransposeInvolutive = invol transpose
 prop_ToEchelonIdempotent = idemp (fst . runWriter . toEchelon)
 prop_ToReducedEchelonIdempotent = idemp (fst . runWriter . toReducedEchelon)
-prop_MultAssociative = assoc mult
+prop_MultAssociative = do
+  a <- arbitrary
+  b <- arbitraryFixedM $ n a
+  c <- arbitraryFixedM $ n b
+  return $ assoc mult a b c
 prop_PseudoinverseCorrect = \m -> m == mult (mult m $ pseudoinverse m) m
 
 tests :: () -> IO ()
@@ -324,7 +378,7 @@ tests _ = do
   quickCheck $ prop_TransposeInvolutive
   quickCheck $ prop_ToEchelonIdempotent
   quickCheck $ prop_ToReducedEchelonIdempotent
-  --quickCheck $ prop_MultAssociative
+  quickCheck $ prop_MultAssociative
   quickCheck $ prop_PseudoinverseCorrect
 
 {-
