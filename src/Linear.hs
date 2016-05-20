@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Linear where
 
@@ -286,47 +287,39 @@ pseudoinverseT mat@(F2Mat m n vals) =
 
 pseudoinverse = transpose . pseudoinverseT
 
-{- Solving linear systems -}
+{- Solving linear systems, optimized for partial evaluation on a matrix -}
+allSolutions :: F2Mat -> F2Vec -> Set F2Vec
+allSolutions a =
+  let !ag = pseudoinverse a in \b ->
+    let x        = applyCoc b ag
+        ker      = add (identity $ n a) (mult ag a)
+        genSol w = F2Vec $ (getBV x) `xor` (getBV $ applyCoc w ker)
+    in
+      if b == applyCoc x a
+        then foldr (\w -> Set.insert $ genSol w) Set.empty $ allVecs $ n a
+        else Set.empty
+      
 existsSolutions :: F2Mat -> F2Vec -> Bool
-existsSolutions a@(F2Mat m n vals) b
-  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
-  | otherwise = b == (applyCoc b $ mult a $ pseudoinverse a)
+existsSolutions a =
+  let !aag = mult a $ pseudoinverse a in \b ->
+    b == (applyCoc b aag)
 
 oneSolution :: F2Mat -> F2Vec -> Maybe F2Vec
-oneSolution a@(F2Mat m n vals) b
-  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
-  | otherwise =
-      let ag  = pseudoinverse a
-          agb = applyCoc b ag
-      in
-        if b == applyCoc agb a then Just b else Nothing
+oneSolution a =
+  let !ag = pseudoinverse a in \b ->
+    let x = applyCoc b ag in 
+      if b == applyCoc x a then Just x else Nothing
 
 minSolution :: F2Mat -> F2Vec -> Maybe F2Vec
-minSolution a@(F2Mat m n vals) b
-  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
-  | otherwise =
-      let ag       = pseudoinverse a
-          agb      = applyCoc b ag
-          ker      = add (identity n) (mult ag a)
-          genSol w = F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)
-      in
-        if b == applyCoc agb a
-          then foldM (\min w -> Just $ minWt min $ genSol w) agb $ allVecs n
-          else Nothing
-  
-
-allSolutions :: F2Mat -> F2Vec -> Set F2Vec
-allSolutions a@(F2Mat m n vals) b
-  | BitVector.size (getBV b) /= n = error "Incompatible dimensions"
-  | otherwise =
-      let ag       = pseudoinverse a
-          agb      = applyCoc b ag
-          ker      = add (identity n) (mult ag a)
-          genSol w = F2Vec $ (getBV agb) `xor` (getBV $ applyCoc w ker)
-      in
-        if b == applyCoc agb a
-          then foldr (\w -> Set.insert $ genSol w) Set.empty $ allVecs n
-          else Set.empty
+minSolution a =
+  let !ag = pseudoinverse a in \b ->
+    let x        = applyCoc b ag
+        ker      = add (identity $ n a) (mult ag a)
+        genSol w = F2Vec $ (getBV x) `xor` (getBV $ applyCoc w ker)
+    in
+      if b == applyCoc x a
+        then foldM (\min w -> Just $ minWt min $ genSol w) x $ allVecs $ n a
+        else Nothing
 
 {- Testing -}
 rowRange = (10, 100)
