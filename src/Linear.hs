@@ -63,10 +63,10 @@ toList (F2Mat m n vals) = vals
 fromList :: [F2Vec] -> F2Mat
 fromList []   = F2Mat 0 0 []
 fromList vecs@(x:xs) =
-  if all ((m ==) . BitVector.size . getBV) xs
-    then F2Mat m (length vecs) vecs
+  if all ((n ==) . BitVector.size . getBV) xs
+    then F2Mat (length vecs) n vecs
     else error "Vectors have differing lengths"
-  where m = BitVector.size $ getBV x
+  where n = BitVector.size $ getBV x
 
 fromVec :: F2Vec -> F2Mat
 fromVec x = F2Mat 1 n [x]
@@ -119,6 +119,10 @@ add a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
 
 {- Row operations -}
 data ROp = Swap Int Int | Add Int Int deriving (Eq, Show)
+
+removeZeroRows :: F2Mat -> F2Mat
+removeZeroRows a@(F2Mat _ n vals) = 
+  a { vals = filter (not . (BitVector.zeros n ==) . getBV) vals }
 
 swapRow :: Int -> Int -> F2Mat -> F2Mat
 swapRow i j mat@(F2Mat m n vals)
@@ -288,6 +292,12 @@ pseudoinverseT mat@(F2Mat m n vals) =
 pseudoinverse = transpose . pseudoinverseT
 
 {- Solving linear systems, optimized for partial evaluation on a matrix -}
+solver, solverT, solverReduced :: F2Mat -> F2Mat
+solver         = pseudoinverse
+solverT        = pseudoinverseT
+solverReduced  = removeZeroRows . pseudoinverse
+solverTReduced = removeZeroRows . pseudoinverseT
+
 allSolutions :: F2Mat -> F2Vec -> Set F2Vec
 allSolutions a =
   let !ag = pseudoinverse a in \b ->
