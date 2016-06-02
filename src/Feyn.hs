@@ -2,16 +2,15 @@ module Main (main) where
 
 import System.Environment
 
-import Syntax
+import DotQC
 --import TPar
 import PhaseFold
 
 main :: IO ()
 main = do
-  putStrLn $ show runFoo
   putStrLn "Feyn -- copywrite 2016 Matthew Amy"
   (f:xs) <- getArgs
   s      <- readFile f
-  case parseQC s of
+  case parseDotQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
     Right circuit -> print circuit

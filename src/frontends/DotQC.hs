@@ -52,12 +52,16 @@ instance Show DotQC where
 space = char ' '
 semicolon = char ';'
 sep = space <|> tab
-breaker = semicolon <|> newline
+comment = char '#' >> manyTill anyChar newline >> return '#'
+delimiter = semicolon <|> newline 
 
-skipSpace     = skipMany sep
-skipWithBreak = many1 (skipMany sep >> breaker >> skipMany sep)
+skipSpace     = skipMany $ sep <|> comment
+skipWithBreak = many1 (skipMany sep >> delimiter >> skipMany sep)
 
-parseID = letter >>= \c -> many alphaNum >>= \cs -> return (c:cs)
+parseID = try $ do
+  c  <- letter
+  cs <- many alphaNum
+  if (c:cs) == "BEGIN" || (c:cs) == "END" then fail "" else return (c:cs)
 parseParams = sepBy (many1 alphaNum) (many1 sep) 
 
 parseGate = do
@@ -82,25 +86,24 @@ parseDecl = do
   skipSpace
   args <- parseFormals 
   skipWithBreak
-  body <- sepBy parseGate skipWithBreak
-  skipWithBreak
+  body <- endBy parseGate skipWithBreak
   string "END"
   return $ Decl id args body
 
 parseHeaderLine s = do
   string s
   skipSpace
-  parseParams
+  params <- parseParams
+  skipWithBreak
+  return params
 
 parseFile = do
-  skipMany $ sep <|> breaker
+  skipMany $ sep <|> comment <|> delimiter
   qubits <- parseHeaderLine ".v"
-  skipWithBreak
-  inputs <- option qubits $ parseHeaderLine ".i"
-  skipWithBreak
-  outputs <- option qubits $ parseHeaderLine ".o"
-  skipWithBreak
-  decls <- endBy parseDecl skipWithBreak
+  inputs <- option qubits $ try $ parseHeaderLine ".i"
+  outputs <- option qubits $ try $ parseHeaderLine ".o"
+  decls <- sepEndBy parseDecl skipWithBreak
+  skipMany $ sep <|> delimiter
   eof
   return $ DotQC qubits (Set.fromList inputs) (Set.fromList outputs) decls
 
