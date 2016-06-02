@@ -108,8 +108,13 @@ mult a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
 multT :: F2Mat -> F2Mat -> F2Mat
 multT a b = mult b a
 
-applyCoc :: F2Vec -> F2Mat -> F2Vec
-applyCoc v = head . toList . mult (fromVec v) . transpose
+{- Right-multiply a row vector by a matrix -}
+multRow :: F2Vec -> F2Mat -> F2Vec
+multRow v = head . toList . mult (fromVec v)
+
+{- Left-multiply a column vector by a matrix -}
+multVec :: F2Mat -> F2Vec -> F2Vec
+multVec m = head . toList . multT (transpose m) . fromVec
 
 {- Matrix addition -}
 add :: F2Mat -> F2Mat -> F2Mat
@@ -291,6 +296,32 @@ pseudoinverseT mat@(F2Mat m n vals) =
 
 pseudoinverse = transpose . pseudoinverseT
 
+increaseRank :: F2Mat -> F2Mat
+increaseRank mat@(F2Mat m n vals) = 
+  let isOne j v = getBV v @. j
+
+      zeroAll j y []     = []
+      zeroAll j y (x:xs) =
+        let xs' = zeroAll j y xs in
+          if getBV x @. j
+          then (F2Vec $ getBV y `xor` getBV x):xs'
+          else x:xs'
+
+      toUpper j xs
+        | j >= n    =
+          let mat'@(F2Mat _ _ vals') = resizeMat m (n+1) mat
+              vec  = F2Vec $ BitVector.shift (BitVector.bitVec (n+1) 1) j
+          in
+            mat' { vals = vals' ++ [vec] }
+        | otherwise = case break (isOne j) xs of
+            (_, [])      ->
+              let vec = F2Vec $ BitVector.shift (BitVector.bitVec n 1) j in
+                mat { vals = vals ++ [vec] }
+            ([], x:xs)   -> toUpper (j+1) $ zeroAll j x xs
+            (x:xs, y:ys) -> toUpper (j+1) $ zeroAll j y (xs ++ x:ys)
+  in
+    toUpper 0 vals
+
 {- Solving linear systems, optimized for partial evaluation on a matrix -}
 solver, solverT, solverReduced :: F2Mat -> F2Mat
 solver         = pseudoinverse
@@ -301,35 +332,49 @@ solverTReduced = removeZeroRows . pseudoinverseT
 allSolutions :: F2Mat -> F2Vec -> Set F2Vec
 allSolutions a =
   let !ag = pseudoinverse a in \b ->
-    let x        = applyCoc b ag
+    let x        = multVec ag b
         ker      = add (identity $ n a) (mult ag a)
-        genSol w = F2Vec $ (getBV x) `xor` (getBV $ applyCoc w ker)
+        genSol w = F2Vec $ (getBV x) `xor` (getBV $ multVec ker w)
     in
-      if b == applyCoc x a
+      if b == multVec a x
         then foldr (\w -> Set.insert $ genSol w) Set.empty $ allVecs $ n a
         else Set.empty
       
 existsSolutions :: F2Mat -> F2Vec -> Bool
 existsSolutions a =
   let !aag = mult a $ pseudoinverse a in \b ->
-    b == (applyCoc b aag)
+    b == (multVec aag b)
 
 oneSolution :: F2Mat -> F2Vec -> Maybe F2Vec
 oneSolution a =
   let !ag = pseudoinverse a in \b ->
-    let x = applyCoc b ag in 
-      if b == applyCoc x a then Just x else Nothing
+    let x = multVec ag b in 
+      if b == multVec a x then Just x else Nothing
 
 minSolution :: F2Mat -> F2Vec -> Maybe F2Vec
 minSolution a =
   let !ag = pseudoinverse a in \b ->
-    let x        = applyCoc b ag
+    let x        = multVec ag b
         ker      = add (identity $ n a) (mult ag a)
-        genSol w = F2Vec $ (getBV x) `xor` (getBV $ applyCoc w ker)
+        genSol w = F2Vec $ (getBV x) `xor` (getBV $ multVec ker w)
     in
-      if b == applyCoc x a
+      if b == multVec a x
         then foldM (\min w -> Just $ minWt min $ genSol w) x $ allVecs $ n a
         else Nothing
+
+{- Some shortcuts for sets of vectors -}
+inLinearSpan :: [F2Vec] -> F2Vec -> Bool
+inLinearSpan a =
+  let !aT   = fromList a
+      !agT  = pseudoinverse aT
+      !aagT = mult agT aT
+  in
+    \b -> b == multRow b aagT
+
+addIndependent :: [F2Vec] -> (Int, [F2Vec])
+addIndependent a =
+  let (F2Mat m n vals) = increaseRank $ fromList a in
+    (n, vals)
 
 {- Testing -}
 rowRange = (10, 100)

@@ -38,8 +38,8 @@ import Control.Monad.State
 
 data AnalysisState = SOP {
   dim     :: Int,
-  qvals   :: Map ID BV,
-  terms   :: Map BV (Set Loc, Int),
+  qvals   :: Map ID F2Vec,
+  terms   :: Map F2Vec (Set Loc, Int),
   orphans :: [(Set Loc, Int)]
 } deriving Show
 
@@ -49,7 +49,7 @@ bitI :: Int -> Integer
 bitI = bit
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
-getSt :: ID -> Analysis BV
+getSt :: ID -> Analysis F2Vec
 getSt v = do 
   st <- get
   case Map.lookup v (qvals st) of
@@ -57,62 +57,26 @@ getSt v = do
     Nothing -> do put $ st { dim = dim', qvals = qvals' }
                   return bv'
       where dim' = dim st + 1
-            bv' = bitVec dim' $ bitI (dim' -1)
+            bv' = F2Vec $ bitVec dim' $ bitI (dim' -1)
             qvals' = Map.insert v bv' (qvals st)
 
-{- Find a change of coordinate matrix -}
-changeOfBasis :: forall a. [(a, BV)] -> (Int, [(a, BV)])
-changeOfBasis vs = (0, vs)
-
-{- Write a vector over the given basis -}
-writeOverBasis :: forall a. BV -> [BV] -> Maybe BV 
-writeOverBasis bv lbv = 
-  let bv' = foldl' (\s i -> if bv@.i then s `xor` lbv!!i else s) (bitVec 0 0) [0..size bv] in
-    if popCount bv' == 0 then Nothing else Just bv'
-
-{- exists removes a variable (existentially quantifies it) then 
- - canonicalizes the state by rewriting all terms over the set
- - of current qubit values, orphaning the ones with no 
- - representation
-exists :: ID -> AnalysisState -> AnalysisState
-exists v st = SOP { dim = dim', qvals = qvals', terms = terms', orphans = orphans' }
-  where inv    = removeZeroRows $ pseudoinverse $ coc $ map F2Vec $ snd $ unzip $ Map.toList qvals
-        rank   = m inv
-    --(rank, basis)  = changeOfBasis $ (Map.toList . Map.delete v) $ qvals st
-        dim'   = rank + 1
-        bv'    = bitVec dim' $ bitI (dim' -1)
-        rebase = Map.map 
-        qvals'         = Map.insert v bv' $ --Map.fromList basis
-        solver = oneSolution inv
-        (terms', orph) = 
-          let f (m, xs) bv s = case oneSolution writeOverBasis bv (snd $ List.unzip basis) of
-                Just bv' -> (Map.insert bv' s m, xs)
-                Nothing  -> (m, s:xs)
-          in
-            Map.foldlWithKey f (Map.empty, []) $ terms st
-        orphans'       = orph ++ orphans st -}
+{- exists removes a variable (existentially quantifies it) then
+ - orphans all terms that are no longer in the linear span of the
+ - remaining variable states and assigns the quantified variable
+ - a fresh (linearly independent) state -}
 exists :: ID -> AnalysisState -> AnalysisState
 exists v st@(SOP dim qvals terms orphans) =
-  let qvalsReduce = Map.delete v qvals 
-      bv' = bitVec dim $ bitI $ dim - 1
-      aT  = fromList $ map F2Vec $ snd $ unzip $ Map.toList qvalsReduce -- maps a vector over std basis into qvals \ v
-      ag  = pseudoinverseT aT                  -- Note a(aTg)Ta=a
-      ag' = resizeMat (m ag + 1) (n ag) ag
-      qvals' = Map.map (getBV . head . vals . transpose . (mult ag') . transpose . fromList . (map F2Vec) . snd . unzip . Map.toList) qvalsReduce
-      f (m, xs) b s = 
-        let x = getBV $ head $ transpose $ mult ag' $ transpose $ fromList [b] in
-          if b == (getBV $ head $ transpose $ mult (transpose aT) $ transpose $ fromList [x])
-            then (Map.insert x s m, xs)
-            else (m, s:xs)
-      (terms', orph) = Map.foldWithKey f (Map.empty, []) terms
-      orphans' = orph ++ orphans
+  let (vars, vecs)  = unzip $ Map.toList $ Map.delete v qvals
+      (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
+      (dim', vecs') = addIndependent vecs
+      orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
   in
-    SOP dim (Map.insert v bv' qvals') terms' orphans'
+    SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') terms' orphans'
 
-updateQval :: ID -> BV -> AnalysisState -> AnalysisState
+updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Loc -> BV -> AnalysisState -> AnalysisState
+addTerm :: Loc -> F2Vec -> AnalysisState -> AnalysisState
 addTerm l bv st = st { terms = Map.alter f bv $ terms st }
   where f oldt = case oldt of
           Just (s, x) -> Just (Set.insert l s, x + 1 `mod` 8)
@@ -127,7 +91,7 @@ applyGate (H v, l) = do
 applyGate (CNOT c t, l) = do
   bvc <- getSt c
   bvt <- getSt t
-  modify $ updateQval t (bvc `xor` bvt)
+  modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt))
 
 applyGate (T v, l) = do
   bv <- getSt v
@@ -143,9 +107,9 @@ runAnalysis vars inputs gates =
   in
     execState (mapM applyGate $ zip gates [0..]) init
   where dim'    = length inputs
-        bitvecs = [bitVec dim' $ bitI x | x <- [0..]] 
+        bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
 {- Tests -}
-foo = [ T "x", CNOT "x" "y", T "x", T "y", CNOT "y" "x" ]
+foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x" ]
 runFoo = runAnalysis ["x", "y"] ["x", "y"] foo
