@@ -76,11 +76,11 @@ exists v st@(SOP dim qvals terms orphans) =
 updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Loc -> F2Vec -> AnalysisState -> AnalysisState
-addTerm l bv st = st { terms = Map.alter f bv $ terms st }
+addTerm :: Loc -> F2Vec -> Int -> AnalysisState -> AnalysisState
+addTerm l bv i st = st { terms = Map.alter f bv $ terms st }
   where f oldt = case oldt of
-          Just (s, x) -> Just (Set.insert l s, x + 1 `mod` 8)
-          Nothing     -> Just (Set.singleton l, 1)
+          Just (s, x) -> Just (Set.insert l s, x + i `mod` 8)
+          Nothing     -> Just (Set.singleton l, i `mod` 8)
  
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()
@@ -95,7 +95,11 @@ applyGate (CNOT c t, l) = do
 
 applyGate (T v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv
+  modify $ addTerm l bv 1
+
+applyGate (Tinv v, l) = do
+  bv <- getSt v
+  modify $ addTerm l bv 7
 
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =

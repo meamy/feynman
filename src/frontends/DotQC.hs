@@ -9,8 +9,10 @@ import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
 import Control.Monad
 
+import Syntax (ID, Primitive(..))
+
 type Nat = Word
-type ID = String
+--type ID = String
 
 {- A gate has an identifier, a non-negative number of iterations,
  - and a list of parameters -}
@@ -46,6 +48,40 @@ instance Show DotQC where
           i'  = ".i " ++ showLst (filter (`Set.member` i) q)
           o'  = ".o " ++ showLst (filter (`Set.member` o) q)
           bod = map show decls
+
+-- Transformations
+subst :: (ID -> ID) -> [Gate] -> [Gate]
+subst f = map $ \(Gate g i params) -> Gate g i $ map f params
+
+{-
+inline :: DotQC -> DotQC
+inline circ@(DotQC _ _ _ decls) =
+  let f decls def@(Decl _ _ body) = def':decls 
+  circ { decls = reverse $ foldl' f [] decls }
+-}
+
+gateToCliffordT :: Gate -> [Syntax.Primitive]
+gateToCliffordT (Gate g i p) =
+  let circ = case (g, p) of
+        ("H", [x])     -> [H x]
+        ("X", [x])     -> [X x]
+        ("tof", [x])   -> [X x]
+        ("Y", [x])     -> [Y x]
+        ("Z", [x])     -> [Z x]
+        ("S", [x])     -> [S x]
+        ("S*", [x])    -> [Sinv x]
+        ("T", [x])     -> [T x]
+        ("T*", [x])    -> [Tinv x]
+        ("tof", [x,y]) -> [CNOT x y]
+        ("Z", [x,y,z]) -> [H z, T x, T y, T z, CNOT x y, CNOT y z,
+                           CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
+                           Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
+  in
+    concat $ genericReplicate i circ
+
+
+toCliffordT :: [Gate] -> [Primitive]
+toCliffordT = concatMap gateToCliffordT
 
 -- Parsing
 
@@ -102,14 +138,17 @@ parseFile = do
   qubits <- parseHeaderLine ".v"
   inputs <- option qubits $ try $ parseHeaderLine ".i"
   outputs <- option qubits $ try $ parseHeaderLine ".o"
+  option qubits $ try $ parseHeaderLine ".c"
+  option qubits $ try $ parseHeaderLine ".ov"
   decls <- sepEndBy parseDecl skipWithBreak
   skipMany $ sep <|> delimiter
   eof
   return $ DotQC qubits (Set.fromList inputs) (Set.fromList outputs) decls
 
-parseDotQC = parse parseFile ".qc parser" 
+parseDotQC = parse parseFile ".qc parser"
 
--- Test
+
+-- Tests
 
 toffoli = DotQC { qubits  = ["x", "y", "z"],
                   inputs  = Set.fromList ["x", "y", "z"],
