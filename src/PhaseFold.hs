@@ -70,8 +70,11 @@ exists v st@(SOP dim qvals terms orphans) =
       (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
       orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
+      extendTerms   = Map.mapKeysMonotonic (F2Vec . (zeroExtend 1) . getBV)
   in
-    SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') terms' orphans'
+    if dim' > dim
+    then SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') (extendTerms terms') orphans'
+    else SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') terms' orphans'
 
 updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
