@@ -11,10 +11,13 @@ import DotQC
 --import TPar
 import PhaseFold
 
-testPhaseFold (DotQC q i o decls) = do
-  (Decl _ _ body) <- find (\(Decl n _ _) -> n == "main") decls
-  let gates = toCliffordT body
-  return $ runAnalysis q (Set.toList i) gates
+testPhaseFold qc@(DotQC q i o decs) = do
+  (Decl n p body) <- find (\(Decl n _ _) -> n == "main") decs
+  let gates  = toCliffordT body
+  let gates' = phaseFold q (Set.toList i) gates
+  let main   = Decl n p $ fromCliffordT gates'
+  Just $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+      
 
 main :: IO ()
 main = do

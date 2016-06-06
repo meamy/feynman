@@ -50,6 +50,34 @@ instance Show DotQC where
           bod = map show decls
 
 -- Transformations
+
+inv :: Gate -> Gate
+inv gate@(Gate g i p) =
+  case g of
+    "H"    -> gate
+    "X"    -> gate
+    "Y"    -> gate
+    "Z"    -> gate
+    "S"    -> Gate "S*" i p
+    "S*"   -> Gate "S" i p
+    "T"    -> Gate "T*" i p
+    "T*"   -> Gate "T" i p
+    "tof"  -> gate
+    "cnot" -> gate
+
+{-
+simplify :: [Gate] -> [Gate]
+simplify circ =
+  let circ' = zip circ [0..]
+      f (deps, er) (Gate g i p, uid) =
+        let temp = map (\q -> Map.lookup q deps) p
+        case foldM $ map Map.lookup p
+        if all foo p
+        then 
+  let erasures = foldr f [] circ'
+  foldl'
+-}
+
 subst :: (ID -> ID) -> [Gate] -> [Gate]
 subst f = map $ \(Gate g i params) -> Gate g i $ map f params
 
@@ -60,28 +88,47 @@ inline circ@(DotQC _ _ _ decls) =
   circ { decls = reverse $ foldl' f [] decls }
 -}
 
-gateToCliffordT :: Gate -> [Syntax.Primitive]
+gateToCliffordT :: Gate -> [Primitive]
 gateToCliffordT (Gate g i p) =
   let circ = case (g, p) of
-        ("H", [x])     -> [H x]
-        ("X", [x])     -> [X x]
-        ("tof", [x])   -> [X x]
-        ("Y", [x])     -> [Y x]
-        ("Z", [x])     -> [Z x]
-        ("S", [x])     -> [S x]
-        ("S*", [x])    -> [Sinv x]
-        ("T", [x])     -> [T x]
-        ("T*", [x])    -> [Tinv x]
-        ("tof", [x,y]) -> [CNOT x y]
-        ("Z", [x,y,z]) -> [H z, T x, T y, T z, CNOT x y, CNOT y z,
-                           CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
-                           Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
+        ("H", [x])      -> [H x]
+        ("X", [x])      -> [X x]
+        ("Y", [x])      -> [Y x]
+        ("Z", [x])      -> [Z x]
+        ("S", [x])      -> [S x]
+        ("S*", [x])     -> [Sinv x]
+        ("T", [x])      -> [T x]
+        ("T*", [x])     -> [Tinv x]
+        ("tof", [x])    -> [X x]
+        ("tof", [x,y])  -> [CNOT x y]
+        ("tof", [x,y,z])-> [H z, T x, T y, T z, CNOT x y, CNOT y z,
+                            CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
+                            Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
+        ("cnot", [x,y]) -> [CNOT x y]
+        ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
+                            CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
+                            Tinv x, CNOT y z, CNOT z x, CNOT x y]
   in
     concat $ genericReplicate i circ
 
 
 toCliffordT :: [Gate] -> [Primitive]
 toCliffordT = concatMap gateToCliffordT
+
+gateFromCliffordT :: Primitive -> Gate
+gateFromCliffordT g = case g of
+  H x      -> Gate "H" 1 [x]
+  X x      -> Gate "X" 1 [x]
+  Y x      -> Gate "Y" 1 [x]
+  Z x      -> Gate "Z" 1 [x]
+  S x      -> Gate "S" 1 [x]
+  Sinv x   -> Gate "S*" 1 [x]
+  T x      -> Gate "T" 1 [x]
+  Tinv x   -> Gate "T*" 1 [x]
+  CNOT x y -> Gate "tof" 1 [x, y]
+
+fromCliffordT :: [Primitive] -> [Gate]
+fromCliffordT = map gateFromCliffordT
 
 -- Parsing
 

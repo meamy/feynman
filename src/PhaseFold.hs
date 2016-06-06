@@ -2,17 +2,17 @@ module PhaseFold where
 
 import Data.List hiding (transpose)
 
-import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector
+import Data.BitVector hiding (replicate, foldr)
 import Syntax
 import Linear
 
-import Control.Monad.State
+import Control.Monad.State.Strict
 
 {-- Phase folding optimization -}
 {- We have two options for implementation here:
@@ -112,10 +112,43 @@ runAnalysis vars inputs gates =
               terms = Map.empty,
               orphans = [] }
   in
-    execState (mapM applyGate $ zip gates [0..]) init
+    execState (mapM_ applyGate $ zip gates [0..]) init
   where dim'    = length inputs
         bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
+
+minimalSequence :: ID -> Int -> [Primitive]
+minimalSequence x i = case i `mod` 8 of
+  0 -> []
+  1 -> [T x]
+  2 -> [S x]
+  3 -> [S x, T x]
+  4 -> [Z x]
+  5 -> [Z x, T x]
+  6 -> [Sinv x]
+  7 -> [Tinv x]
+
+phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+phaseFold vars inputs gates =
+  let (SOP _ _ terms orphans) = runAnalysis vars inputs gates
+      choose = Set.findMin
+      f gates (locs, exp) =
+        let i = choose locs
+            getTarget gate = case gate of
+              T x -> x
+              S x -> x
+              Z x -> x
+              Tinv x -> x
+              Sinv x -> x
+            g x@(gate, j) xs
+              | j == i            = (zip (minimalSequence (getTarget gate) exp) (repeat i)) ++ xs
+              | Set.member j locs = xs
+              | otherwise         = x:xs
+        in
+          foldr g [] gates
+  in
+    fst $ unzip $ foldl' f (zip gates [0..]) ((snd $ unzip $ Map.toList terms) ++ orphans)
+      
 
 {- Tests -}
 foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x" ]

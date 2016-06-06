@@ -27,5 +27,6 @@ executable feyn
                        bv, 
                        containers, 
                        mtl, 
-                       parsec, parsec-numbers
+                       parsec, parsec-numbers,
+                       deepseq
   default-language:    Haskell2010
