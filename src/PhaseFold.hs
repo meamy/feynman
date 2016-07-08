@@ -228,11 +228,13 @@ breakPath xs p = msum $ map (\l -> tryRemove xs l >>= \s -> Just (l, s)) p
 removeLoc :: Loc -> [(Primitive, Loc)] -> [(Primitive, Loc)]
 removeLoc l = filter (\(_, l') -> l /= l')
 
-mergePhases :: (Loc, Int) -> [(Primitive, Loc)] -> [(Primitive, Loc)]
-mergePhases (l, exp) = foldr g []
-  where g x@(gate, l') xs
-          | l == l'           = (zip (minimalSequence (getTarget gate) exp) (repeat l)) ++ xs
-          | otherwise         = x:xs
+mergePhases :: (Set Loc, Int) -> [(Primitive, Loc)] -> [(Primitive, Loc)]
+mergePhases (lset, exp) = foldr g []
+  where l = Set.findMin lset
+        g x@(gate, l') xs
+          | l == l'            = (zip (minimalSequence (getTarget gate) exp) (repeat l)) ++ xs
+          | Set.member l' lset = xs
+          | otherwise          = x:xs
         getTarget gate = case gate of
           T x -> x
           S x -> x
@@ -248,16 +250,15 @@ phasePhold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 phasePhold vars inputs gates =
   let analysis = runAnalysis vars inputs gates
       dg       = computeDG gates
-      sets     = (orphans analysis) ++ (snd $ unzip $ Map.toList $ terms analysis)
-      ts       = topsort dg
-      lp       = allLP dg ts
+      initsets = (orphans analysis) ++ (snd $ unzip $ Map.toList $ terms analysis)
+      initts   = topsort dg
       f gates sets ts lp = case Map.lookup 1 lp >>= \(_, path) -> breakPath sets path of
-        Nothing         -> foldr mergePhases gates $ chooseAll sets
+        Nothing         -> foldr mergePhases gates sets
         Just (l, sets') ->
           let (ts', lp') = quantNode dg ts lp l in
             f (removeLoc l gates) sets' ts' lp'
   in
-    fst $ unzip $ f (zip gates [2..]) sets ts lp
+    fst $ unzip $ f (zip gates [2..]) initsets initts (allLP dg initts)
 
 {- Tests -}
 foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x", T "x", S "y", H "y", Tinv "y" ]
