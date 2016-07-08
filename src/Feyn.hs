@@ -14,7 +14,7 @@ import PhaseFold
 testPhaseFold qc@(DotQC q i o decs) = do
   (Decl n p body) <- find (\(Decl n _ _) -> n == "main") decs
   let gates  = toCliffordT body
-  let gates' = phaseFold q (Set.toList i) gates
+  let gates' = phasePhold q (Set.toList i) gates
   let main   = Decl n p $ fromCliffordT gates'
   Just $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
       

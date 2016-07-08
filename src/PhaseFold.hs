@@ -8,11 +8,14 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector hiding (replicate, foldr)
+import Data.BitVector hiding (replicate, foldr, concat)
 import Syntax
 import Linear
 
 import Control.Monad.State.Strict
+
+import Data.Graph.Inductive as Graph
+import Data.Graph.Inductive.Query.DFS
 
 {-- Phase folding optimization -}
 {- We have two options for implementation here:
@@ -100,9 +103,21 @@ applyGate (T v, l) = do
   bv <- getSt v
   modify $ addTerm l bv 1
 
+applyGate (S v, l) = do
+  bv <- getSt v
+  modify $ addTerm l bv 2
+
+applyGate (Z v, l) = do
+  bv <- getSt v
+  modify $ addTerm l bv 4
+
 applyGate (Tinv v, l) = do
   bv <- getSt v
   modify $ addTerm l bv 7
+
+applyGate (Sinv v, l) = do
+  bv <- getSt v
+  modify $ addTerm l bv 6
 
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
@@ -112,7 +127,7 @@ runAnalysis vars inputs gates =
               terms = Map.empty,
               orphans = [] }
   in
-    execState (mapM_ applyGate $ zip gates [0..]) init
+    execState (mapM_ applyGate $ zip gates [2..]) init
   where dim'    = length inputs
         bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
@@ -147,9 +162,103 @@ phaseFold vars inputs gates =
         in
           foldr g [] gates
   in
-    fst $ unzip $ foldl' f (zip gates [0..]) ((snd $ unzip $ Map.toList terms) ++ orphans)
-      
+    fst $ unzip $ foldl' f (zip gates [2..]) ((snd $ unzip $ Map.toList terms) ++ orphans)
+   
+-- Phase dependence analysis
+type DG = Graph.Gr Loc ()
+
+addPhaseDep :: (DG, Map ID [Node]) -> ID -> Loc -> (DG, Map ID [Node])
+addPhaseDep (gr, deps) x l =
+  let deps' = Map.findWithDefault [0] x deps
+      edges = [(i, l, ()) | i <- deps']
+  in
+    (Graph.insEdges edges $ Graph.insNode (l, l) gr, Map.insert x [l] deps)
+
+applyDep :: (DG, Map ID [Node]) -> (Primitive, Loc) -> (DG, Map ID [Node])
+applyDep (gr, deps) (gate, l) = case gate of
+  H _      -> (gr, deps)
+  T x      -> addPhaseDep (gr, deps) x l
+  Tinv x   -> addPhaseDep (gr, deps) x l
+  S x      -> addPhaseDep (gr, deps) x l
+  Sinv x   -> addPhaseDep (gr, deps) x l
+  Z x      -> addPhaseDep (gr, deps) x l
+  CNOT c t ->
+    let cdeps = Map.findWithDefault [0] c deps
+        tdeps = Map.findWithDefault [0] t deps
+        deps' = cdeps ++ tdeps
+    in
+      (gr, Map.insert c deps' $ Map.insert t deps' deps)
+
+computeDG :: [Primitive] -> DG
+computeDG gates =
+  let initGR     = Graph.mkGraph [(0,0), (1,1)] []
+      initDeps   = Map.empty
+      (dg, deps) = foldl' applyDep (initGR, initDeps) $ zip gates [2..]
+      fedges     = [(i, 1, ()) | i <- foldr union [] $ Map.elems deps]
+  in
+    Graph.insEdges fedges dg
+
+updateLP :: DG -> Map Node (Int, [Node]) -> Node -> Map Node (Int, [Node])
+updateLP gr lp n = Map.insert n (l+1, n:path) lp
+  where (l, path)  = foldr f (0, []) $ Graph.pre gr n
+        f n (l, p) = case Map.lookup n lp of
+          Nothing       -> error "Topological sort failed"
+          Just (l', p') -> if l > l' then (l, p) else (l', p')
+
+allLP :: DG -> [Node] -> Map Node (Int, [Node])
+allLP gr = foldl' (updateLP gr) Map.empty
+
+-- Update the topological order and longest paths by quantifying out a node
+quantNode :: DG -> [Node] -> Map Node (Int, [Node]) -> Node -> ([Node], Map Node (Int, [Node]))
+quantNode gr ts lp n = (st++ts', foldl' (updateLP gr) lp' ts')
+  where (st, xts) = break (n ==) ts
+        ts'       = tail xts
+        lp'       = Map.adjust (\(l, p) -> (l-1, tail p)) n lp
+
+-- Combined algorithm
+tryRemove :: [(Set Loc, Int)] -> Loc -> Maybe [(Set Loc, Int)]
+tryRemove xs l = case break f xs of
+  (_, [])       -> Nothing
+  (xs', x:xs'') -> Just $ xs' ++ [(Set.delete l $ fst x, snd x)] ++ xs''
+  where f (locs, _) = Set.size locs > 1 && Set.member l locs
+
+breakPath :: [(Set Loc, Int)] -> [Node] -> Maybe (Loc, [(Set Loc, Int)])
+breakPath xs p = msum $ map (\l -> tryRemove xs l >>= \s -> Just (l, s)) p
+
+removeLoc :: Loc -> [(Primitive, Loc)] -> [(Primitive, Loc)]
+removeLoc l = filter (\(_, l') -> l /= l')
+
+mergePhases :: (Loc, Int) -> [(Primitive, Loc)] -> [(Primitive, Loc)]
+mergePhases (l, exp) = foldr g []
+  where g x@(gate, l') xs
+          | l == l'           = (zip (minimalSequence (getTarget gate) exp) (repeat l)) ++ xs
+          | otherwise         = x:xs
+        getTarget gate = case gate of
+          T x -> x
+          S x -> x
+          Z x -> x
+          Tinv x -> x
+          Sinv x -> x
+          otherwise -> error "Location is not a phase gate"
+
+chooseAll :: [(Set Loc, Int)] -> [(Loc, Int)]
+chooseAll = map $ \(s, exp) -> (Set.findMin s, exp)
+
+phasePhold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+phasePhold vars inputs gates =
+  let analysis = runAnalysis vars inputs gates
+      dg       = computeDG gates
+      sets     = (orphans analysis) ++ (snd $ unzip $ Map.toList $ terms analysis)
+      ts       = topsort dg
+      lp       = allLP dg ts
+      f gates sets ts lp = case Map.lookup 1 lp >>= \(_, path) -> breakPath sets path of
+        Nothing         -> foldr mergePhases gates $ chooseAll sets
+        Just (l, sets') ->
+          let (ts', lp') = quantNode dg ts lp l in
+            f (removeLoc l gates) sets' ts' lp'
+  in
+    fst $ unzip $ f (zip gates [2..]) sets ts lp
 
 {- Tests -}
-foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x" ]
+foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x", T "x", S "y", H "y", Tinv "y" ]
 runFoo = runAnalysis ["x", "y"] ["x", "y"] foo

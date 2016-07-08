@@ -12,8 +12,8 @@ maintainer:          matt.e.amy@gmail.com
 copyright:           2016 Matthew Amy
 -- category:            
 build-type:          Simple
--- cabal-version:       >=1.24
-cabal-version:       >=1.22
+cabal-version:       >=1.24
+-- cabal-version:       >=1.22
 
 executable feyn
   main-is:             Feyn.hs
@@ -28,5 +28,6 @@ executable feyn
                        containers, 
                        mtl, 
                        parsec, parsec-numbers,
-                       deepseq
+                       deepseq,
+                       fgl
   default-language:    Haskell2010
