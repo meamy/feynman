@@ -8,11 +8,12 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector hiding (replicate, foldr, concat)
+import Data.BitVector hiding (replicate, foldr, concat, reverse)
 import Syntax
 import Linear
 
 import Control.Monad.State.Strict
+import Control.Monad.Writer.Lazy
 
 import Data.Graph.Inductive as Graph
 import Data.Graph.Inductive.Query.DFS
@@ -140,7 +141,41 @@ emptySynth _ _ _ = []
 
 linearSynth :: Synthesizer
 linearSynth input output _ =
-  let inputg = pseudoinverse
+  let (ids, ivecs) = unzip $ Map.toList input
+      (idt, ovecs) = unzip $ Map.toList output
+      mat  = transformMat (fromList ivecs) (fromList ovecs)
+      rops = snd $ runWriter $ toReducedEchelon mat
+      f op = case op of
+        Add i j  -> [CNOT (ids !! i) (ids !! j)]
+        Swap i j ->
+          let (v, u) = (ids !! i, ids !! j) in
+            [CNOT v u, CNOT u v, CNOT v u]
+  in
+    if ids /= idt
+    then error "Fatal: map keys not equal"
+    else concatMap f rops
+
+synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
+synthVec ids vec =
+  let lst = zip ids $ reverse $ toBits $ getBV vec
+      f acc ((v, bv), insum) = case (insum, acc) of
+        (False, _)                 -> acc
+        (True, Nothing)            -> Just ((v, bv), [])
+        (_, Just ((t, bt), gates)) -> Just ((t, F2Vec $ getBV bt `xor` getBV bv), (CNOT v t):gates)
+  in
+    foldl' f Nothing lst
+
+cnotMin :: Synthesizer
+cnotMin input output [] = linearSynth input output []
+cnotMin input output ((x, i):xs) =
+  let ivecs  = Map.toList input
+      solver = minSolution $ fromList $ snd $ unzip ivecs
+  in
+    case solver x >>= synthVec ivecs of
+      Nothing            -> error "Fatal: something bad happened"
+      Just ((v, bv), gates) -> gates ++ minimalSequence v i ++ cnotMin (Map.insert v bv input) output xs
+  
+--minOverAll   = foldM (\min w -> Just $ minWt min $ solver w) 
 
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
