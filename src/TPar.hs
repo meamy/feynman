@@ -17,7 +17,17 @@ import Control.Monad.State.Strict
 import Data.Graph.Inductive as Graph
 import Data.Graph.Inductive.Query.DFS
 
+import PhaseFold (foo)
+
 {-- Generalized T-par -}
+{-  The idea is to traverse the circuit, tracking the phases,
+    and whenever a Hadamard (or more generally something that
+    maps a computational basis state to either a non-computational
+    basis state or a probabilistic mixture, i.e. measurement)
+    is applied synthesize a circuit for the phases that are no
+    longer in the state space. Synthesis can proceed by either
+    T-depth optimal matroid partitioning or CNOT-optimal ways -}
+       
 {- TODO: Merge with phase folding eventually -}
 
 data AnalysisState = SOP {
@@ -28,6 +38,8 @@ data AnalysisState = SOP {
 } deriving Show
 
 type Analysis = State AnalysisState
+
+type Synthesizer = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Int)] -> [Primitive]
 
 bitI :: Int -> Integer
 bitI = bit
@@ -49,70 +61,82 @@ getSt v = do
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> AnalysisState
-exists v st@(SOP dim qvals terms orphans) =
+exists :: ID -> AnalysisState -> Analysis [(F2Vec, Int)]
+exists v st@(SOP dim ivals qvals terms) =
   let (vars, vecs)  = unzip $ Map.toList $ Map.delete v qvals
       (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
-      orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
       extendTerms   = Map.mapKeysMonotonic (F2Vec . (zeroExtend 1) . getBV)
-  in
-    if dim' > dim
-    then SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') (extendTerms terms') orphans'
-    else SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') terms' orphans'
+      terms''       = if dim' > dim then extendTerms terms' else terms'
+      vals          = Map.fromList $ zip (vars ++ [v]) vecs'
+  in do
+    put $ SOP dim' vals vals terms''
+    return $ Map.toList orp
 
 updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Loc -> F2Vec -> Int -> AnalysisState -> AnalysisState
-addTerm l bv i st = st { terms = Map.alter f bv $ terms st }
+addTerm :: F2Vec -> Int -> AnalysisState -> AnalysisState
+addTerm bv i st = st { terms = Map.alter f bv $ terms st }
   where f oldt = case oldt of
-          Just (s, x) -> Just (Set.insert l s, x + i `mod` 8)
-          Nothing     -> Just (Set.singleton l, i `mod` 8)
+          Just x  -> Just $ x + i `mod` 8
+          Nothing -> Just $ i `mod` 8
  
 {-- The main analysis -}
-applyGate :: (Primitive, Loc) -> Analysis ()
-applyGate (H v, l) = do
-  bv <- getSt v
-  modify $ exists v
+applyGate :: Synthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
+applyGate synth gates g = case g of
+  T v      -> do
+    bv <- getSt v
+    modify $ addTerm bv 1
+    return gates
+  Tinv v   -> do
+    bv <- getSt v
+    modify $ addTerm bv 7
+    return gates
+  S v      -> do
+    bv <- getSt v
+    modify $ addTerm bv 2
+    return gates
+  Sinv v   -> do
+    bv <- getSt v
+    modify $ addTerm bv 6
+    return gates
+  Z v      -> do
+    bv <- getSt v
+    modify $ addTerm bv 4
+    return gates
+  CNOT c t -> do
+    bvc <- getSt c
+    bvt <- getSt t
+    modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt))
+    return gates
+  H v      -> do
+    bv <- getSt v
+    st <- get
+    orphans <- exists v st
+    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [H v]
 
-applyGate (CNOT c t, l) = do
-  bvc <- getSt c
-  bvt <- getSt t
-  modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt))
-
-applyGate (T v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv 1
-
-applyGate (S v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv 2
-
-applyGate (Z v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv 4
-
-applyGate (Tinv v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv 7
-
-applyGate (Sinv v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv 6
-
-runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
-runAnalysis vars inputs gates =
+finalize :: Synthesizer -> [Primitive] -> Analysis [Primitive]
+finalize synth gates = do
+  st <- get
+  return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
+    
+gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtpar synth vars inputs gates =
   let init = 
         SOP { dim = dim', 
+              ivals = Map.fromList ivals, 
               qvals = Map.fromList ivals, 
-              terms = Map.empty,
-              orphans = [] }
+              terms = Map.empty }
   in
-    execState (mapM_ applyGate $ zip gates [2..]) init
+    evalState (foldM (applyGate synth) [] gates >>= finalize synth) init
   where dim'    = length inputs
         bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
+
+{-- Synthesizers -}
+emptySynth :: Synthesizer
+emptySynth _ _ _ = []
 
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
@@ -124,127 +148,3 @@ minimalSequence x i = case i `mod` 8 of
   5 -> [Z x, T x]
   6 -> [Sinv x]
   7 -> [Tinv x]
-
-phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-phaseFold vars inputs gates =
-  let (SOP _ _ terms orphans) = runAnalysis vars inputs gates
-      choose = Set.findMin
-      f gates (locs, exp) =
-        let i = choose locs
-            getTarget gate = case gate of
-              T x -> x
-              S x -> x
-              Z x -> x
-              Tinv x -> x
-              Sinv x -> x
-            g x@(gate, j) xs
-              | j == i            = (zip (minimalSequence (getTarget gate) exp) (repeat i)) ++ xs
-              | Set.member j locs = xs
-              | otherwise         = x:xs
-        in
-          foldr g [] gates
-  in
-    fst $ unzip $ foldl' f (zip gates [2..]) ((snd $ unzip $ Map.toList terms) ++ orphans)
-   
--- Phase dependence analysis
-type DG = Graph.Gr Loc ()
-
-addPhaseDep :: (DG, Map ID [Node]) -> ID -> Loc -> (DG, Map ID [Node])
-addPhaseDep (gr, deps) x l =
-  let deps' = Map.findWithDefault [0] x deps
-      edges = [(i, l, ()) | i <- deps']
-  in
-    (Graph.insEdges edges $ Graph.insNode (l, l) gr, Map.insert x [l] deps)
-
-applyDep :: (DG, Map ID [Node]) -> (Primitive, Loc) -> (DG, Map ID [Node])
-applyDep (gr, deps) (gate, l) = case gate of
-  H _      -> (gr, deps)
-  T x      -> addPhaseDep (gr, deps) x l
-  Tinv x   -> addPhaseDep (gr, deps) x l
-  S x      -> addPhaseDep (gr, deps) x l
-  Sinv x   -> addPhaseDep (gr, deps) x l
-  Z x      -> addPhaseDep (gr, deps) x l
-  CNOT c t ->
-    let cdeps = Map.findWithDefault [0] c deps
-        tdeps = Map.findWithDefault [0] t deps
-        deps' = cdeps ++ tdeps
-    in
-      (gr, Map.insert c deps' $ Map.insert t deps' deps)
-
-computeDG :: [Primitive] -> DG
-computeDG gates =
-  let initGR     = Graph.mkGraph [(0,0), (1,1)] []
-      initDeps   = Map.empty
-      (dg, deps) = foldl' applyDep (initGR, initDeps) $ zip gates [2..]
-      fedges     = [(i, 1, ()) | i <- foldr union [] $ Map.elems deps]
-  in
-    Graph.insEdges fedges dg
-
-updateLP :: DG -> Map Node (Int, [Node]) -> Node -> Map Node (Int, [Node])
-updateLP gr lp n = Map.insert n (l+1, n:path) lp
-  where (l, path)  = foldr f (0, []) $ Graph.pre gr n
-        f n (l, p) = case Map.lookup n lp of
-          Nothing       -> error "Topological sort failed"
-          Just (l', p') -> if l > l' then (l, p) else (l', p')
-
-allLP :: DG -> [Node] -> Map Node (Int, [Node])
-allLP gr = foldl' (updateLP gr) Map.empty
-
--- Update the topological order and longest paths by quantifying out a node
-quantNode :: DG -> [Node] -> Map Node (Int, [Node]) -> Node -> ([Node], Map Node (Int, [Node]))
-quantNode gr ts lp n = (st++ts', foldl' (updateLP gr) lp' ts')
-  where (st, xts) = break (n ==) ts
-        ts'       = tail xts
-        lp'       = Map.adjust (\(l, p) -> (l-1, tail p)) n lp
-
--- Combined algorithm
-tryRemove :: [(Set Loc, Int)] -> Loc -> Maybe [(Set Loc, Int)]
-tryRemove xs l = case break f xs of
-  (_, [])       -> Nothing
-  (xs', x:xs'') -> Just $ xs' ++ [(Set.delete l $ fst x, snd x)] ++ xs''
-  where f (locs, _) = Set.size locs > 1 && Set.member l locs
-
-breakPath :: [(Set Loc, Int)] -> [Node] -> Maybe (Loc, [(Set Loc, Int)])
-breakPath xs p = msum $ map (\l -> tryRemove xs l >>= \s -> Just (l, s)) p
-
-removeLoc :: Loc -> [(Primitive, Loc)] -> [(Primitive, Loc)]
-removeLoc l = filter (\(_, l') -> l /= l')
-
-mergePhases :: (Set Loc, Int) -> [(Primitive, Loc)] -> [(Primitive, Loc)]
-mergePhases (lset, exp) = foldr g []
-  where l = Set.findMin lset
-        g x@(gate, l') xs
-          | l == l'            = (zip (minimalSequence (getTarget gate) exp) (repeat l)) ++ xs
-          | Set.member l' lset = xs
-          | otherwise          = x:xs
-        getTarget gate = case gate of
-          T x -> x
-          S x -> x
-          Z x -> x
-          Tinv x -> x
-          Sinv x -> x
-          otherwise -> error "Location is not a phase gate"
-
-chooseAll :: [(Set Loc, Int)] -> [(Loc, Int)]
-chooseAll = map $ \(s, exp) -> (Set.findMin s, exp)
-
-phasePhold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-phasePhold vars inputs gates =
-  let analysis = runAnalysis vars inputs gates
-      dg       = computeDG gates
-      initsets = (orphans analysis) ++ (snd $ unzip $ Map.toList $ terms analysis)
-      initts   = topsort dg
-      f gates sets ts lp = case Map.lookup 1 lp >>= \(_, path) -> breakPath sets path of
-        Nothing         -> foldr mergePhases gates sets
-        Just (l, sets') ->
-          let (ts', lp') = quantNode dg ts lp l in
-            f (removeLoc l gates) sets' ts' lp'
-  in
-    fst $ unzip $ f (zip gates [2..]) initsets initts (allLP dg initts)
-
-{- Tests -}
-foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x", T "x", S "y", H "y", Tinv "y" ]
-runFoo = runAnalysis ["x", "y"] ["x", "y"] foo
-
-
-{-- Generalize T-par --}
