@@ -218,14 +218,14 @@ toEchelon mat@(F2Mat m n vals) =
           xs' <- zeroAll j y xs
           return $ x:xs'
 
-      toUpper j [] = return []
+      toUpper j [] = return $ []
       toUpper j xs
         | j >= n    = return $ xs
         | otherwise = case break (isOne j) xs of
             (_, [])      -> toUpper (j+1) xs
             ([], x:xs)   -> do
               xs' <- toUpper (j+1) =<< zeroAll j x xs
-              return $ x:xs
+              return $ x:xs'
             (x:xs, y:ys) -> do
               let x' = (fst y, snd x)
               let y' = (fst x, snd y)
@@ -267,6 +267,11 @@ toReducedEchelon mat@(F2Mat m n vals) =
               toUpper (j+1) (x':sx') xs'
   in
     toUpper 0 [] (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
+
+rank :: F2Mat -> Int
+rank mat =
+  let (echelon, _) = runWriter $ toEchelon mat in
+    foldr (\v tot -> if BitVector.popCount (getBV v) > 0 then tot + 1 else tot) 0 $ vals echelon
 
 columnReduceDry :: F2Mat -> Writer [ROp] Int
 columnReduceDry mat@(F2Mat m n vals) =
@@ -321,6 +326,10 @@ increaseRank mat@(F2Mat m n vals) =
             (x:xs, y:ys) -> toUpper (j+1) $ zeroAll j y (xs ++ x:ys)
   in
     toUpper 0 vals
+
+{- Transformation matrix from one set of vectors to another -}
+transformMat :: F2Mat -> F2Mat -> F2Mat
+transformMat a b = mult b $ pseudoinverse a
 
 {- Solving linear systems, optimized for partial evaluation on a matrix -}
 solver, solverT, solverReduced :: F2Mat -> F2Mat
@@ -406,6 +415,11 @@ arbitraryFixed m n = do
   vals <- sequence $ replicate m genRow
   return $ F2Mat m n vals
 
+-- Generate a matrix whose rowspace is a subspace of it's argument's
+arbitrarySubspace :: F2Mat -> Gen F2Mat
+arbitrarySubspace a =
+  liftM (multT a) $ arbitraryFixed (m a) (m a)
+
 {- Properties of unary operators -}
 invol, idemp :: Eq a => (a -> a) -> (a -> Bool)
 
@@ -425,6 +439,12 @@ rinv   f i inv = \a -> f a (inv a) == i
 assoc  f = \a b c -> f a (f b c) == f (f a b) c
 commut f = \a b   -> f a b == f b a
 
+{- Matrix properties -}
+isSquare, isInvertible :: F2Mat -> Bool
+
+isSquare mat = m mat == n mat
+isInvertible mat = isSquare mat && rank mat == m mat
+
 prop_TransposeInvolutive = invol transpose
 prop_ToEchelonIdempotent = idemp (fst . runWriter . toEchelon)
 prop_ToReducedEchelonIdempotent = idemp (fst . runWriter . toReducedEchelon)
@@ -434,6 +454,10 @@ prop_MultAssociative = do
   c <- arbitraryFixedM $ n b
   return $ assoc mult a b c
 prop_PseudoinverseCorrect = \m -> m == mult (mult m $ pseudoinverse m) m
+prop_TransformMatCorrect = do
+  a <- arbitrary
+  b <- arbitrarySubspace a
+  return $ mult (transformMat a b) a == b
 
 tests :: () -> IO ()
 tests _ = do
@@ -442,6 +466,7 @@ tests _ = do
   quickCheck $ prop_ToReducedEchelonIdempotent
   quickCheck $ prop_MultAssociative
   quickCheck $ prop_PseudoinverseCorrect
+  quickCheck $ prop_TransformMatCorrect
 
 {-
 toBlockSingular :: F2Mat -> (F2Mat, Int, [(Int, Int)])

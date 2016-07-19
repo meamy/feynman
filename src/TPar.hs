@@ -138,6 +138,10 @@ gtpar synth vars inputs gates =
 emptySynth :: Synthesizer
 emptySynth _ _ _ = []
 
+linearSynth :: Synthesizer
+linearSynth input output _ =
+  let inputg = pseudoinverse
+
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
   0 -> []
