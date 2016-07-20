@@ -169,7 +169,7 @@ cnotMin :: Synthesizer
 cnotMin input output [] = linearSynth input output []
 cnotMin input output ((x, i):xs) =
   let ivecs  = Map.toList input
-      solver = minSolution $ fromList $ snd $ unzip ivecs
+      solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
   in
     case solver x >>= synthVec ivecs of
       Nothing            -> error "Fatal: something bad happened"

@@ -99,7 +99,7 @@ coc = transpose . fromList
 {- Matrix multiplication -}
 mult :: F2Mat -> F2Mat -> F2Mat
 mult a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
-  | an /= bm  = error "Incompatible matrix dimensions"
+  | an /= bm  = error $ "Incompatible matrix dimensions:\n" ++ show a ++ "\n\n" ++ show b ++ "\n"
   | otherwise = F2Mat am bn $ map (F2Vec . multRow) avals
     where multRow v       = foldl' (f v) (BitVector.bitVec bn 0) $ zip bvals [0..]
           f v sum (v', i) = if (getBV v) @. i then sum `xor` (getBV v') else sum
