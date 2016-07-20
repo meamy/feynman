@@ -175,7 +175,21 @@ cnotMin input output ((x, i):xs) =
       Nothing            -> error "Fatal: something bad happened"
       Just ((v, bv), gates) -> gates ++ minimalSequence v i ++ cnotMin (Map.insert v bv input) output xs
   
---minOverAll   = foldM (\min w -> Just $ minWt min $ solver w) 
+cnotMinMore :: Synthesizer
+cnotMinMore input output [] = linearSynth input output []
+cnotMinMore input output (x:xs) =
+  let ivecs  = Map.toList input
+      solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
+      takeMin (bv, x, acc) x' bv' =
+        if wt bv <= wt bv'
+        then Just (bv, x, x':acc)
+        else Just (bv', x', x:acc)
+      f (bv, x, acc) x' = solver (fst x') >>= takeMin (bv, x, acc) x'
+      synthIt (bv, (_, i), acc) = synthVec ivecs bv >>= \(res, gates) -> Just (res, i, gates, acc)
+  in
+    case solver (fst x) >>= \bv -> foldM f (bv, x, []) xs >>= synthIt of
+      Nothing                    -> error "Fatal: something bad happened"
+      Just ((v, bv), i, gates, xs') -> gates ++ minimalSequence v i ++ cnotMin (Map.insert v bv input) output xs'
 
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of

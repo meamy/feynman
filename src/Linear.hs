@@ -32,6 +32,9 @@ bb i j = F2Vec $ BitVector.bitVec i j
 allVecs :: Int -> [F2Vec]
 allVecs n = map (bb n) [0..2^n-1]
 
+wt :: F2Vec -> Int
+wt u = BitVector.popCount $ getBV u
+
 minWt :: F2Vec -> F2Vec -> F2Vec
 minWt u v = if BitVector.popCount (getBV u) < BitVector.popCount (getBV v) then u else v
 
