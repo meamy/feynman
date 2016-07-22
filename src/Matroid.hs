@@ -6,6 +6,8 @@ import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Debug.Trace
+
 -- Replace with a union-find-delete implementation eventually
 data Partition a = Partition [Set a] deriving (Show)
 
@@ -50,34 +52,38 @@ partitionElem x (Partition xs) =
         path :< queue' ->
           case processNode path (queue', seen) (Partition xs) of
             Left partition        -> partition
-            Right (queue', seen') -> bfs (queue', seen')
+            Right (queue'', seen') -> bfs (queue'', seen')
   in
-    bfs (Seq.singleton [x], Set.empty)
+    bfs (Seq.singleton [x], Set.singleton x)
 
 applyUpdates :: Ord a => [a] -> Partition a -> Partition a
 applyUpdates []       partition = partition
-applyUpdates (x:[])   partition = partition
-applyUpdates (x:y:xs) partition = applyUpdates (y:xs) $ swap x y partition
+applyUpdates (x:[])   partition = case partition of
+  Partition []     -> error "Impossible"
+  Partition (s:xs) -> Partition $ (Set.insert x s):xs
+applyUpdates (x:y:xs) partition = applyUpdates (y:xs) $ swap y x partition
 
 tryUpdate :: Matroid a => [a] -> (Seq [a], Set a) -> Set a -> Either (Set a) (Seq [a], Set a)
 tryUpdate [] _ _                     = error "Fatal: queue has an empty path"
-tryUpdate path@(x:_) (queue, seen) s =
-  let s' = Set.insert x s
-      f (queue, seen) y =
-        if Set.notMember y seen && independentFrom s' y
-        then (queue |> (y:path), Set.insert y seen)
-        else (queue, seen)
-  in
-    case independent s of
-      True  -> Left s'
-      False -> Right $ Set.foldl f (queue, seen) s
+tryUpdate path@(x:_) (queue, seen) s
+  | Set.member x s = Right (queue, seen)
+  | otherwise      =
+    let s' = Set.insert x s
+        f (queue, seen) y =
+          if Set.notMember y seen && independent (Set.delete y s')
+          then (queue |> (y:path), Set.insert y seen)
+          else (queue, seen)
+    in
+      case independent s' of
+        True  -> Left s'
+        False -> Right $ Set.foldl f (queue, seen) s
 
 processNode :: Matroid a => [a] -> (Seq [a], Set a) -> Partition a -> Either (Partition a) (Seq [a], Set a)
 processNode path (queue, seen) (Partition xs) =
   let processNodeAcc (queue, seen) sx []     = Right (queue, seen)
       processNodeAcc (queue, seen) sx (s:xs) =
         case tryUpdate path (queue, seen) s of
-          Left s'               -> Left $ applyUpdates path $ Partition (sx ++ s':xs)
+          Left s'               -> Left $ applyUpdates (reverse path) $ Partition (s:sx++xs)
           Right (queue', seen') -> processNodeAcc (queue', seen') (s:sx) xs
   in
     processNodeAcc (queue, seen) [] xs

@@ -18,6 +18,8 @@ import qualified Data.Set as Set
 import Data.BitVector (BV, (@.), xor)
 import qualified Data.BitVector as BitVector
 
+import Matroid
+
 import Test.QuickCheck
 
 newtype F2Vec = F2Vec { getBV :: BV } deriving (Eq, Ord)
@@ -25,6 +27,9 @@ newtype F2Vec = F2Vec { getBV :: BV } deriving (Eq, Ord)
 instance Show F2Vec where
   show (F2Vec b) = map (f . (b @.)) [0..BitVector.size b - 1]
     where f b = if b then '1' else '0'
+
+instance Matroid F2Vec where
+  independent s = (Set.size s) == (rank $ fromList $ Set.toList s)
 
 bb :: Int -> Int -> F2Vec
 bb i j = F2Vec $ BitVector.bitVec i j
@@ -462,6 +467,15 @@ prop_TransformMatCorrect = do
   b <- arbitrarySubspace a
   return $ mult (transformMat a b) a == b
 
+prop_MatroidPartition = do
+  a <- arbitrary
+  case foldr partitionElem (Partition []) (filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a) of
+    Partition xs -> return $ Set.fromList (vals a) == foldr Set.union Set.empty xs
+prop_MatroidCorrect = do
+  a <- arbitrary
+  case foldr partitionElem (Partition []) (filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a) of
+    Partition xs -> return $ all independent xs
+
 tests :: () -> IO ()
 tests _ = do
   quickCheck $ prop_TransposeInvolutive
@@ -470,3 +484,4 @@ tests _ = do
   quickCheck $ prop_MultAssociative
   quickCheck $ prop_PseudoinverseCorrect
   quickCheck $ prop_TransformMatCorrect
+  quickCheck $ prop_MatroidCorrect
