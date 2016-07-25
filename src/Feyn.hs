@@ -52,6 +52,21 @@ testCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") dec
       print ret
       return $ Just ret
 
+testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
+  Nothing -> return Nothing
+  Just (Decl n p body) ->
+    let gates  = toCliffordT body
+        gates' = gtpar tparMore q (Set.toList i) gates
+        main   = Decl n p $ fromCliffordT gates'
+        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+    in do
+      putStrLn "# Original circuit statistics:"
+      printStats gates
+      putStrLn "# Optimized circuit statistics:"
+      printStats gates'
+      print ret
+      return $ Just ret
+
 main :: IO ()
 main = do
   putStrLn "# Feyn -- copywrite 2016 Matthew Amy"
@@ -59,4 +74,4 @@ main = do
   s      <- readFile f
   case parseDotQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
-    Right circuit -> testCnotMin circuit >> return ()
+    Right circuit -> testTpar circuit >> return ()

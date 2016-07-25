@@ -335,6 +335,31 @@ increaseRank mat@(F2Mat m n vals) =
   in
     toUpper 0 vals
 
+increaseRankN :: F2Mat -> Int -> F2Mat
+increaseRankN mat@(F2Mat m n vals) r = 
+  let isOne j v = getBV v @. j
+
+      zeroAll j y []     = []
+      zeroAll j y (x:xs) =
+        let xs' = zeroAll j y xs in
+          if getBV x @. j
+          then (F2Vec $ getBV y `xor` getBV x):xs'
+          else x:xs'
+
+      toUpper j xs r vecs
+        | r == 0    = mat { vals = vals ++ vecs }
+        | j >= n    =
+          let mat'@(F2Mat _ _ vals') = resizeMat m (n+r) mat
+              vecs = [F2Vec $ BitVector.shift (BitVector.bitVec (n+r) 1) i | i <- [n..n+r-1]]
+          in
+            mat' { vals = vals' ++ vecs }
+        | otherwise = case break (isOne j) xs of
+            (_, [])      -> toUpper (j+1) xs (r-1) $ (F2Vec $ BitVector.shift (BitVector.bitVec n 1) j):vecs
+            ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) r vecs
+            (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys)) r vecs
+  in
+    toUpper 0 vals r []
+
 {- Transformation matrix from one set of vectors to another -}
 transformMat :: F2Mat -> F2Mat -> F2Mat
 transformMat a b = mult b $ pseudoinverse a

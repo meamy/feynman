@@ -150,9 +150,9 @@ linearSynth input output _ =
       rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j -> []
-          --let (v, u) = (ids !! i, ids !! j) in
-            --[CNOT v u, CNOT u v, CNOT v u]
+        Swap i j ->
+          let (v, u) = (ids !! i, ids !! j) in
+            [CNOT v u, CNOT u v, CNOT v u]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
@@ -199,17 +199,40 @@ cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
 
 instance Matroid (F2Vec, Int) where
-  independent = independent . Set.fromList . fst . unzip . Set.toList
-{-
-tpar :: Synthesize
+  independent s =
+    let (vecs, exps) = unzip $ Set.toList s in
+      (all (\i -> i `mod` 2 == 1) exps || all (\i -> i `mod` 2 == 0) exps) && independent (Set.fromList vecs)
+
+tpar :: Synthesizer
 tpar input output [] = linearSynth input output []
 tpar input output xs =
-  let partition     = partitionAll xs
-      f (circ, i) s =
+  let partition      = partitionAll xs
+      (circ, input') = trace ("Partitions: " ++ show partition ++ "\n") $ foldr synthPartition ([], input) partition
+  in
+    circ ++ linearSynth input' output []
 
-synthPartition input set =
-  let (
--}
+synthPartition set (circ, input) =
+  let (ids, ivecs) = unzip $ Map.toList input
+      (vecs, exps) = unzip $ Set.toList set
+      inp = fromList ivecs
+      targ = fromList vecs
+      mat = increaseRankN (transformMat inp targ) (length input - length vecs)
+      rops = snd $ runWriter $ toReducedEchelon mat
+      f op = case op of
+        Add i j  -> [CNOT (ids !! i) (ids !! j)]
+        Swap i j ->
+          let (v, u) = (ids !! i, ids !! j) in
+            [CNOT v u, CNOT u v, CNOT v u]
+      g (n, i) = minimalSequence (ids !! i) n
+      perm = concatMap f rops
+      phase = concatMap g (zip exps [0..])
+      output = Map.fromList $ zip ids $ vals $ mult mat inp
+  in
+    (circ++perm++phase, output)
+
+tparMore input output xs = tpar input output xs'
+  where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
+  
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
   0 -> []
