@@ -192,28 +192,34 @@ cnotMinMore input output (x:xs) =
   in
     case solver (fst x) >>= \bv -> foldM f (bv, x, []) xs >>= synthIt of
       Nothing                       -> error "Fatal: something bad happened"
-      Just ((v, bv), i, gates, xs') -> gates ++ minimalSequence v i ++ cnotMinMore (Map.insert v bv input) output xs'
+      Just ((v, bv), i, g, xs') -> g ++ minimalSequence v i ++ cnotMinMore (Map.insert v bv input) output xs'
 
 cnotMinMost :: Synthesizer
 cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
 
-instance Matroid (F2Vec, Int) where
-  independent s =
-    let (vecs, exps) = unzip $ Set.toList s in
-      (all (\i -> i `mod` 2 == 1) exps || all (\i -> i `mod` 2 == 0) exps) && independent (Set.fromList vecs)
+-- The Matroid from the t-par paper [AMM2014]
+instance Matroid ((F2Vec, Int), Int) where
+  independent s
+    | Set.null s = True
+    | otherwise  =
+      let ((v, _), n) = head $ Set.toList s
+          (vecs, exps) = unzip $ fst $ unzip $ Set.toList s
+      in
+      (all (\i -> i `mod` 2 == 1) exps || all (\i -> i `mod` 2 == 0) exps)
+      && width (getBV v) - rank (fromList vecs) <= n - (length vecs)
 
 tpar :: Synthesizer
 tpar input output [] = linearSynth input output []
 tpar input output xs =
-  let partition      = partitionAll xs
-      (circ, input') = trace ("Partitions: " ++ show partition ++ "\n") $ foldr synthPartition ([], input) partition
+  let partition      = partitionAll (zip xs $ repeat $ length input)
+      (circ, input') = foldr synthPartition ([], input) partition
   in
     circ ++ linearSynth input' output []
 
 synthPartition set (circ, input) =
   let (ids, ivecs) = unzip $ Map.toList input
-      (vecs, exps) = unzip $ Set.toList set
+      (vecs, exps) = unzip $ fst $ unzip $ Set.toList set
       inp = fromList ivecs
       targ = fromList vecs
       mat = increaseRankN (transformMat inp targ) (length input - length vecs)
