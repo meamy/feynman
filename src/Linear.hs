@@ -469,12 +469,12 @@ prop_TransformMatCorrect = do
 
 prop_MatroidPartition = do
   a <- arbitrary
-  case foldr partitionElem (Partition []) (filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a) of
-    Partition xs -> return $ Set.fromList (vals a) == foldr Set.union Set.empty xs
+  let vecs = filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a
+  return $ (Set.fromList vecs) == (foldr Set.union Set.empty $ partitionAll vecs)
 prop_MatroidCorrect = do
   a <- arbitrary
-  case foldr partitionElem (Partition []) (filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a) of
-    Partition xs -> return $ all independent xs
+  let vecs = filter (\bv -> BitVector.popCount (getBV bv) /= 0) $ vals a
+  return $ all independent $ partitionAll vecs
 
 tests :: () -> IO ()
 tests _ = do

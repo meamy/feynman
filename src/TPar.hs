@@ -19,6 +19,9 @@ import Data.Graph.Inductive as Graph
 import Data.Graph.Inductive.Query.DFS
 
 import PhaseFold (foo)
+import Matroid
+
+import Debug.Trace
 
 {-- Generalized T-par -}
 {-  The idea is to traverse the circuit, tracking the phases,
@@ -147,9 +150,9 @@ linearSynth input output _ =
       rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j ->
-          let (v, u) = (ids !! i, ids !! j) in
-            [CNOT v u, CNOT u v, CNOT v u]
+        Swap i j -> []
+          --let (v, u) = (ids !! i, ids !! j) in
+            --[CNOT v u, CNOT u v, CNOT v u]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
@@ -188,9 +191,25 @@ cnotMinMore input output (x:xs) =
       synthIt (bv, (_, i), acc) = synthVec ivecs bv >>= \(res, gates) -> Just (res, i, gates, acc)
   in
     case solver (fst x) >>= \bv -> foldM f (bv, x, []) xs >>= synthIt of
-      Nothing                    -> error "Fatal: something bad happened"
-      Just ((v, bv), i, gates, xs') -> gates ++ minimalSequence v i ++ cnotMin (Map.insert v bv input) output xs'
+      Nothing                       -> error "Fatal: something bad happened"
+      Just ((v, bv), i, gates, xs') -> gates ++ minimalSequence v i ++ cnotMinMore (Map.insert v bv input) output xs'
 
+cnotMinMost :: Synthesizer
+cnotMinMost input output xs = cnotMinMore input output xs'
+  where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
+
+instance Matroid (F2Vec, Int) where
+  independent = independent . Set.fromList . fst . unzip . Set.toList
+{-
+tpar :: Synthesize
+tpar input output [] = linearSynth input output []
+tpar input output xs =
+  let partition     = partitionAll xs
+      f (circ, i) s =
+
+synthPartition input set =
+  let (
+-}
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
   0 -> []
