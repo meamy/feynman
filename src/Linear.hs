@@ -15,7 +15,7 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector (BV, (@.), xor)
+import Data.BitVector (BV, (@.), xor, (@@))
 import qualified Data.BitVector as BitVector
 
 import Matroid
@@ -275,6 +275,70 @@ toReducedEchelon mat@(F2Mat m n vals) =
               toUpper (j+1) (x':sx') xs'
   in
     toUpper 0 [] (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
+
+toReducedEchelonSqr :: F2Mat -> Writer [ROp] F2Mat
+toReducedEchelonSqr mat = censor transposeROps . toEchelon . transpose =<< toEchelon mat
+
+{- The Patel, Markov & Hayes elimination algorithm for minimizing row operations -}
+toEchelonPMH :: Int -> F2Mat -> Writer [ROp] F2Mat
+toEchelonPMH width mat@(F2Mat m n vals) =
+  let isOne j (v,_) = getBV v @. j
+
+      removeDuplicates j (patterns, vals) v@(F2Vec bv, r) =
+        let subbv = bv @@ (min (j+width-1) (n-1), j) in
+          if BitVector.popCount bv < 2 then return (patterns, v:vals) else
+          case Map.lookup subbv patterns of
+            Nothing              -> return (Map.insert subbv v patterns, v:vals)
+            Just (F2Vec bv', r') -> do
+              tell [Add r' r]
+              return (patterns, (F2Vec $ bv `xor` bv', r):vals)
+
+      zeroAll j y []     = return []
+      zeroAll j y (x:xs) =
+        if getBV (fst x) @. j
+        then do
+          tell [Add (snd y) (snd x)]
+          xs' <- zeroAll j y xs
+          return $ (F2Vec $ getBV (fst y) `xor` getBV (fst x), snd x):xs'
+        else do
+          xs' <- zeroAll j y xs
+          return $ x:xs'
+
+      toUpper j [] = return $ []
+      toUpper j xs
+        | j >= n             = return $ xs
+        | j `mod` width == 0 = do
+          (_, xsR) <- foldM (removeDuplicates j) (Map.empty, []) xs
+          case break (isOne j) (reverse xsR) of
+            (_, [])      -> toUpper (j+1) (reverse xsR)
+            ([], x:xs)   -> do
+              xs' <- toUpper (j+1) =<< zeroAll j x xs
+              return $ x:xs'
+            (x:xs, y:ys) -> do
+              let x' = (fst y, snd x)
+              let y' = (fst x, snd y)
+              tell [Swap (snd x) (snd y)]
+              xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
+              return $ x':xs'
+        | otherwise =
+          case break (isOne j) xs of
+            (_, [])      -> toUpper (j+1) xs
+            ([], x:xs)   -> do
+              xs' <- toUpper (j+1) =<< zeroAll j x xs
+              return $ x:xs'
+            (x:xs, y:ys) -> do
+              let x' = (fst y, snd x)
+              let y' = (fst x, snd y)
+              tell [Swap (snd x) (snd y)]
+              xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
+              return $ x':xs'
+  in
+    toUpper 0 (zip vals [0..]) >>= return . F2Mat m n . fst . unzip
+
+toReducedEchelonPMH :: F2Mat -> Writer [ROp] F2Mat
+toReducedEchelonPMH mat =
+  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+    censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
 
 rank :: F2Mat -> Int
 rank mat =
