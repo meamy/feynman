@@ -23,12 +23,20 @@ printStats xs =
     putStrLn $ "# T-count:    " ++ show ts
 
 
-testPhaseFold qc@(DotQC q i o decs) = do
-  (Decl n p body) <- find (\(Decl n _ _) -> n == "main") decs
-  let gates  = toCliffordT body
-  let gates' = phasePhold q (Set.toList i) gates
-  let main   = Decl n p $ fromCliffordT gates'
-  Just $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+testPhaseFold qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
+  Nothing -> return Nothing
+  Just (Decl n p body) ->
+    let gates  = toCliffordT body
+        gates' = phaseFold q (Set.toList i) gates
+        main   = Decl n p $ fromCliffordT gates'
+        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+    in do
+      putStrLn "# Original circuit statistics:"
+      printStats gates
+      putStrLn "# Optimized circuit statistics:"
+      printStats gates'
+      print ret
+      return $ Just ret
       
 {-testCnotMin qc@(DotQC q i o decs) = do
   (Decl n p body) <- find (\(Decl n _ _) -> n == "main") decs
@@ -74,4 +82,4 @@ main = do
   s      <- readFile f
   case parseDotQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
-    Right circuit -> testTpar circuit >> return ()
+    Right circuit -> testPhaseFold circuit >> return ()
