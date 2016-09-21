@@ -49,7 +49,7 @@ testCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") dec
   Nothing -> return Nothing
   Just (Decl n p body) ->
     let gates  = toCliffordT body
-        gates' = gtpar cnotMinMost q (Set.toList i) gates
+        gates' = gtpar cnotMinGray q (Set.toList i) gates
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in do
@@ -82,4 +82,4 @@ main = do
   s      <- readFile f
   case parseDotQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
-    Right circuit -> testPhaseFold circuit >> return ()
+    Right circuit -> testCnotMin circuit >> return ()

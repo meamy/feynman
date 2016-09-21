@@ -2,7 +2,7 @@ module TPar where
 
 import Data.List hiding (transpose)
 
-import Data.Map.Strict (Map)
+import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
 import Data.Set (Set)
@@ -274,18 +274,22 @@ findColumnSplit (c:cs) vecs = foldl' g init cs
           let (l', r') = f c' in
             if length r' > length r then (l', c', c:cs, r') else (l, c, c':cs, r)
 
-graySynthesis :: [ID] -> [Pt] -> [Primitive]
-graySynthesis ids []     = []
-graySynthesis ids (x:xs) = case x of
-  Pt _ _ _ [] -> graySynthesis ids xs
-  Pt c (Just t) (Just p) v -> 
-    let act = [CNOT (ids !! p) (ids !! t)]
-        res = (Pt c (Just t) Nothing v):(adjust t p xs)
-    in
-      act ++ graySynthesis ids res
-  Pt [] (Just t) Nothing [(_, a)] ->
-    let act = minimalSequence (ids !! t) a in
-      act ++ graySynthesis ids xs
+graySynthesis :: [ID] -> Map ID F2Vec -> [Pt] -> Writer [Primitive] (Map ID F2Vec)
+graySynthesis ids out []     = return out
+graySynthesis ids out (x:xs) = case x of
+  Pt _ _ _ [] -> graySynthesis ids out xs
+  Pt c (Just t) (Just p) v ->
+    let idp  = ids !! p
+        idt  = ids !! t
+        xs'  = (Pt c (Just t) Nothing v):(adjust t p xs)
+        out' = case (out!idp, out!idt) of
+          (F2Vec bvp, F2Vec bvt) -> Map.insert idt (F2Vec $ bvp `xor` bvt) out
+    in do
+      tell [CNOT idp idt]
+      graySynthesis ids out' xs'
+  Pt [] (Just t) Nothing [(_, a)] -> do
+    tell $ minimalSequence (ids !! t) a
+    graySynthesis ids out xs
   Pt (c:cs) targ Nothing vecs ->
     let (vl, c', cs', vr) = findColumnSplit (c:cs) vecs
         xzero = Pt cs' targ Nothing vl
@@ -293,10 +297,25 @@ graySynthesis ids (x:xs) = case x of
           Just t  -> Pt cs' targ (Just c') vr
           Nothing -> Pt cs' (Just c') Nothing vr
     in
-      graySynthesis ids $ xzero:xone:xs
+      graySynthesis ids out $ xzero:xone:xs
+
+cnotMinGray :: Synthesizer
+cnotMinGray input output [] = linearSynth input output []
+cnotMinGray input output xs =
+  let ivecs  = Map.toList input
+      solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
+  in
+    case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
+      Nothing  -> error "Fatal: something bad happened"
+      Just xs' ->
+        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
+        in
+          gates ++ linearSynth outin output []
 
 {- Temp for testing -}
 ids  = ["a", "b", "c"]
+ot   = Map.fromList [("a", bb 3 1), ("b", bb 3 2), ("c", bb 3 4)]
 cs   = [0, 1, 2]
 vecs = tail $ zip (allVecs 3) (repeat 1)
-test = graySynthesis ids [Pt cs Nothing Nothing vecs]
+test = graySynthesis ids ot [Pt cs Nothing Nothing vecs]
