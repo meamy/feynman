@@ -8,7 +8,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector hiding (replicate, foldr, concat, reverse)
+import Data.BitVector hiding (replicate, foldr, concat, reverse, not)
 import Syntax
 import Linear
 
@@ -147,12 +147,13 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      rops = snd $ runWriter $ toReducedEchelon mat
+      rops = snd $ runWriter $ toReducedEchelonSqr mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j ->
-          let (v, u) = (ids !! i, ids !! j) in
-            [CNOT v u, CNOT u v, CNOT v u]
+        Swap i j -> []
+        --Swap i j ->
+        --  let (v, u) = (ids !! i, ids !! j) in
+        --    [CNOT v u, CNOT u v, CNOT v u]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
@@ -226,9 +227,10 @@ synthPartition set (circ, input) =
       rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j ->
-          let (v, u) = (ids !! i, ids !! j) in
-            [CNOT v u, CNOT u v, CNOT v u]
+        Swap i j -> []
+        --Swap i j ->
+        --  let (v, u) = (ids !! i, ids !! j) in
+        --    [CNOT v u, CNOT u v, CNOT v u]
       g (n, i) = minimalSequence (ids !! i) n
       perm = concatMap f rops
       phase = concatMap g (zip exps [0..])
@@ -238,14 +240,63 @@ synthPartition set (circ, input) =
 
 tparMore input output xs = tpar input output xs'
   where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
-  
+
+{- General synthesis utilities -}
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of
   0 -> []
   1 -> [T x]
   2 -> [S x]
-  3 -> [S x, T x]
+  3 -> [Z x, Tinv x]
   4 -> [Z x]
   5 -> [Z x, T x]
   6 -> [Sinv x]
   7 -> [Tinv x]
+
+{- Gray code synthesis -}
+data Pt = Pt {
+  candidates :: [Int],
+  target     :: Maybe Int,
+  pending    :: Maybe Int,
+  vectors    :: [(F2Vec, Int)]
+} deriving Show
+
+adjust :: Int -> Int -> [Pt] -> [Pt]
+adjust t p xs = map f xs
+  where f (Pt c t p vecs) = Pt c t p $ map g vecs
+        g (F2Vec bv, i) = (if bv@.t then F2Vec $ complementBit bv p else F2Vec $ bv, i)
+
+findColumnSplit :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findColumnSplit (c:cs) vecs = foldl' g init cs
+  where f c  = partition (\(F2Vec bv, _) -> not $ bv@.c) vecs
+        init = case f c of (l, r) -> (l, c, [], r)
+        g (l, c, cs, r) c' =
+          let (l', r') = f c' in
+            if length r' > length r then (l', c', c:cs, r') else (l, c, c':cs, r)
+
+graySynthesis :: [ID] -> [Pt] -> [Primitive]
+graySynthesis ids []     = []
+graySynthesis ids (x:xs) = case x of
+  Pt _ _ _ [] -> graySynthesis ids xs
+  Pt c (Just t) (Just p) v -> 
+    let act = [CNOT (ids !! p) (ids !! t)]
+        res = (Pt c (Just t) Nothing v):(adjust t p xs)
+    in
+      act ++ graySynthesis ids res
+  Pt [] (Just t) Nothing [(_, a)] ->
+    let act = minimalSequence (ids !! t) a in
+      act ++ graySynthesis ids xs
+  Pt (c:cs) targ Nothing vecs ->
+    let (vl, c', cs', vr) = findColumnSplit (c:cs) vecs
+        xzero = Pt cs' targ Nothing vl
+        xone  = case targ of
+          Just t  -> Pt cs' targ (Just c') vr
+          Nothing -> Pt cs' (Just c') Nothing vr
+    in
+      graySynthesis ids $ xzero:xone:xs
+
+{- Temp for testing -}
+ids  = ["a", "b", "c"]
+cs   = [0, 1, 2]
+vecs = tail $ zip (allVecs 3) (repeat 1)
+test = graySynthesis ids [Pt cs Nothing Nothing vecs]
