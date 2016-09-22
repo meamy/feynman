@@ -156,7 +156,7 @@ linearSynth input output _ =
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
-    else concatMap f rops
+    else reverse $ concatMap f rops
 
 synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
 synthVec ids vec =
