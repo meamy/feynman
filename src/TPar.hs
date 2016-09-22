@@ -150,10 +150,9 @@ linearSynth input output _ =
       rops = snd $ runWriter $ toReducedEchelonSqr mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        --Swap i j -> []
-        Swap i j ->
+        Exchange i j ->
           let (v, u) = (ids !! i, ids !! j) in
-            [CNOT v u, CNOT u v, CNOT v u]
+            [Swap v u]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
@@ -227,9 +226,9 @@ synthPartition set (circ, input) =
       rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j ->
+        Exchange i j ->
           let (v, u) = (ids !! i, ids !! j) in
-            [CNOT v u, CNOT u v, CNOT v u]
+            [Swap v u]
       g (n, i) = minimalSequence (ids !! i) n
       perm = concatMap f rops
       phase = concatMap g (zip exps [0..])

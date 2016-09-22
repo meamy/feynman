@@ -105,6 +105,7 @@ gateToCliffordT (Gate g i p) =
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
                             Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
         ("cnot", [x,y]) -> [CNOT x y]
+        ("swap", [x,y]) -> [Swap x y]
         ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
                             Tinv x, CNOT y z, CNOT z x, CNOT x y]
@@ -126,6 +127,7 @@ gateFromCliffordT g = case g of
   T x      -> Gate "T" 1 [x]
   Tinv x   -> Gate "T*" 1 [x]
   CNOT x y -> Gate "tof" 1 [x, y]
+  Swap x y -> Gate "swap" 1 [x, y]
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT

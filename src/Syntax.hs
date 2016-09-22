@@ -21,6 +21,7 @@ data Primitive =
   | Sinv ID
   | T    ID
   | Tinv ID
+  | Swap ID ID
 
 data Stmt =
     Gate Primitive
@@ -61,6 +62,7 @@ instance Show Primitive where
   show (Sinv x)   = "S* " ++ x
   show (T x)      = "T " ++ x
   show (Tinv x)   = "T* " ++ x
+  show (Swap x y) = "swap " ++ x ++ " " ++ y
 
 instance Show Stmt where
   show (Gate gate)               = show gate

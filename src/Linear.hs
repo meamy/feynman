@@ -131,7 +131,7 @@ add a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
   | otherwise = F2Mat am an $ map (\(x,y) -> F2Vec $ getBV x `xor` getBV y) $ zip avals bvals
 
 {- Row operations -}
-data ROp = Swap Int Int | Add Int Int deriving (Eq, Show)
+data ROp = Exchange Int Int | Add Int Int deriving (Eq, Show)
 
 removeZeroRows :: F2Mat -> F2Mat
 removeZeroRows a@(F2Mat _ n vals) = 
@@ -158,12 +158,12 @@ addRow i j mat@(F2Mat m n vals)
   | otherwise                          = error "Add indices out of bounds"
 
 applyROp :: ROp -> F2Mat -> F2Mat
-applyROp (Swap i j) = swapRow i j
+applyROp (Exchange i j) = swapRow i j
 applyROp (Add  i j) = addRow  i j
 applyROps = foldl' (flip applyROp) 
 
 transposeROp :: ROp -> ROp
-transposeROp (Swap i j) = Swap j i
+transposeROp (Exchange i j) = Exchange j i
 transposeROp (Add  i j) = Add  j i
 transposeROps = foldl' (\acc rop -> (transposeROp rop):acc) []
 
@@ -171,13 +171,13 @@ moveAddsIn :: [ROp] -> [ROp]
 moveAddsIn xs =
   let move sx []     = reverse sx
       move sx (x:xs) = case x of
-        Swap _ _ -> move (x:sx) xs
+        Exchange _ _ -> move (x:sx) xs
         Add  _ _ -> move (toLeft x sx) xs
       toLeft y [] = [y]
       toLeft y (x:xs) = case x of
-        Swap _ _ -> x:toLeft (apply x y) xs
+        Exchange _ _ -> x:toLeft (apply x y) xs
         Add  _ _ -> y:x:xs
-      apply (Swap i j) (Add l k) =
+      apply (Exchange i j) (Add l k) =
         let sw x = if x == i then j else if x == j then i else x in
           Add (sw l) (sw k)
   in
@@ -188,12 +188,12 @@ moveSwapsIn xs =
   let move sx []     = reverse sx
       move sx (x:xs) = case x of
         Add  _ _ -> move (x:sx) xs
-        Swap _ _ -> move (toLeft x sx) xs
+        Exchange _ _ -> move (toLeft x sx) xs
       toLeft y [] = [y]
       toLeft y (x:xs) = case x of
         Add  _ _ -> (apply y x):toLeft y xs
-        Swap _ _ -> y:x:xs
-      apply (Swap i j) (Add l k) =
+        Exchange _ _ -> y:x:xs
+      apply (Exchange i j) (Add l k) =
         let sw x = if x == i then j else if x == j then i else x in
           Add (sw l) (sw k)
   in
@@ -253,7 +253,7 @@ toEchelon mat@(F2Mat m n vals) =
             (x:xs, y:ys) -> do
               let x' = (fst y, snd x)
               let y' = (fst x, snd y)
-              tell [Swap (snd x) (snd y)]
+              tell [Exchange (snd x) (snd y)]
               xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
               return $ x':xs'
   in
@@ -285,7 +285,7 @@ toReducedEchelon mat@(F2Mat m n vals) =
             (x:xs, y:ys) -> do
               let x' = (fst y, snd x)
               let y' = (fst x, snd y)
-              tell [Swap (snd x) (snd y)]
+              tell [Exchange (snd x) (snd y)]
               sx' <- zeroAll j x' sx
               xs' <- zeroAll j x' (xs ++ y':ys)
               toUpper (j+1) (x':sx') xs'
@@ -333,7 +333,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
             (x:xs, y:ys) -> do
               let x' = (fst y, snd x)
               let y' = (fst x, snd y)
-              tell [Swap (snd x) (snd y)]
+              tell [Exchange (snd x) (snd y)]
               xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
               return $ x':xs'
         | otherwise =
@@ -345,7 +345,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
             (x:xs, y:ys) -> do
               let x' = (fst y, snd x)
               let y' = (fst x, snd y)
-              tell [Swap (snd x) (snd y)]
+              tell [Exchange (snd x) (snd y)]
               xs' <- toUpper (j+1) =<< zeroAll j x' (xs ++ y':ys)
               return $ x':xs'
   in
@@ -374,7 +374,7 @@ columnReduceDry mat@(F2Mat m n vals) =
             (_, [])   -> toLeft j imap xs
             ([], _)   -> toLeft (j+1) imap xs
             (_, j':_) -> do
-              tell [Swap j j']
+              tell [Exchange j j']
               toLeft (j+1) (swapVals j j' imap) xs
   in
     toLeft 0 (Map.fromList $ zip [0..n-1] [0..]) vals
