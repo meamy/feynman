@@ -150,10 +150,10 @@ linearSynth input output _ =
       rops = snd $ runWriter $ toReducedEchelonSqr mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j -> []
-        --Swap i j ->
-        --  let (v, u) = (ids !! i, ids !! j) in
-        --    [CNOT v u, CNOT u v, CNOT v u]
+        --Swap i j -> []
+        Swap i j ->
+          let (v, u) = (ids !! i, ids !! j) in
+            [CNOT v u, CNOT u v, CNOT v u]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
@@ -227,10 +227,9 @@ synthPartition set (circ, input) =
       rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Swap i j -> []
-        --Swap i j ->
-        --  let (v, u) = (ids !! i, ids !! j) in
-        --    [CNOT v u, CNOT u v, CNOT v u]
+        Swap i j ->
+          let (v, u) = (ids !! i, ids !! j) in
+            [CNOT v u, CNOT u v, CNOT v u]
       g (n, i) = minimalSequence (ids !! i) n
       perm = concatMap f rops
       phase = concatMap g (zip exps [0..])
@@ -274,6 +273,16 @@ findColumnSplit (c:cs) vecs = foldl' g init cs
           let (l', r') = f c' in
             if length r' > length r then (l', c', c:cs, r') else (l, c, c':cs, r)
 
+findBestSplit :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findBestSplit (c:cs) vecs = foldl' g init cs
+  where f c  = partition (\(F2Vec bv, _) -> not $ bv@.c) vecs
+        init = case f c of (l, r) -> (l, c, [], r)
+        g (l, c, cs, r) c' =
+          let (l', r') = f c' in
+            if max (length l') (length r') > max (length l) (length r)
+            then (l', c', c:cs, r')
+            else (l, c, c':cs, r)
+
 graySynthesis :: [ID] -> Map ID F2Vec -> [Pt] -> Writer [Primitive] (Map ID F2Vec)
 graySynthesis ids out []     = return out
 graySynthesis ids out (x:xs) = case x of
@@ -291,7 +300,7 @@ graySynthesis ids out (x:xs) = case x of
     tell $ minimalSequence (ids !! t) a
     graySynthesis ids out xs
   Pt (c:cs) targ Nothing vecs ->
-    let (vl, c', cs', vr) = findColumnSplit (c:cs) vecs
+    let (vl, c', cs', vr) = findBestSplit (c:cs) vecs
         xzero = Pt cs' targ Nothing vl
         xone  = case targ of
           Just t  -> Pt cs' targ (Just c') vr
@@ -303,7 +312,7 @@ cnotMinGray :: Synthesizer
 cnotMinGray input output [] = linearSynth input output []
 cnotMinGray input output xs =
   let ivecs  = Map.toList input
-      solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
+      solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
   in
     case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
       Nothing  -> error "Fatal: something bad happened"
