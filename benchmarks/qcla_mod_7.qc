@@ -76,7 +76,7 @@ H c5
 H d5
 
 Z e c0 d1
-Z e b0 d0 
+Z e b0 d0
 Z c0 c2 c1
 Z c3 c4 d5
 Z c3 b4 d4
@@ -140,7 +140,7 @@ H d4
 H d5
 
 Z e c0 d1
-Z e b0 d0 
+Z e b0 d0
 Z c0 c2 c1
 Z c3 c4 d5
 Z c3 b4 d4

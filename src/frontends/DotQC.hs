@@ -145,13 +145,14 @@ parseID = try $ do
   c  <- letter
   cs <- many alphaNum
   if (c:cs) == "BEGIN" || (c:cs) == "END" then fail "" else return (c:cs)
-parseParams = sepBy (many1 alphaNum) (many1 sep) 
+parseParams = sepEndBy (many1 alphaNum) (many1 sep) 
 
 parseGate = do
   name <- parseID
   reps <- option 1 (char '^' >> nat)
   skipSpace
   params <- parseParams
+  skipSpace
   return $ Gate name reps params
 
 parseFormals = do
