@@ -298,6 +298,7 @@ graySynthesis ids out (x:xs) = case x of
   Pt [] (Just t) Nothing [(_, a)] -> do
     tell $ minimalSequence (ids !! t) a
     graySynthesis ids out xs
+  Pt [] Nothing _ _ -> graySynthesis ids out xs
   Pt (c:cs) targ Nothing vecs ->
     let (vl, c', cs', vr) = findBestSplit (c:cs) vecs
         xzero = Pt cs' targ Nothing vl
