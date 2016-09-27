@@ -12,6 +12,8 @@ import PhaseFold
 import TPar
 import Syntax (Primitive(CNOT, T, Tinv))
 
+import Tests
+
 printJust Nothing  = print ""
 printJust (Just x) = print x
 
@@ -74,7 +76,7 @@ testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs o
       printStats gates'
       print ret
       return $ Just ret
-
+{-
 main :: IO ()
 main = do
   putStrLn "# Feyn -- copywrite 2016 Matthew Amy"
@@ -83,3 +85,6 @@ main = do
   case parseDotQC s of
     Left err -> putStrLn $ "Error parsing input: " ++ show err
     Right circuit -> testCnotMin circuit >> return ()
+-}
+main :: IO ()
+main = runBenchmarks runCnotMin benchmarksMedium

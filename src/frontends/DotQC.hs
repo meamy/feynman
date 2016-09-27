@@ -132,6 +132,21 @@ gateFromCliffordT g = case g of
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
 
+countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
+  where plus                   = zipWith (+)
+        f cnt (Decl _ _ gates) = foldl' g cnt $ toCliffordT gates
+        g cnt gate             = case gate of
+          H _      -> plus cnt [1,0,0,0,0,0,0,0]
+          X _      -> plus cnt [0,1,0,0,0,0,0,0]
+          Y _      -> plus cnt [0,0,1,0,0,0,0,0]
+          Z _      -> plus cnt [0,0,0,1,0,0,0,0]
+          CNOT _ _ -> plus cnt [0,0,0,0,1,0,0,0]
+          S _      -> plus cnt [0,0,0,0,0,1,0,0]
+          Sinv _   -> plus cnt [0,0,0,0,0,1,0,0]
+          T _      -> plus cnt [0,0,0,0,0,0,1,0]
+          Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
+          Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
+
 -- Parsing
 
 space = char ' '

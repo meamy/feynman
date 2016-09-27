@@ -43,6 +43,25 @@ foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
 foldStmt f (Repeat i st) b = f (Repeat i st) (foldStmt f st b)
 foldStmt f s             b = f s b
 
+countGates (Circuit _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
+  where plus                   = zipWith (+)
+        f cnt (Decl _ _ stmt)  = g cnt stmt
+        g cnt (Seq xs)         = foldl' g cnt xs
+        g cnt (Call _ _)       = error "Unimplemented call"
+        g cnt (Repeat 0 stmt)  = g cnt stmt
+        g cnt (Repeat i stmt)  = g (g cnt stmt) (Repeat (i-1) stmt)
+        g cnt (Gate gate)      = case gate of
+          H _      -> plus cnt [1,0,0,0,0,0,0,0]
+          X _      -> plus cnt [0,1,0,0,0,0,0,0]
+          Y _      -> plus cnt [0,0,1,0,0,0,0,0]
+          Z _      -> plus cnt [0,0,0,1,0,0,0,0]
+          CNOT _ _ -> plus cnt [0,0,0,0,1,0,0,0]
+          S _      -> plus cnt [0,0,0,0,0,1,0,0]
+          Sinv _   -> plus cnt [0,0,0,0,0,1,0,0]
+          T _      -> plus cnt [0,0,0,0,0,0,1,0]
+          Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
+          Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
+
 -- Transformations
 
 --inline :: Circuit -> Circuit
