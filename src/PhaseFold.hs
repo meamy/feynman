@@ -146,7 +146,7 @@ minimalSequence x i = case i `mod` 8 of
 phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 phaseFold vars inputs gates =
   let (SOP _ _ terms orphans) = runAnalysis vars inputs gates
-      choose = Set.findMin
+      choose = Set.findMax
       f gates (locs, exp) =
         let i = choose locs
             getTarget gate = case gate of

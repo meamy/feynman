@@ -118,7 +118,9 @@ runBenchmarks opt xs =
         orig <- readFile $ benchmarksPath ++ s ++ ".qc"
         case printErr (parseDotQC orig) >>= opt of
           Left err      -> return $ (s, Left err)
-          Right (c, c') -> return $ (s, Right $ zip (countGates c) (countGates c'))
+          Right (c, c') -> do
+            writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
+            return $ (s, Right $ zip (countGates c) (countGates c'))
       printErr res = case res of
         Left err -> Left $ show err
         Right x  -> Right x

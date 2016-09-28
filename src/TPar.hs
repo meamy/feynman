@@ -147,12 +147,10 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      rops = snd $ runWriter $ toReducedEchelonSqr mat
+      rops = snd $ runWriter $ toReducedEchelonPMH mat
       f op = case op of
-        Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Exchange i j ->
-          let (v, u) = (ids !! i, ids !! j) in
-            [Swap v u]
+        Add i j      -> [CNOT (ids !! i) (ids !! j)]
+        Exchange i j -> [Swap (ids !! i) (ids !! j)]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"

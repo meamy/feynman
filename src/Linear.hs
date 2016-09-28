@@ -302,7 +302,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
 
       removeDuplicates j (patterns, vals) v@(F2Vec bv, r) =
         let subbv = bv @@ (min (j+width-1) (n-1), j) in
-          if BitVector.popCount bv < 2 then return (patterns, v:vals) else
+          if BitVector.popCount subbv < 1 then return (patterns, v:vals) else
           case Map.lookup subbv patterns of
             Nothing              -> return (Map.insert subbv v patterns, v:vals)
             Just (F2Vec bv', r') -> do
