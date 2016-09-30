@@ -2,6 +2,7 @@ module Tests where
 
 import Data.List
 import Numeric
+import System.CPUTime
 
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -71,16 +72,16 @@ benchmarksAll = benchmarksMedium ++ [
   "mod_adder_1048576"
   ]
 
-printResults :: [(String, Either String [(Int, Int)])] -> IO ()
+printResults :: [(String, Either String (Int, Double, [(Int, Int)]))] -> IO ()
 printResults xs =
-  printResultsAcc (0, [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]) xs
+  printResultsAcc (0, [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]) xs
 
-printResultsAcc :: (Int, [Float]) -> [(String, Either String [(Int, Int)])] -> IO ()
+printResultsAcc :: (Int, [Float]) -> [(String, Either String (Int, Double, [(Int, Int)]))] -> IO ()
 printResultsAcc avgs []     = do
   putStrLn "Averages:"
   printAverages avgs
   where
-    printAverages (tot, (h:x:y:z:c:s:t:sw:[])) = do
+    printAverages (tot, (h:x:y:z:c:s:t:sw:td:[])) = do
       putStrLn $ "\tH:\t" ++ show (h / (fromIntegral tot))
       putStrLn $ "\tX:\t" ++ show (x / (fromIntegral tot))
       putStrLn $ "\tY:\t" ++ show (y / (fromIntegral tot))
@@ -89,12 +90,13 @@ printResultsAcc avgs []     = do
       putStrLn $ "\tS/S*:\t" ++ show (s / (fromIntegral tot))
       putStrLn $ "\tT/T*:\t" ++ show (t / (fromIntegral tot))
       putStrLn $ "\tSwap:\t" ++ show (sw / (fromIntegral tot))
+      putStrLn $ "\tT-depth:\t" ++ show (td / (fromIntegral tot))
 printResultsAcc avgs (x:xs) = case x of
   (s, Left err) -> do
     putStrLn $ s ++ " -- Failed (" ++ err ++ ")"
     printResultsAcc avgs xs
-  (s, Right cts) -> do
-    putStrLn s
+  (s, Right (n, t, cts)) -> do
+    putStrLn $ s ++ ": " ++ (show n) ++ " qubits, " ++ (show t) ++ "s"
     printGateCounts cts
     printResultsAcc (updateAvg avgs cts) xs
   where
@@ -102,7 +104,7 @@ printResultsAcc avgs (x:xs) = case x of
     chng (x,y)               = 100.0 * ((fromIntegral (x-y)) / (fromIntegral x))
     updateAvg (tot,tcts) cts = (tot+1, zipWith pp tcts $ map chng cts)
     showMod ct               = "\t" ++ show (chng ct) ++ "%"
-    printGateCounts (h:x:y:z:c:s:t:sw:[]) = do
+    printGateCounts (h:x:y:z:c:s:t:sw:td:[]) = do
       putStrLn $ "\tH:\t" ++ (show $ fst h) ++ "/" ++ (show $ snd h) ++ showMod h
       putStrLn $ "\tX:\t" ++ (show $ fst x) ++ "/" ++ (show $ snd x) ++ showMod x
       putStrLn $ "\tY:\t" ++ (show $ fst y) ++ "/" ++ (show $ snd y) ++ showMod y
@@ -111,16 +113,20 @@ printResultsAcc avgs (x:xs) = case x of
       putStrLn $ "\tS/S*:\t" ++ (show $ fst s) ++ "/" ++ (show $ snd s) ++ showMod s
       putStrLn $ "\tT/T*:\t" ++ (show $ fst t) ++ "/" ++ (show $ snd t) ++ showMod t
       putStrLn $ "\tSwap:\t" ++ (show $ fst sw) ++ "/" ++ (show $ snd sw) ++ showMod sw
+      putStrLn $ "\tT-depth:\t" ++ (show $ fst td) ++ "/" ++ (show $ snd td) ++ showMod td
 
 runBenchmarks :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] -> IO ()
 runBenchmarks opt xs =
   let f s = do
-        orig <- readFile $ benchmarksPath ++ s ++ ".qc"
+        orig  <- readFile $ benchmarksPath ++ s ++ ".qc"
+        start <- getCPUTime
         case printErr (parseDotQC orig) >>= (\c -> opt (c, c)) of
           Left err      -> return $ (s, Left err)
           Right (c, c') -> do
+            end  <- getCPUTime
+            let diff = (fromIntegral (end - start)) / 10^12
             writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
-            return $ (s, Right $ zip (countGates c) (countGates c'))
+            return $ (s, Right $ (length (qubits c), diff, zip (countGates c) (countGates c') ++ [(tDepth c, tDepth c')]))
       printErr res = case res of
         Left err -> Left $ show err
         Right x  -> Right x

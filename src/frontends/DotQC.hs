@@ -152,6 +152,7 @@ gateFromCliffordT g = case g of
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
 
+-- This is totally wrong, but no benchmarks have function calls yet
 countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
   where plus                   = zipWith (+)
         f cnt (Decl _ _ gates) = foldl' g cnt $ toCliffordT gates
@@ -166,6 +167,30 @@ countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
           T _      -> plus cnt [0,0,0,0,0,0,1,0]
           Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
           Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
+
+-- This is also totally wrong
+tDepth :: DotQC -> Int
+tDepth (DotQC _ _ _ decls)    = maximum $ 0:(Map.elems $ foldl' f Map.empty decls)
+  where addOne val            = case val of
+          Nothing -> Just 1
+          Just v  -> Just $ v + 1
+        f mp (Decl _ _ gates) = foldl' g mp $ toCliffordT gates
+        g mp gate             = case gate of
+          T x      -> Map.alter addOne x mp
+          Tinv x   -> Map.alter addOne x mp
+          CNOT x y ->
+            let xval = Map.findWithDefault 0 x mp
+                yval = Map.findWithDefault 0 y mp
+                maxv = max xval yval
+            in
+              Map.insert x maxv $ Map.insert y maxv mp
+          Swap x y ->
+            let xval = Map.findWithDefault 0 x mp
+                yval = Map.findWithDefault 0 y mp
+            in
+              Map.insert x yval $ Map.insert y xval mp
+          _        -> mp
+          
 
 -- Parsing
 
