@@ -104,5 +104,5 @@ parseArgs pass (x:xs) = case x of
 
 main :: IO ()
 main = do
-  putStrLn "# Feyn -- copywrite 2016 Matthew Amy"
+  putStrLn "# Feyn -- copyright 2016 Matthew Amy"
   getArgs >>= parseArgs return

@@ -5,6 +5,9 @@ import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+
 import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
 import Control.Monad
@@ -16,7 +19,7 @@ type Nat = Word
 
 {- A gate has an identifier, a non-negative number of iterations,
  - and a list of parameters -}
-data Gate = Gate ID Nat [ID]
+data Gate = Gate ID Nat [ID] deriving (Eq)
 data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: [Gate] }
@@ -60,23 +63,38 @@ inv gate@(Gate g i p) =
     "Z"    -> gate
     "S"    -> Gate "S*" i p
     "S*"   -> Gate "S" i p
+    "P"    -> Gate "P*" i p
+    "P*"   -> Gate "P" i p
     "T"    -> Gate "T*" i p
     "T*"   -> Gate "T" i p
     "tof"  -> gate
     "cnot" -> gate
 
-{-
 simplify :: [Gate] -> [Gate]
 simplify circ =
   let circ' = zip circ [0..]
-      f (deps, er) (Gate g i p, uid) =
-        let temp = map (\q -> Map.lookup q deps) p
-        case foldM $ map Map.lookup p
-        if all foo p
-        then 
-  let erasures = foldr f [] circ'
-  foldl'
--}
+      allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
+      f (last, erasures) gate@(Gate g i p, uid) =
+        let last' = foldr (\q -> Map.insert q gate) last p in
+            case mapM (\q -> Map.lookup q last) p >>= allSame of
+              Nothing -> (last', erasures)
+              Just (Gate g' i' p', uid') ->
+                if Gate g i p == (inv $ Gate g' i' p') then
+                  (last', Set.insert uid $ Set.insert uid' erasures)
+                else
+                  (last', erasures)
+      erasures = snd $ foldl' f (Map.empty, Set.empty) circ'
+  in
+    fst $ unzip $ filter (\(_, uid) -> not $ Set.member uid erasures) circ'
+
+simplifyDotQC :: DotQC -> DotQC
+simplifyDotQC (DotQC q i o decls) = DotQC q i o $ map f decls
+  where f (Decl n p body) =
+          let body' = simplify body in
+          if body' == body then
+            Decl n p body
+          else
+            f $ Decl n p body'
 
 subst :: (ID -> ID) -> [Gate] -> [Gate]
 subst f = map $ \(Gate g i params) -> Gate g i $ map f params
@@ -96,7 +114,9 @@ gateToCliffordT (Gate g i p) =
         ("Y", [x])      -> [Y x]
         ("Z", [x])      -> [Z x]
         ("S", [x])      -> [S x]
+        ("P", [x])      -> [S x]
         ("S*", [x])     -> [Sinv x]
+        ("P*", [x])     -> [Sinv x]
         ("T", [x])      -> [T x]
         ("T*", [x])     -> [Tinv x]
         ("tof", [x])    -> [H x, Z x, H x] --[X x]
@@ -207,10 +227,11 @@ parseFile = do
   option qubits $ try $ parseHeaderLine ".ov"
   decls <- sepEndBy parseDecl skipWithBreak
   skipMany $ sep <|> delimiter
+  skipSpace
   eof
   return $ DotQC qubits (Set.fromList inputs) (Set.fromList outputs) decls
 
-parseDotQC = parse parseFile ".qc parser"
+parseDotQC = (liftM simplifyDotQC) . (parse parseFile ".qc parser")
 
 
 -- Tests
@@ -238,3 +259,42 @@ toffoli = DotQC { qubits  = ["x", "y", "z"],
                                 Gate "tof" 1 ["x", "y"],
                                 Gate "H" 1 ["z"] ] }
 
+
+toffoli2 = DotQC { qubits  = ["x", "y", "z"],
+                  inputs  = Set.fromList ["x", "y", "z"],
+                  outputs = Set.fromList ["x", "y", "z"],
+                   decls  = [tof] }
+    where tof = Decl { name = "main",
+                       params = [],
+                       body = [ Gate "H" 1 ["z"],
+                                Gate "T" 1 ["x"],
+                                Gate "T" 1 ["y"],
+                                Gate "T" 1 ["z"], 
+                                Gate "tof" 1 ["x", "y"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "T*" 1 ["x"],
+                                Gate "T*" 1 ["y"],
+                                Gate "T" 1 ["z"],
+                                Gate "tof" 1 ["y", "x"],
+                                Gate "T*" 1 ["x"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "tof" 1 ["x", "y"],
+                                Gate "H" 1 ["z"],
+                                Gate "H" 1 ["z"],
+                                Gate "tof" 1 ["x", "y"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "T" 1 ["x"],
+                                Gate "tof" 1 ["y", "x"],
+                                Gate "T*" 1 ["z"],
+                                Gate "T" 1 ["y"],
+                                Gate "T" 1 ["x"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "tof" 1 ["x", "y"],
+                                Gate "T*" 1 ["z"], 
+                                Gate "T*" 1 ["y"],
+                                Gate "T*" 1 ["x"],
+                                Gate "H" 1 ["z"] ] }
