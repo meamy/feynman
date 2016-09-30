@@ -160,7 +160,7 @@ skipWithBreak = many1 (skipMany sep >> delimiter >> skipMany sep)
 
 parseID = try $ do
   c  <- letter
-  cs <- many alphaNum
+  cs <- many (alphaNum <|> char '*')
   if (c:cs) == "BEGIN" || (c:cs) == "END" then fail "" else return (c:cs)
 parseParams = sepEndBy (many1 alphaNum) (many1 sep) 
 

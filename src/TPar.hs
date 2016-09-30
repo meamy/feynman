@@ -119,6 +119,12 @@ applyGate synth gates g = case g of
     st <- get
     orphans <- exists v st
     return $ gates ++ synth (ivals st) (qvals st) orphans ++ [H v]
+  Swap u v -> do
+    bvu <- getSt u
+    bvv <- getSt v
+    modify $ updateQval u bvv
+    modify $ updateQval v bvu
+    return gates
 
 finalize :: Synthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do

@@ -112,11 +112,11 @@ printResultsAcc avgs (x:xs) = case x of
       putStrLn $ "\tT/T*:\t" ++ (show $ fst t) ++ "/" ++ (show $ snd t) ++ showMod t
       putStrLn $ "\tSwap:\t" ++ (show $ fst sw) ++ "/" ++ (show $ snd sw) ++ showMod sw
 
-runBenchmarks :: (DotQC -> Either String (DotQC, DotQC)) -> [String] -> IO ()
+runBenchmarks :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] -> IO ()
 runBenchmarks opt xs =
   let f s = do
         orig <- readFile $ benchmarksPath ++ s ++ ".qc"
-        case printErr (parseDotQC orig) >>= opt of
+        case printErr (parseDotQC orig) >>= (\c -> opt (c, c)) of
           Left err      -> return $ (s, Left err)
           Right (c, c') -> do
             writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
@@ -128,11 +128,11 @@ runBenchmarks opt xs =
     mapM f xs >>= printResults
 
 -- Testing
-triv :: DotQC -> Either String (DotQC, DotQC)
-triv circ = Right (circ, circ)
+triv :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+triv (_, circ) = Right (circ, circ)
 
-runPhaseFold :: DotQC -> Either String (DotQC, DotQC)
-runPhaseFold qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
+runPhaseFold :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runPhaseFold (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
   Nothing -> Left "Failed (no main function)"
   Just (Decl n p body) ->
     let gates  = toCliffordT body
@@ -140,10 +140,10 @@ runPhaseFold qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") de
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in 
-      Right (qc, ret)
+      Right (c, ret)
       
-runCnotMin :: DotQC -> Either String (DotQC, DotQC)
-runCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
+runCnotMin :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
   Nothing -> Left "Failed (no main function)"
   Just (Decl n p body) ->
     let gates  = toCliffordT body
@@ -151,10 +151,10 @@ runCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
-      Right (qc, ret)
+      Right (c, ret)
 
-runTpar :: DotQC -> Either String (DotQC, DotQC)
-runTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
+runTpar :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runTpar (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
   Nothing -> Left "Failed (no main function)"
   Just (Decl n p body) ->
     let gates  = toCliffordT body
@@ -162,4 +162,4 @@ runTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
-      Right (qc, ret)
+      Right (c, ret)

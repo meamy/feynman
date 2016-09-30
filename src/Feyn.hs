@@ -7,6 +7,8 @@ import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Control.Monad
+
 import DotQC
 import PhaseFold
 import TPar
@@ -76,15 +78,31 @@ testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs o
       printStats gates'
       print ret
       return $ Just ret
-{-
+
+parseArgs :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] -> IO ()
+parseArgs pass []     = return ()
+parseArgs pass (x:xs) = case x of
+  "-phasefold" -> parseArgs (pass >=> runPhaseFold) xs
+  "-cnotmin"   -> parseArgs (pass >=> runCnotMin) xs
+  "-tpar"      -> parseArgs (pass >=> runTpar) xs
+  "Small"      -> runBenchmarks pass benchmarksSmall
+  "Med"        -> runBenchmarks pass benchmarksMedium
+  "All"        -> runBenchmarks pass benchmarksAll
+  f            -> do
+    s <- readFile f
+    case printErr (parseDotQC s) >>= (\c -> pass (c, c)) of
+      Left err      -> putStrLn err
+      Right (c, c') -> do
+        putStrLn $ "# Original circuit statistics:"
+        putStrLn $ "#   " ++ show (countGates c)
+        putStrLn $ "# Optimized circuit statistics:"
+        putStrLn $ "#   " ++ show (countGates c')
+        print c'
+  where printErr res = case res of
+          Left err -> Left $ show err
+          Right x  -> Right x
+
 main :: IO ()
 main = do
   putStrLn "# Feyn -- copywrite 2016 Matthew Amy"
-  (f:xs) <- getArgs
-  s      <- readFile f
-  case parseDotQC s of
-    Left err -> putStrLn $ "Error parsing input: " ++ show err
-    Right circuit -> testCnotMin circuit >> return ()
--}
-main :: IO ()
-main = runBenchmarks runCnotMin benchmarksMedium
+  getArgs >>= parseArgs return
