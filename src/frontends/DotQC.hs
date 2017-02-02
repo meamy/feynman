@@ -110,7 +110,7 @@ gateToCliffordT :: Gate -> [Primitive]
 gateToCliffordT (Gate g i p) =
   let circ = case (g, p) of
         ("H", [x])      -> [H x]
-        ("X", [x])      -> [H x, Z x, H x] --[X x]
+        ("X", [x])      -> [X x]
         ("Y", [x])      -> [Y x]
         ("Z", [x])      -> [Z x]
         ("S", [x])      -> [S x]
@@ -119,7 +119,7 @@ gateToCliffordT (Gate g i p) =
         ("P*", [x])     -> [Sinv x]
         ("T", [x])      -> [T x]
         ("T*", [x])     -> [Tinv x]
-        ("tof", [x])    -> [H x, Z x, H x] --[X x]
+        ("tof", [x])    -> [X x]
         ("tof", [x,y])  -> [CNOT x y]
         ("tof", [x,y,z])-> [H z, T x, T y, T z, CNOT x y, CNOT y z,
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,

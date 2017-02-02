@@ -314,7 +314,7 @@ graySynthesis ids out (x:xs) = case x of
 
 cnotMinGray :: Synthesizer
 cnotMinGray input output [] = linearSynth input output []
-cnotMinGray input output xs =
+cnotMinGray input output xs0 =
   let ivecs  = Map.toList input
       solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
   in
@@ -325,6 +325,7 @@ cnotMinGray input output xs =
             (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
         in
           gates ++ linearSynth outin output []
+  where xs = filter (\(_, i) -> i `mod` 8 /= 0) xs0
 
 {- Temp for testing -}
 ids  = ["a", "b", "c"]

@@ -41,9 +41,10 @@ import Data.Graph.Inductive.Query.DFS
 
 data AnalysisState = SOP {
   dim     :: Int,
-  qvals   :: Map ID F2Vec,
-  terms   :: Map F2Vec (Set Loc, Int),
-  orphans :: [(Set Loc, Int)]
+  qvals   :: Map ID (F2Vec, Bool),
+  terms   :: Map F2Vec (Set (Loc, Bool), Int),
+  orphans :: [(Set (Loc, Bool), Int)],
+  phase   :: Int
 } deriving Show
 
 type Analysis = State AnalysisState
@@ -52,41 +53,50 @@ bitI :: Int -> Integer
 bitI = bit
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
-getSt :: ID -> Analysis F2Vec
+getSt :: ID -> Analysis (F2Vec, Bool)
 getSt v = do 
   st <- get
   case Map.lookup v (qvals st) of
     Just bv -> return bv
     Nothing -> do put $ st { dim = dim', qvals = qvals' }
-                  return bv'
+                  return (bv', False)
       where dim' = dim st + 1
             bv' = F2Vec $ bitVec dim' $ bitI (dim' -1)
-            qvals' = Map.insert v bv' (qvals st)
+            qvals' = Map.insert v (bv', False) (qvals st)
 
 {- exists removes a variable (existentially quantifies it) then
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
 exists :: ID -> AnalysisState -> AnalysisState
-exists v st@(SOP dim qvals terms orphans) =
-  let (vars, vecs)  = unzip $ Map.toList $ Map.delete v qvals
+exists v st@(SOP dim qvals terms orphans phase) =
+  let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
+      (vecs, cnsts) = unzip avecs
       (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
+      avecs'        = zip vecs' $ cnsts ++ [False]
       orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
       extendTerms   = Map.mapKeysMonotonic (F2Vec . (zeroExtend 1) . getBV)
   in
     if dim' > dim
-    then SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') (extendTerms terms') orphans'
-    else SOP dim' (Map.fromList $ zip (vars ++ [v]) vecs') terms' orphans'
+    then SOP dim' (Map.fromList $ zip (vars ++ [v]) avecs') (extendTerms terms') orphans' phase
+    else SOP dim' (Map.fromList $ zip (vars ++ [v]) avecs') terms' orphans' phase
 
-updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
+updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Loc -> F2Vec -> Int -> AnalysisState -> AnalysisState
-addTerm l bv i st = st { terms = Map.alter f bv $ terms st }
-  where f oldt = case oldt of
-          Just (s, x) -> Just (Set.insert l s, x + i `mod` 8)
-          Nothing     -> Just (Set.singleton l, i `mod` 8)
+addTerm :: Loc -> (F2Vec, Bool) -> Int -> AnalysisState -> AnalysisState
+addTerm l (bv, p) i st =
+  case p of
+    False -> st { terms = Map.alter (f i) bv $ terms st }
+    True  ->
+      let terms' = Map.alter (f $ (-i) `mod` 8) bv $ terms st
+          phase' = (phase st + i) `mod` 8
+      in
+        st { terms = terms', phase = phase' }
+  where f i oldt = case oldt of
+          Just (s, x) -> Just (Set.insert (l, p) s, x + i `mod` 8)
+          Nothing     -> Just (Set.singleton (l, p), i `mod` 8)
  
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()
@@ -95,9 +105,13 @@ applyGate (H v, l) = do
   modify $ exists v
 
 applyGate (CNOT c t, l) = do
-  bvc <- getSt c
-  bvt <- getSt t
-  modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt))
+  (bvc, bc) <- getSt c
+  (bvt, bt) <- getSt t
+  modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt), bc `xor` bt)
+
+applyGate (X v, l) = do
+  (bv, b) <- getSt v
+  modify $ updateQval v (bv, Prelude.not b)
 
 applyGate (T v, l) = do
   bv <- getSt v
@@ -122,14 +136,15 @@ applyGate (Sinv v, l) = do
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
   let init = 
-        SOP { dim = dim', 
-              qvals = Map.fromList ivals, 
-              terms = Map.empty,
-              orphans = [] }
+        SOP { dim     = dim', 
+              qvals   = Map.fromList ivals, 
+              terms   = Map.empty,
+              orphans = [],
+              phase   = 0}
   in
     execState (mapM_ applyGate $ zip gates [2..]) init
   where dim'    = length inputs
-        bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
+        bitvecs = [(F2Vec $ bitVec dim' $ bitI x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
 minimalSequence :: ID -> Int -> [Primitive]
@@ -143,27 +158,43 @@ minimalSequence x i = case i `mod` 8 of
   6 -> [Sinv x]
   7 -> [Tinv x]
 
+globalPhase :: ID -> Int -> [Primitive]
+globalPhase x i = case i `mod` 8 of
+  0 -> []
+  1 -> [H x, S x, H x, S x, H x, S x]
+  2 -> [S x, X x, S x, X x]
+  3 -> [H x, S x, H x, S x, H x, Z x, X x, S x, X x]
+  4 -> [Z x, X x, Z x, X x]
+  5 -> [H x, S x, H x, S x, H x, Sinv x, X x, Z x, X x]
+  6 -> [Sinv x, X x, Sinv x, X x]
+  7 -> [H x, Sinv x, H x, Sinv x, H x, Sinv x]
+
 phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 phaseFold vars inputs gates =
-  let (SOP _ _ terms orphans) = runAnalysis vars inputs gates
+  let (SOP _ _ terms orphans phase) = runAnalysis vars inputs gates
       choose = Set.findMax
-      f gates (locs, exp) =
-        let i = choose locs
+      f (gates, phase) (locs, exp) =
+        let (i, phase', exp') = case choose locs of
+              (i, False) -> (i, phase, exp)
+              (i, True)  -> (i, (phase + exp) `mod` 8, (-exp) `mod` 8)
             getTarget gate = case gate of
               T x -> x
               S x -> x
               Z x -> x
               Tinv x -> x
               Sinv x -> x
+            inSet j = any (\(l, _) -> j == l) $ Set.toList locs
             g x@(gate, j) xs
-              | j == i            = (zip (minimalSequence (getTarget gate) exp) (repeat i)) ++ xs
-              | Set.member j locs = xs
-              | otherwise         = x:xs
+              | j == i    = (zip (minimalSequence (getTarget gate) exp') (repeat i)) ++ xs
+              | inSet j   = xs
+              | otherwise = x:xs
         in
-          foldr g [] gates
+          (foldr g [] gates, phase)
+      (gates', phase') = foldl' f (zip gates [2..], phase) ((snd $ unzip $ Map.toList terms) ++ orphans)
   in
-    fst $ unzip $ foldl' f (zip gates [2..]) ((snd $ unzip $ Map.toList terms) ++ orphans)
-   
+    (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
+
+{-
 -- Phase dependence analysis
 type DG = Graph.Gr Loc ()
 
@@ -259,7 +290,8 @@ phasePhold vars inputs gates =
             f (removeLoc l gates) sets' ts' lp'
   in
     fst $ unzip $ f (zip gates [2..]) initsets initts (allLP dg initts)
+-}
 
 {- Tests -}
-foo = [ T "x", CNOT "x" "y", H "x", T "x", T "y", CNOT "y" "x", T "x", S "y", H "y", Tinv "y" ]
+foo = [ T "x", CNOT "x" "y", H "x", X "x", T "x", T "y", CNOT "y" "x", T "x", S "y", H "y", Tinv "y" ]
 runFoo = runAnalysis ["x", "y"] ["x", "y"] foo
