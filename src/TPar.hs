@@ -36,58 +36,69 @@ import Debug.Trace
 
 data AnalysisState = SOP {
   dim     :: Int,
-  ivals   :: Map ID F2Vec,
-  qvals   :: Map ID F2Vec,
-  terms   :: Map F2Vec Int
+  ivals   :: Map ID (F2Vec, Bool),
+  qvals   :: Map ID (F2Vec, Bool),
+  terms   :: Map F2Vec Int,
+  phase   :: Int
 } deriving Show
 
 type Analysis = State AnalysisState
 
-type Synthesizer = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Int)] -> [Primitive]
+type AffineSynthesizer = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Int)] -> [Primitive]
+type Synthesizer       = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Int)] -> [Primitive]
 
 bitI :: Int -> Integer
 bitI = bit
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
-getSt :: ID -> Analysis F2Vec
+getSt :: ID -> Analysis (F2Vec, Bool)
 getSt v = do 
   st <- get
   case Map.lookup v (qvals st) of
     Just bv -> return bv
     Nothing -> do put $ st { dim = dim', ivals = ivals', qvals = qvals' }
-                  return bv'
+                  return (bv', False)
       where dim' = dim st + 1
             bv' = F2Vec $ bitVec dim' $ bitI (dim' -1)
-            ivals' = Map.insert v bv' (ivals st)
-            qvals' = Map.insert v bv' (qvals st)
+            ivals' = Map.insert v (bv', False) (ivals st)
+            qvals' = Map.insert v (bv', False) (qvals st)
 
 {- exists removes a variable (existentially quantifies it) then
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
 exists :: ID -> AnalysisState -> Analysis [(F2Vec, Int)]
-exists v st@(SOP dim ivals qvals terms) =
-  let (vars, vecs)  = unzip $ Map.toList $ Map.delete v qvals
+exists v st@(SOP dim ivals qvals terms phase) =
+  let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
+      (vecs, cnsts) = unzip avecs
       (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
+      avecs'        = zip vecs' $ cnsts ++ [False]
       extendTerms   = Map.mapKeysMonotonic (F2Vec . (zeroExtend 1) . getBV)
       terms''       = if dim' > dim then extendTerms terms' else terms'
-      vals          = Map.fromList $ zip (vars ++ [v]) vecs'
+      vals          = Map.fromList $ zip (vars ++ [v]) avecs'
   in do
-    put $ SOP dim' vals vals terms''
+    put $ SOP dim' vals vals terms'' phase
     return $ Map.toList orp
 
-updateQval :: ID -> F2Vec -> AnalysisState -> AnalysisState
+updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: F2Vec -> Int -> AnalysisState -> AnalysisState
-addTerm bv i st = st { terms = Map.alter f bv $ terms st }
-  where f oldt = case oldt of
+addTerm :: (F2Vec, Bool) -> Int -> AnalysisState -> AnalysisState
+addTerm (bv, p) i st =
+  case p of
+    False -> st { terms = Map.alter (f i) bv $ terms st }
+    True ->
+      let terms' = Map.alter (f $ (-i) `mod` 8) bv $ terms st
+          phase' = (phase st + i) `mod` 8
+      in
+        st { terms = terms', phase = phase' }
+  where f i oldt = case oldt of
           Just x  -> Just $ x + i `mod` 8
           Nothing -> Just $ i `mod` 8
  
 {-- The main analysis -}
-applyGate :: Synthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
+applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGate synth gates g = case g of
   T v      -> do
     bv <- getSt v
@@ -110,9 +121,13 @@ applyGate synth gates g = case g of
     modify $ addTerm bv 4
     return gates
   CNOT c t -> do
-    bvc <- getSt c
-    bvt <- getSt t
-    modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt))
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt), bc `xor` bt)
+    return gates
+  X v      -> do
+    (bv, b) <- getSt v
+    modify $ updateQval v (bv, Prelude.not b)
     return gates
   H v      -> do
     bv <- getSt v
@@ -126,25 +141,35 @@ applyGate synth gates g = case g of
     modify $ updateQval v bvu
     return gates
 
-finalize :: Synthesizer -> [Primitive] -> Analysis [Primitive]
+finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
   return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
     
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
-gtpar synth vars inputs gates =
-  let init = 
+gtpar osynth vars inputs gates =
+  let synth = affineTrans osynth
+      init = 
         SOP { dim = dim', 
               ivals = Map.fromList ivals, 
               qvals = Map.fromList ivals, 
-              terms = Map.empty }
+              terms = Map.empty,
+              phase = 0 }
   in
     evalState (foldM (applyGate synth) [] gates >>= finalize synth) init
   where dim'    = length inputs
-        bitvecs = [F2Vec $ bitVec dim' $ bitI x | x <- [0..]] 
+        bitvecs = [(F2Vec $ bitVec dim' $ bitI x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
 {-- Synthesizers -}
+affineTrans :: Synthesizer -> AffineSynthesizer
+affineTrans synth = \input output xs ->
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      outX = f output
+  in
+    inX ++ (synth (Map.map fst input) (Map.map fst output) xs) ++ outX
+
 emptySynth :: Synthesizer
 emptySynth _ _ _ = []
 
@@ -153,7 +178,12 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      rops = snd $ runWriter $ toReducedEchelonPMH mat
+      cnts = length . filter (\rp -> case rp of
+                                 Add _ _ -> True
+                                 _       -> False)
+      rps1 = snd $ runWriter $ toReducedEchelonPMH mat
+      rps2 = snd $ runWriter $ toReducedEchelonSqr mat
+      rops = if cnts rps1 < cnts rps2 then rps1 else rps2
       f op = case op of
         Add i j      -> [CNOT (ids !! i) (ids !! j)]
         Exchange i j -> [Swap (ids !! i) (ids !! j)]
