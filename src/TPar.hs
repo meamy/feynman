@@ -178,12 +178,7 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      cnts = length . filter (\rp -> case rp of
-                                 Add _ _ -> True
-                                 _       -> False)
-      rps1 = snd $ runWriter $ toReducedEchelonPMH mat
-      rps2 = snd $ runWriter $ toReducedEchelonSqr mat
-      rops = if cnts rps1 < cnts rps2 then rps1 else rps2
+      rops = snd $ runWriter $ toReducedEchelonPMH mat
       f op = case op of
         Add i j      -> [CNOT (ids !! i) (ids !! j)]
         Exchange i j -> [Swap (ids !! i) (ids !! j)]
@@ -342,9 +337,9 @@ graySynthesis ids out (x:xs) = case x of
     in
       graySynthesis ids out $ xzero:xone:xs
 
-cnotMinGray :: Synthesizer
-cnotMinGray input output [] = linearSynth input output []
-cnotMinGray input output xs0 =
+cnotMinGray0 :: Synthesizer
+cnotMinGray0 input output [] = linearSynth input output []
+cnotMinGray0 input output xs =
   let ivecs  = Map.toList input
       solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
   in
@@ -355,7 +350,17 @@ cnotMinGray input output xs0 =
             (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
         in
           gates ++ linearSynth outin output []
-  where xs = filter (\(_, i) -> i `mod` 8 /= 0) xs0
+--  where xs = filter (\(_, i) -> i `mod` 8 /= 0) xs0
+
+cnotMinGray input output xs =
+  let gates  = cnotMinGray0 input output xs
+      gates' = cnotMinGray0 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct
+  in
+    if countc gates < countc gates' then gates else gates'
 
 {- Temp for testing -}
 ids  = ["a", "b", "c"]
