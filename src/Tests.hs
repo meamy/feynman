@@ -2,7 +2,7 @@ module Tests where
 
 import Data.List
 import Numeric
-import System.CPUTime
+import System.Time
 
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -10,9 +10,13 @@ import qualified Data.Set as Set
 import DotQC
 import PhaseFold
 import TPar
+import Linear
 import Syntax (Primitive(CNOT, T, Tinv))
 
-formmatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
+import qualified Data.BitVector as BitVector
+import Test.QuickCheck
+
+formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
 benchmarksPath = "benchmarks/"
 
@@ -96,7 +100,7 @@ printResultsAcc avgs (x:xs) = case x of
     putStrLn $ s ++ " -- Failed (" ++ err ++ ")"
     printResultsAcc avgs xs
   (s, Right (n, t, cts)) -> do
-    putStrLn $ s ++ ": " ++ (show n) ++ " qubits, " ++ (show t) ++ "s"
+    putStrLn $ s ++ ": " ++ (show n) ++ " qubits, " ++ (formatFloatN t 3)  ++ "ms"
     printGateCounts cts
     printResultsAcc (updateAvg avgs cts) xs
   where
@@ -119,13 +123,13 @@ runBenchmarks :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] ->
 runBenchmarks opt xs =
   let f s = do
         orig  <- readFile $ benchmarksPath ++ s ++ ".qc"
-        start <- getCPUTime
+        TOD starts startp <- getClockTime
         case printErr (parseDotQC orig) >>= (\c -> opt (c, c)) of
           Left err      -> return $ (s, Left err)
           Right (c, c') -> do
-            end  <- getCPUTime
-            let diff = (fromIntegral (end - start)) / 10^12
             writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
+            TOD ends endp  <- getClockTime
+            let diff = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
             return $ (s, Right $ (length (qubits c), diff, zip (countGates c) (countGates c') ++ [(tDepth c, tDepth c')]))
       printErr res = case res of
         Left err -> Left $ show err
@@ -169,3 +173,45 @@ runTpar (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") de
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
       Right (c, ret)
+
+
+-- Random benchmarks
+generateVecNonzero :: Int -> Gen F2Vec
+generateVecNonzero n = do
+  bits <- vector n
+  if all not bits
+    then generateVecNonzero n
+    else return $ F2Vec $ BitVector.fromBits bits
+
+generateSizedSet :: Int -> Int -> Gen (Set F2Vec)
+generateSizedSet n m =
+  let f set = if Set.size set >= m then return set else
+        do
+          bits <- generateVecNonzero n
+          f $ Set.insert bits set
+  in
+    f Set.empty
+
+countCNOTs :: [Primitive] -> Int
+countCNOTs = length . filter iscnot
+  where iscnot (CNOT _ _) = True
+        iscnot _          = False
+
+runSingle :: Int -> Int -> IO (Int)
+runSingle n m = do
+  let ids = map show [1..n]
+  let ist = genInitSt ids
+  set <- generate $ generateSizedSet n m
+  let circ = cnotMinGray ist ist $ zip (Set.toList set) (repeat 1)
+  return $ countCNOTs circ
+
+runExperiment :: Int -> Int -> Int -> IO ()
+runExperiment n m repeats = do
+  results <- mapM (\_ -> runSingle n m) [1..repeats]
+  let avg = (fromIntegral (foldr (+) 0 results)) / (fromIntegral repeats)
+  putStrLn $ "  |S| = " ++ (show m) ++ ": " ++ (show avg)
+  
+runExperiments :: Int -> Int -> IO ()
+runExperiments n repeats = do
+  putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
+  sequence_ $ map (\m -> runExperiment n m repeats) [1..2^n-1]

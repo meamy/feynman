@@ -179,13 +179,18 @@ linearSynth input output _ =
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
       rops = snd $ runWriter $ toReducedEchelonPMH mat
+      rops' = snd $ runWriter $ toReducedEchelonSqr mat
+      isadd g = case g of
+        Add _ _   -> True
+        otherwise -> False
+      counta = length . filter isadd
       f op = case op of
         Add i j      -> [CNOT (ids !! i) (ids !! j)]
         Exchange i j -> [Swap (ids !! i) (ids !! j)]
   in
     if ids /= idt
     then error "Fatal: map keys not equal"
-    else reverse $ concatMap f rops
+    else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
 synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
 synthVec ids vec =
@@ -299,7 +304,9 @@ findColumnSplit (c:cs) vecs = foldl' g init cs
         init = case f c of (l, r) -> (l, c, [], r)
         g (l, c, cs, r) c' =
           let (l', r') = f c' in
-            if length r' > length r then (l', c', c:cs, r') else (l, c, c':cs, r)
+            if length r' > length r
+            then (l', c', c:cs, r')
+            else (l, c, c':cs, r)
 
 findBestSplit :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
 findBestSplit (c:cs) vecs = foldl' g init cs
@@ -363,8 +370,45 @@ cnotMinGray input output xs =
     if countc gates < countc gates' then gates else gates'
 
 {- Temp for testing -}
-ids  = ["a", "b", "c"]
-ot   = Map.fromList [("a", bb 3 1), ("b", bb 3 2), ("c", bb 3 4)]
-cs   = [0, 1, 2]
-vecs = tail $ zip (allVecs 3) (repeat 1)
-test = graySynthesis ids ot [Pt cs Nothing Nothing vecs]
+ids  = ["a", "b", "c", "d"]
+vecs = Set.fromList [bb 4 6, bb 4 1, bb 4 9, bb 4 7, bb 4 11, bb 4 3]
+outs = Map.fromList [("a", bb 4 1), ("b", bb 4 2), ("c", bb 4 4), ("d", bb 4 8)]
+
+idsz  = ["a", "b", "c"]
+vecsz = Set.delete (bb 3 0) $ Set.fromList $ allVecs 3
+outsz = Map.fromList [("a", bb 3 1), ("b", bb 3 2), ("c", bb 3 4)]
+
+-- Verification & brute force for skeletons
+
+maximalSkeleton :: [ID] -> Map ID F2Vec -> [Primitive] -> Set F2Vec
+maximalSkeleton ids st gates = snd $ Data.List.foldl f (st, Set.fromList $ Map.elems st) gates
+  where f (st, vals) (CNOT c t) =
+          let tmp = F2Vec $ (getBV $ st!t) `xor` (getBV $ st!c) in
+            (Map.insert t tmp st, Set.insert tmp vals)
+        f (st, vals) _          = (st, vals)
+
+maximalASkeleton :: [ID] -> Map ID F2Vec -> [Primitive] -> (Map ID F2Vec, Set F2Vec)
+maximalASkeleton ids st gates = Data.List.foldl f (st, Set.fromList $ Map.elems st) gates
+  where f (st, vals) (CNOT c t) =
+          let tmp = F2Vec $ (getBV $ st!t) `xor` (getBV $ st!c) in
+            (Map.insert t tmp st, Set.insert tmp vals)
+        f (st, vals) _          = (st, vals)
+
+allCNOTs :: [ID] -> [[Primitive]]
+allCNOTs ids = concatMap f ids
+  where f id = [ [CNOT id id'] | id'<-ids, id /= id']
+
+allSkeletons :: [ID] -> [[Primitive]]
+allSkeletons ids = allCNOTs ids ++ [x++y | y<-allSkeletons ids, x<-allCNOTs ids]
+
+bruteForceSkeleton :: [ID] -> Set F2Vec -> Maybe [Primitive]
+bruteForceSkeleton ids vals = find (Set.isSubsetOf vals . maximalSkeleton ids st) $ allSkeletons ids
+  where st = genInitSt ids
+
+bruteForceASkeleton :: [ID] -> Set F2Vec -> Map ID F2Vec -> Maybe [Primitive]
+bruteForceASkeleton ids vals out = find (verify . maximalASkeleton ids st) $ allSkeletons ids
+  where st               = genInitSt ids
+        verify (st, set) = st == out && Set.isSubsetOf vals set
+
+genInitSt :: [ID] -> Map ID F2Vec
+genInitSt ids = Map.fromList $ map (\(id, i) -> (id, F2Vec $ bitVec (length ids) $ bitI i)) $ zip ids [0..]
