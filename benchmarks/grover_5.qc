@@ -1,18 +1,44 @@
-#Use the input state "|0>^5|1>".  After each iteration you should see the state corresponding 
-#the toffoli oracle increase in amplitude maximizing at the 4th iteration.
-
-.v a b c d e Workspace 0 1 2
-.i a b c d e
-.o a b c d e
-.c
+.v a b c d e result 0 1 2
+.i
 
 
 BEGIN
+X result
+
 H a
 H b
 H c
 H d
 H e
+H result
+
+X e
+X a
+X b
+H 0
+Z a b 0
+H 0
+H 1
+Z c 0 1
+H 1
+H 2
+Z d 1 2
+H 2
+H result
+Z e 2 result
+H result
+H 2
+Z d 1 2
+H 2
+H 1
+Z c 0 1
+H 1
+H 0
+Z a b 0
+H 0
+X e
+X a
+X b
 
 H a
 H b
@@ -52,6 +78,34 @@ H c
 H d
 H e
 
+X e
+X a
+X b
+H 0
+Z a b 0
+H 0
+H 1
+Z c 0 1
+H 1
+H 2
+Z d 1 2
+H 2
+H result
+Z e 2 result
+H result
+H 2
+Z d 1 2
+H 2
+H 1
+Z c 0 1
+H 1
+H 0
+Z a b 0
+H 0
+X e
+X a
+X b
+
 H a
 H b
 H c
@@ -90,6 +144,34 @@ H c
 H d
 H e
 
+X e
+X a
+X b
+H 0
+Z a b 0
+H 0
+H 1
+Z c 0 1
+H 1
+H 2
+Z d 1 2
+H 2
+H result
+Z e 2 result
+H result
+H 2
+Z d 1 2
+H 2
+H 1
+Z c 0 1
+H 1
+H 0
+Z a b 0
+H 0
+X e
+X a
+X b
+
 H a
 H b
 H c
@@ -127,6 +209,34 @@ H b
 H c
 H d
 H e
+
+X e
+X a
+X b
+H 0
+Z a b 0
+H 0
+H 1
+Z c 0 1
+H 1
+H 2
+Z d 1 2
+H 2
+H result
+Z e 2 result
+H result
+H 2
+Z d 1 2
+H 2
+H 1
+Z c 0 1
+H 1
+H 0
+Z a b 0
+H 0
+X e
+X a
+X b
 
 H a
 H b

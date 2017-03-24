@@ -34,14 +34,14 @@ X c41
 X c60
 X c61
 
-Z c00 c11 e10
-Z c01 c10 e11
-Z c20 c31 a0
-Z c21 c30 a1
-Z c40 c51 e50
-Z c41 c50 e51
-Z c60 c71 b0
-Z c61 c70 b1
+Z c00 c10 e10
+Z c01 c11 e11
+Z c20 c30 a0
+Z c21 c31 a1
+Z c40 c50 e50
+Z c41 c51 e51
+Z c60 c70 b0
+Z c61 c71 b1
 
 X c00
 H e10
@@ -73,10 +73,10 @@ X e11
 X e50
 X e51
 
-Z e10 a0 e30
-Z e11 a1 e31
-Z e50 b0 b2
-Z e51 b1 b3
+Z e11 a0 e30
+Z e10 a1 e31
+Z e51 b0 b2
+Z e50 b1 b3
 
 H e30
 H e31
@@ -96,8 +96,8 @@ Z e31 b3 e71
 X e30
 X e31
 
-Z e30 b2 e70
-Z e31 b3 e71
+Z e31 b2 e70
+Z e30 b3 e71
 
 H e70
 H e71
