@@ -22,7 +22,7 @@ executable feyn
                        ExistentialQuantification,
                        FlexibleContexts,
                        FlexibleInstances
-  hs-source-dirs:      src, src/frontends
+  hs-source-dirs:      src
   -- other-modules:       
   build-depends:       QuickCheck >= 2.8.2, 
                        array >= 0.5.1.0, 
@@ -46,7 +46,7 @@ executable feyn-prof
                        ExistentialQuantification,
                        FlexibleContexts,
                        FlexibleInstances
-  hs-source-dirs:      src, src/frontends
+  hs-source-dirs:      src
   -- other-modules:       
   build-depends:       QuickCheck >= 2.8.2, 
                        array >= 0.5.1.0, 

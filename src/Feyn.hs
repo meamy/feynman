@@ -9,9 +9,9 @@ import qualified Data.Set as Set
 
 import Control.Monad
 
-import DotQC
-import PhaseFold
-import TPar
+import Frontend.DotQC
+import Optimization.PhaseFold
+import Optimization.TPar
 import Syntax (Primitive(CNOT, T, Tinv))
 
 import Tests
@@ -53,7 +53,7 @@ testCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") dec
   Nothing -> return Nothing
   Just (Decl n p body) ->
     let gates  = toCliffordT body
-        gates' = gtpar cnotMinGray q (Set.toList i) gates
+        gates' = minCNOT q (Set.toList i) gates
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in do
@@ -68,7 +68,7 @@ testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs o
   Nothing -> return Nothing
   Just (Decl n p body) ->
     let gates  = toCliffordT body
-        gates' = gtpar tparMore q (Set.toList i) gates
+        gates' = tpar q (Set.toList i) gates
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in do

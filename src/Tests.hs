@@ -7,10 +7,11 @@ import System.Time
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import DotQC
-import PhaseFold
-import TPar
-import Linear
+import Frontend.DotQC
+import Optimization.PhaseFold
+import Optimization.TPar
+import Algebra.Linear
+import Synthesis.Reversible.Gray
 import Syntax (Primitive(CNOT, T, Tinv))
 
 import qualified Data.BitVector as BitVector
@@ -152,23 +153,23 @@ runPhaseFold (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main
     in 
       Right (c, ret)
       
-runCnotMin :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> Left "Failed (no main function)"
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = gtpar cnotMinGray q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in
-      Right (c, ret)
-
 runTpar :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
 runTpar (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
   Nothing -> Left "Failed (no main function)"
   Just (Decl n p body) ->
     let gates  = toCliffordT body
-        gates' = gtpar tparMore q (Set.toList i) gates
+        gates' = tpar q (Set.toList i) gates
+        main   = Decl n p $ fromCliffordT gates'
+        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+    in
+      Right (c, ret)
+
+runCnotMin :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
+  Nothing -> Left "Failed (no main function)"
+  Just (Decl n p body) ->
+    let gates  = toCliffordT body
+        gates' = minCNOT q (Set.toList i) gates
         main   = Decl n p $ fromCliffordT gates'
         ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in

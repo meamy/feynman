@@ -1,7 +1,7 @@
-feyn: src/*.hs src/frontends/*.hs
+feyn: src/*
 	cabal build feyn
 	cp dist/build/feyn/feyn ./feyn
 
-prof: src/*.hs src/frontends/*.hs
+prof: src/*
 	cabal build feyn-prof
 	cp dist/build/feyn-prof/feyn-prof ./feyn-prof

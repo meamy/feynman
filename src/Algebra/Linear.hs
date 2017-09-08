@@ -2,7 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE BangPatterns #-}
 
-module Linear where
+module Algebra.Linear where
 
 import Data.List hiding (transpose)
 --import Data.Tuple
@@ -20,7 +20,7 @@ import Data.Coerce
 import Data.Bits
 import qualified Data.BitVector as BitVector
 
-import Matroid
+import Algebra.Matroid
 
 import Test.QuickCheck hiding ((.&.))
 
@@ -29,6 +29,9 @@ newtype F2Vec = F2Vec { getBV :: BitVector.BV } deriving (Eq, Ord, Bits)
 
 bitVec :: Integral a => Int -> a -> F2Vec
 bitVec n i = coerce $ BitVector.bitVec n i
+
+bitI :: Int -> Int -> F2Vec
+bitI n i = coerce $ BitVector.bitVec n (shift 1 i :: Integer)
 
 (@.) :: Integral a => F2Vec -> a -> Bool
 (@.) v i = coerce $ (BitVector.@.) (coerce v) i
@@ -39,15 +42,18 @@ bitVec n i = coerce $ BitVector.bitVec n i
 zeroExtend :: Integral a => a -> F2Vec -> F2Vec
 zeroExtend i v = coerce $ BitVector.zeroExtend i (coerce v)
 
-size :: F2Vec -> Int
-size = coerce BitVector.size
+width :: F2Vec -> Int
+width = coerce BitVector.width
 
 fromBits :: [Bool] -> F2Vec
 fromBits = coerce BitVector.fromBits
 
+toBits :: F2Vec -> [Bool]
+toBits = coerce BitVector.toBits
+
 {- Little-endian -}
 instance Show F2Vec where
-  show v = map (f . (v @.)) [0..size v - 1]
+  show v = map (f . (v @.)) [0..width v - 1]
     where f b = if b then '1' else '0'
 
 {- Num instance coinciding with the vector space GF(2)^n -}
@@ -99,14 +105,14 @@ toList (F2Mat m n vals) = vals
 fromList :: [F2Vec] -> F2Mat
 fromList []   = F2Mat 0 0 []
 fromList vecs@(x:xs) =
-  if all ((n ==) . size) xs
+  if all ((n ==) . width) xs
     then F2Mat (length vecs) n vecs
     else error "Vectors have differing lengths"
-  where n = size x
+  where n = width x
 
 fromVec :: F2Vec -> F2Mat
 fromVec x = F2Mat 1 n [x]
-  where n = size x
+  where n = width x
 
 {- Accessors -}
 row :: F2Mat -> Int -> F2Vec
@@ -138,7 +144,7 @@ mult a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
   | an /= bm  = error $ "Incompatible matrix dimensions:\n" ++ show a ++ "\n\n" ++ show b ++ "\n"
   | otherwise = F2Mat am bn $ map multRow avals
     where multRow v       = foldl' (f v) (bitVec bn 0) $ zip bvals [0..]
-          f v sum (v', i) = if  v @. i then sum `xor` v' else sum
+          f v sum (v', i) = if  v @. i then sum + v' else sum
 
 {- Swap the arguments of mult. If A and B are stored column-major, multT A B = A * B -}
 multT :: F2Mat -> F2Mat -> F2Mat
@@ -156,7 +162,7 @@ multVec m = head . toList . multT (transpose m) . fromVec
 add :: F2Mat -> F2Mat -> F2Mat
 add a@(F2Mat am an avals) b@(F2Mat bm bn bvals)
   | am /= bm || an /= bn = error "Incompatible matrix dimensions"
-  | otherwise = F2Mat am an $ zipWith xor avals bvals
+  | otherwise = F2Mat am an $ zipWith (+) avals bvals
 
 {- Row operations -}
 data ROp = Exchange Int Int | Add Int Int deriving (Eq, Show)
@@ -180,7 +186,7 @@ addRow :: Int -> Int -> F2Mat -> F2Mat
 addRow i j mat@(F2Mat m n vals)
   | 0 <= i && 0 <= j && i < m && j < m =
     let (v1, v2) = splitAt j vals
-        newV     = (head v2) `xor` (vals !! i)
+        newV     = (head v2) + (vals !! i)
     in
       mat { vals = v1 ++ newV:(tail v2) }
   | otherwise                          = error "Add indices out of bounds"
@@ -265,7 +271,7 @@ toEchelon mat@(F2Mat m n vals) =
         then do
           tell [Add (snd y) (snd x)]
           xs' <- zeroAll j y xs
-          return $ ((fst y) `xor` (fst x), snd x):xs'
+          return $ ((fst y) + (fst x), snd x):xs'
         else do
           xs' <- zeroAll j y xs
           return $ x:xs'
@@ -296,7 +302,7 @@ toReducedEchelon mat@(F2Mat m n vals) =
         then do
           tell [Add (snd y) (snd x)]
           xs' <- zeroAll j y xs
-          return $ ((fst y) `xor` (fst x), snd x):xs'
+          return $ ((fst y) + (fst x), snd x):xs'
         else do
           xs' <- zeroAll j y xs
           return $ x:xs'
@@ -335,7 +341,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
             Nothing              -> return (Map.insert subbv v patterns, v:vals)
             Just (bv', r') -> do
               tell [Add r' r]
-              return (patterns, (bv `xor` bv', r):vals)
+              return (patterns, (bv + bv', r):vals)
 
       zeroAll j y []     = return []
       zeroAll j y (x:xs) =
@@ -343,7 +349,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
         then do
           tell [Add (snd y) (snd x)]
           xs' <- zeroAll j y xs
-          return $ ((fst y) `xor` (fst x), snd x):xs'
+          return $ ((fst y) + (fst x), snd x):xs'
         else do
           xs' <- zeroAll j y xs
           return $ x:xs'
@@ -425,7 +431,7 @@ increaseRank mat@(F2Mat m n vals) =
       zeroAll j y (x:xs) =
         let xs' = zeroAll j y xs in
           if x @. j
-          then (y `xor` x):xs'
+          then (y + x):xs'
           else x:xs'
 
       toUpper j xs
@@ -451,7 +457,7 @@ increaseRankN mat@(F2Mat m n vals) r =
       zeroAll j y (x:xs) =
         let xs' = zeroAll j y xs in
           if x @. j
-          then (y `xor` x):xs'
+          then (y + x):xs'
           else x:xs'
 
       toUpper j xs r vecs
@@ -484,7 +490,7 @@ allSolutions a =
   let !ag = pseudoinverse a in \b ->
     let x        = multVec ag b
         ker      = add (identity $ n a) (mult ag a)
-        genSol w = x `xor` (multVec ker w)
+        genSol w = x + (multVec ker w)
     in
       if b == multVec a x
         then foldr (\w -> Set.insert $ genSol w) Set.empty $ allVecs $ n a
@@ -506,7 +512,7 @@ minSolution a =
   let !ag = pseudoinverse a in \b ->
     let x        = multVec ag b
         ker      = add (identity $ n a) (mult ag a)
-        genSol w = x `xor` (multVec ker w)
+        genSol w = x + (multVec ker w)
     in
       if b == multVec a x
         then foldM (\min w -> Just $ minWt min $ genSol w) x $ allVecs $ n a

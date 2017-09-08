@@ -1,4 +1,4 @@
-module PhaseFold where
+module Optimization.PhaseFold where
 
 import Data.List hiding (transpose)
 
@@ -8,14 +8,17 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.BitVector hiding (replicate, foldr, concat)
-import Syntax
-import Linear
-
 import Control.Monad.State.Strict
 
 import Data.Graph.Inductive as Graph
 import Data.Graph.Inductive.Query.DFS
+
+import Data.Bits
+
+
+import Syntax
+import Algebra.Linear
+import Synthesis.Phase
 
 {-- Phase folding optimization -}
 {- We have two options for implementation here:
@@ -49,9 +52,6 @@ data AnalysisState = SOP {
 
 type Analysis = State AnalysisState
 
-bitI :: Int -> Integer
-bitI = bit
-
 {- Get the bitvector for variable v, or otherwise allocate one -}
 getSt :: ID -> Analysis (F2Vec, Bool)
 getSt v = do 
@@ -61,7 +61,7 @@ getSt v = do
     Nothing -> do put $ st { dim = dim', qvals = qvals' }
                   return (bv', False)
       where dim' = dim st + 1
-            bv' = F2Vec $ bitVec dim' $ bitI (dim' -1)
+            bv' = bitI dim' (dim' - 1)
             qvals' = Map.insert v (bv', False) (qvals st)
 
 {- exists removes a variable (existentially quantifies it) then
@@ -76,7 +76,7 @@ exists v st@(SOP dim qvals terms orphans phase) =
       (dim', vecs') = addIndependent vecs
       avecs'        = zip vecs' $ cnsts ++ [False]
       orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
-      extendTerms   = Map.mapKeysMonotonic (F2Vec . (zeroExtend 1) . getBV)
+      extendTerms   = Map.mapKeysMonotonic (zeroExtend 1)
   in
     if dim' > dim
     then SOP dim' (Map.fromList $ zip (vars ++ [v]) avecs') (extendTerms terms') orphans' phase
@@ -107,7 +107,7 @@ applyGate (H v, l) = do
 applyGate (CNOT c t, l) = do
   (bvc, bc) <- getSt c
   (bvt, bt) <- getSt t
-  modify $ updateQval t (F2Vec $ (getBV bvc) `xor` (getBV bvt), bc `xor` bt)
+  modify $ updateQval t (bvc + bvt, bc `xor` bt)
 
 applyGate (X v, l) = do
   (bv, b) <- getSt v
@@ -144,30 +144,8 @@ runAnalysis vars inputs gates =
   in
     execState (mapM_ applyGate $ zip gates [2..]) init
   where dim'    = length inputs
-        bitvecs = [(F2Vec $ bitVec dim' $ bitI x, False) | x <- [0..]] 
+        bitvecs = [(bitI dim' x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
-
-minimalSequence :: ID -> Int -> [Primitive]
-minimalSequence x i = case i `mod` 8 of
-  0 -> []
-  1 -> [T x]
-  2 -> [S x]
-  3 -> [S x, T x]
-  4 -> [Z x]
-  5 -> [Z x, T x]
-  6 -> [Sinv x]
-  7 -> [Tinv x]
-
-globalPhase :: ID -> Int -> [Primitive]
-globalPhase x i = case i `mod` 8 of
-  0 -> []
-  1 -> [H x, S x, H x, S x, H x, S x]
-  2 -> [S x, X x, S x, X x]
-  3 -> [H x, S x, H x, S x, H x, Z x, X x, S x, X x]
-  4 -> [Z x, X x, Z x, X x]
-  5 -> [H x, S x, H x, S x, H x, Sinv x, X x, Z x, X x]
-  6 -> [Sinv x, X x, Sinv x, X x]
-  7 -> [H x, Sinv x, H x, Sinv x, H x, Sinv x]
 
 phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 phaseFold vars inputs gates =

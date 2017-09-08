@@ -1,4 +1,4 @@
-module Matroid where
+module Algebra.Matroid where
 
 import Data.Sequence (Seq, (|>), viewl, ViewL(EmptyL, (:<)))
 import qualified Data.Sequence as Seq
