@@ -103,59 +103,6 @@ instance Show Circuit where
 
 showLst = intercalate " "
 
--- Parsing
-
-space = char ' '
-semicolon = char ';'
-sep = space <|> tab
-skipSpaces = skipMany (sep <|> semicolon <|> newline)
-parseLineEnd = skipMany sep >> (semicolon <|> newline) >> skipSpaces
-parseToken s = string s >> return s
-parseCircuitID = letter >>= \c -> many alphaNum >>= \cs -> return (c:cs)
-parseArgList = sepBy (many1 alphaNum) (many1 sep) 
-parseIDlst :: Int -> Parser [String]
-parseIDlst n = count n (many1 alphaNum >>= \id -> many sep >> return id)
-
-parseGate =
-  (parseToken "H" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ H (head lst)) <|>
-  (parseToken "X" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ X (head lst)) <|>
-  (parseToken "Y" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Y (head lst)) <|>
-  (parseToken "Z" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Z (head lst)) <|>
-  ((parseToken "P" <|> parseToken "S") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ S (head lst)) <|>
-  ((parseToken "P*" <|> parseToken "S*") >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Sinv (head lst)) <|>
-  (parseToken "T" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ T (head lst)) <|>
-  (parseToken "T*" >> skipMany1 sep >> parseIDlst 1 >>= \lst -> return $ Tinv (head lst)) <|>
-  ((parseToken "tof" <|> parseToken "cnot") >> skipMany1 sep >> parseIDlst 2 >>= \lst -> return $ CNOT (head lst) (lst !! 1))
-
-parseStmt = (liftM Gate $ try parseGate)-- <|> (liftM
---parseStmtSeq = liftM Seq $ endBy parseStmt skipSpaces
-
-parseDecl = do
-  parseToken "BEGIN"
-  id <- option "main" (try (skipMany1 sep >> parseCircuitID))
-  args <- option [] (try (skipMany1 sep >> parseArgList))
-  skipSpaces
-  stmt <- parseStmt
-  skipSpaces
-  parseToken "END"
-  return $ Decl id args stmt
-
-parseFile = do
-  skipSpaces
-  parseToken ".v"
-  skipMany1 sep
-  qubits <- parseArgList
-  skipSpaces
-  parseToken ".i"
-  skipMany1 sep
-  inputs <- parseArgList
-  skipSpaces
-  decls <- endBy parseDecl skipSpaces
-  eof
-  return $ Circuit qubits (Set.fromList inputs) decls
-
-parseQC = parse parseFile ".qc parser" 
-
 -- Test
 
 toffoli = Circuit { qubits = ["x", "y", "z"],
