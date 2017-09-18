@@ -28,14 +28,18 @@ user may omit the `cabal sandbox init` command.
 Once all dependencies have been met, Feynman can be built from the top-level
 directory with the command
 
-  cabal build feyn
+```
+cabal build feyn
+```
 
 This will place the compiled binary `feyn` in the folder `dist/build/feyn/`.
 
 Alternatively, a Makefile is provided which will build Feynman and copy the
 executable to the top-level directory. To compile with the makefile simply type
 
+```
   make
+```
 
 ## Using Feynman
 
@@ -45,6 +49,6 @@ The [t-par](https://arxiv.org/abs/1303.2042) algorithm can be run with
 ./feyn -tpar *.qc
 ```
 
-Other options include `-phasefold` and `-cnotmin`
+Other options include `-phasefold` and `-cnotmin`, which are very mysterious.
 
 More to come...
