@@ -3,10 +3,10 @@
 
 name:                feyn
 version:             0.1.0.0
-synopsis:            Quantum circuit language & compiler tools
+synopsis:            Quantum circuit tools
 -- description:         
--- license:             
--- license-file:        LICENSE
+license:             BSD2
+license-file:        LICENSE.md
 author:              Matthew Amy
 maintainer:          matt.e.amy@gmail.com
 copyright:           2016 Matthew Amy
