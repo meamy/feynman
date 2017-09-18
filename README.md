@@ -43,7 +43,7 @@ make
 
 ## Using Feynman
 
-Feynman currently has a single backend, DotQC, a quantum circuit description
+Feynman currently has a single frontend, DotQC, a quantum circuit description
 language designed for use with [QCViewer](https://github.com/aparent/QCViewer/). 
 A description of the .qc file format is available
 
