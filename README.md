@@ -38,17 +38,41 @@ Alternatively, a Makefile is provided which will build Feynman and copy the
 executable to the top-level directory. To compile with the makefile simply type
 
 ```
-  make
+make
 ```
 
 ## Using Feynman
 
-The [t-par](https://arxiv.org/abs/1303.2042) algorithm can be run with
+Feynman currently has a single backend, DotQC, a quantum circuit description
+language designed for use with [QCViewer](https://github.com/aparent/QCViewer/). 
+A description of the .qc file format is available
+
+To run feynman on a .qc file, execute the command
 
 ```
-./feyn -tpar *.qc
+feyn <filename>.qc
+```
+
+Various optimization algorithms can be run on the input file, including the
+[t-par](https://arxiv.org/abs/1303.2042) algorithm:
+
+```
+./feyn -tpar <filename>.qc
 ```
 
 Other options include `-phasefold` and `-cnotmin`, which are very mysterious.
+
+### Benchmarks
+
+The Feynman repository comes with a suite of quantum circuit benchmarks, found
+in the `benchmarks` folder. For more information on the benchmarks the user is
+directed to [T-count optimization and Reed-Muller
+codes](https://arxiv.org/abs/1601.07363) for instance.
+
+# Authors
+
+Matthew Amy
+
+
 
 More to come...
