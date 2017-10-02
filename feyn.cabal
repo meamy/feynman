@@ -28,7 +28,7 @@ executable feyn
                        array >= 0.5.1.0, 
                        base, 
                        bv, 
-                       containers, 
+                       containers >= 0.5.8.1,
                        mtl, 
                        parsec, parsec-numbers,
                        deepseq,
