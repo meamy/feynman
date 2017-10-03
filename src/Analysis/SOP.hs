@@ -136,8 +136,8 @@ axiomHHStrict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) o
   where f x = return (factorOut x $ poly sop) >>= toBooleanPoly >>= getSubst >>= \(y, psub) -> Just (x, y, psub)
         out = Map.elems $ outVals sop
 
-dagger :: Primitive -> Primitive
-dagger x = case x of
+daggerGate :: Primitive -> Primitive
+daggerGate x = case x of
   H _      -> x
   X _      -> x
   Y _      -> x -- WARNING: this is incorrect
@@ -147,6 +147,9 @@ dagger x = case x of
   T x      -> Tinv x
   Tinv x   -> T x
   Swap _ _ -> x
+
+dagger :: [Primitive] -> [Primitive]
+dagger = reverse . map daggerGate
 
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
@@ -166,7 +169,7 @@ verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
 verifySpec spec vars inputs gates =
   let hConj      = map H inputs
       init       = blank vars
-      circuitSOP = foldMap (sopCliffordT vars) (hConj ++ (map dagger gates) ++ hConj)
+      circuitSOP = foldMap (sopCliffordT vars) (hConj ++ (dagger gates) ++ hConj)
       reduced    = reduce (init <> circuitSOP <> spec)
   in
     case reduced == init of
@@ -220,20 +223,6 @@ toffoliSpec x y z = SOP {
   poly     = zero,
   outVals   = (Map.fromList [(x, ofVar 0), (y, ofVar 1), (z, ofVar 2 + ofTerm True [0,1])])
   }
-  
-
-toffoli4 :: ID -> ID -> ID -> ID -> ID -> [Primitive]
-toffoli4 w x y z anc = toffoli w x anc ++ toffoli y anc z ++ toffoli w x anc
-
-toffoli4Spec :: ID -> ID -> ID -> ID -> ID -> SOP Z8
-toffoli4Spec w x y z anc = SOP {
-  n        = 3,
-  sde      = 0,
-  inVals   = (Map.fromList [(w, Just 0), (x, Just 1), (y, Just 2), (z, Just 3), (anc, Just 4)]),
-  pathVars = [],
-  poly     = zero,
-  outVals   = (Map.fromList [(w, ofVar 0), (x, ofVar 1), (y, ofVar 2), (z, ofVar 3 + ofTerm True [0,1,2]), (anc, zero)])
-  }
 
 toffoliN :: [ID] -> [Primitive]
 toffoliN = go 0
@@ -245,7 +234,7 @@ toffoliN = go 0
           let anc        = "_anc" ++ show i
               subproduct = toffoli x y anc
           in
-            subproduct ++ go (i+1) (anc:xs) ++ subproduct
+            subproduct ++ go (i+1) (anc:xs) ++ dagger subproduct
 
 toffoliNSpec :: [ID] -> SOP Z8
 toffoliNSpec xs = SOP {
@@ -264,6 +253,80 @@ verifyToffoliN n = verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs
   where inputs = take n $ map (\i -> [i]) ['a'..]
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-3]]
 
+-- General product gates
+lst = [[x] | x <- ['a'..]]
+
+genproduct :: [ID] -> [Primitive]
+genproduct []       = []
+genproduct (x:[])   = []
+genproduct (x:z:[]) = [CNOT x z]
+genproduct (x:xs)   =
+  let z    = last xs
+      conj = [CNOT z x, T z, Tinv x, CNOT z x]
+  in
+    [H z] ++ conj ++ genproduct xs ++ dagger conj ++ [H z]
+
+testprod i = reduce $ foldMap (sopCliffordT $ take i lst) $ genproduct (reverse $ take i lst)
+
+genproduct1 :: [ID] -> [Primitive]
+genproduct1 []         = []
+genproduct1 (x:[])     = []
+genproduct1 (x:z:[])   = [CNOT x z]
+genproduct1 (x:y:z:[]) =
+  let conj = [CNOT z x, T z, Tinv x, CNOT z x] in
+    [H z] ++ conj ++ [CNOT y z] ++ dagger conj ++ [CNOT y z, H z]
+genproduct1 (x:xs)     =
+  let z    = last xs
+      conj = [CNOT z x, T z, Tinv x, CNOT z x]
+  in
+    [H z] ++ conj ++ genproduct1 xs ++ dagger conj ++ [H z]
+
+testprod1 i = reduce $ foldMap (sopCliffordT $ take i lst) $ genproduct1 (reverse $ take i lst)
+
+reltoff :: [ID] -> [Primitive]
+reltoff []       = []
+reltoff (x:[])   = []
+reltoff (x:z:[]) = [CNOT x z]
+reltoff (x:xs)   =
+  let z    = last xs
+      conj = [CNOT z x, T z, Tinv x, CNOT z x]
+      spro = reltoff xs
+      --corr = reltoff $ tail xs
+  in
+    [H z] ++ conj ++ spro ++ dagger conj ++ dagger spro ++ [H z]
+
+testrel i = reduce $ foldMap (sopCliffordT $ take i lst) $ reltoff (reverse $ take i lst)
+
+toffoliNOneAnc :: [ID] -> [Primitive]
+toffoliNOneAnc []         = []
+toffoliNOneAnc (x:[])     = []
+toffoliNOneAnc (x:z:[])   = [CNOT x z]
+toffoliNOneAnc (x:y:z:[]) = toffoli x y z
+toffoliNOneAnc l@(x:y:xs) =
+  let anc = "_anc" ++ show 0
+      pp1 = genproduct $ init l ++ [anc]
+      pp2 = genproduct $ init xs ++ [anc]
+  in
+    pp1 ++ pp2 ++ [CNOT anc (last xs)] ++ (dagger pp2) ++ (dagger pp1)
+
+maslov :: [ID] -> [Primitive]
+maslov = go 0
+  where go i []         = []
+        go i (w:[])     = []
+        go i (w:z:[])   = [CNOT w z]
+        go i (w:x:z:[]) = toffoli w x z
+        go i (w:x:y:xs) =
+          let anc = "_anc" ++ show i
+              sub = genproduct1 [w,x,y,anc]
+          in
+            sub ++ go (i+1) (anc:xs) ++ (dagger sub)
+
+testmaslov i = reduce $ foldMap (sopCliffordT $ take i lst ++ ["_anc" ++ show j | j <- [0..i-3]]) $ maslov (reverse $ take i lst)
+
+verifyMaslovN :: Int -> Maybe (SOP Z8)
+verifyMaslovN n = verifySpec (toffoliNSpec inputs) vars inputs (maslov inputs)
+  where inputs = take n $ map (\i -> [i]) ['a'..]
+        vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-3]]
 
 {-
 relToff4 :: ID -> ID -> ID -> ID -> [Primitive]
