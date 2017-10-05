@@ -106,6 +106,11 @@ ofTermDirect n a m
 ofVar :: (Eq a, Num a) => Int -> Multilinear a
 ofVar i = ofTerm (fromInteger 1) [i]
 
+-- WARNING: sub must be monotonic
+ofMultilinear :: Map Int Int -> Int -> Multilinear a -> Multilinear a
+ofMultilinear sub n p = p { vars = n, terms = Map.mapKeysMonotonic f $ terms p }
+  where f m = Map.foldlWithKey' (\m' i j -> m' .|. shift (m .&. shift 1 i) (j - i)) 0 sub
+
 {- Operators -}
 
 scale :: (Eq a, Num a) => a -> Multilinear a -> Multilinear a
@@ -157,6 +162,14 @@ getSubst p = case (break (\(m, _) -> degMon m == 1) $ Map.toDescList $ terms $ s
   (terms, (m, a):terms') -> Just (firstVar m, scale (recip a) $ p { terms = Map.fromDescList $ terms ++ terms' })
 
 {- Transformations -}
+
+-- WARNING: sub must be monotonic & must obey k > k' => v > v' for all pairs (k, v), (k', v') in sub
+reindex :: Map Int Int -> Multilinear a -> Multilinear a
+reindex sub = ofMultilinear sub (n + 1)
+  where n = case Map.lookupMax sub of
+              Nothing     -> 0
+              Just (_, v) -> v
+
 simplify :: (Eq a, Num a) => Multilinear a -> Multilinear a
 simplify p = p { terms = Map.filter (fromInteger 0 /=) $ terms p }
 

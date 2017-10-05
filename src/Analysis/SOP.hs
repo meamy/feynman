@@ -9,7 +9,7 @@ import Data.Maybe
 import Data.List
 import Data.Monoid ((<>))
 
-import Data.Map (Map, (!))
+import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 
 import Algebra.Polynomial
@@ -20,8 +20,10 @@ import Data.Coerce
 
 import Control.Monad
 
+{- Invariants:
+   sort . Map.elems == Map.elems -}
 data SOP a = SOP {
-  n        :: Int,
+  dim      :: Int,
   sde      :: Int,
   inVals   :: Map ID (Maybe Int),
   pathVars :: [Int],
@@ -37,6 +39,9 @@ instance (Show a, Eq a, Num a) => Show (SOP a) where
             | isMono p  = show p
             | otherwise = "(" ++ show p ++ ")"
 
+valid :: SOP a -> Bool
+valid sop = (dim sop) + (length . pathVars $ sop) == (vars . poly $ sop)
+
 {- Constructors -}
 
 identity0 :: SOP a
@@ -44,7 +49,7 @@ identity0 = SOP 0 0 Map.empty [] zero Map.empty
 
 identity :: [ID] -> SOP a
 identity vars = SOP {
-  n        = length vars,
+  dim      = length vars,
   sde      = 0,
   inVals   = Map.fromList $ zip vars [Just i | i <- [0..]],
   pathVars = [],
@@ -54,7 +59,7 @@ identity vars = SOP {
 
 blank :: [ID] -> SOP a
 blank vars = SOP {
-  n        = length vars,
+  dim      = 0,
   sde      = 0,
   inVals   = Map.fromList $ zip vars [Nothing | i <- [0..]],
   pathVars = [],
@@ -64,18 +69,45 @@ blank vars = SOP {
 
 {- Operators -}
 
--- For now, compose assumes both sum-over-paths are defined over the same qubits.
--- This is fine for now and in fact faster, but not very flexible.
--- It is also assumed that the path variables are sorted requires the mapped IDs to be the same in either.
+extendFrame :: Map ID (Maybe Int) -> SOP a -> SOP a
+extendFrame vals sop@(SOP dim sde ivals pvars p ovals) = SOP dim' sde ivals' pvars' p' ovals'
+  where
+    (dim', ivals') =
+      let f dim v = case v of
+            Just _  -> (dim+1, Just dim)
+            Nothing -> (dim, Nothing)
+      in
+        Map.mapAccum f 0 $ Map.union ivals vals
+    sub =
+      let qv = mapMaybe (\(k, mi) -> mi >>= \i -> return (i, fromJust $ ivals'!k)) . Map.toAscList $ ivals
+          pv = zip pvars pvars'
+      in
+        Map.fromAscList $ qv ++ pv
+    pvars' = map (+ (dim' - dim)) pvars
+    p' = ofMultilinear sub (dim' + length pvars) p
+    ovals' =
+      let f k v = case ovals!?k of
+                    Just poly -> ofMultilinear sub (dim' + length pvars) poly
+                    Nothing   -> maybe zero ofVar $ v
+      in
+        Map.mapWithKey f ivals'
+
 compose :: (Eq a, Num a) => SOP a -> SOP a -> SOP a
-compose u@(SOP n sde istate pvars p ostate) v@(SOP n' sde' istate' pvars' p' ostate')
+compose u v
   | u == mempty = v
   | v == mempty = u
-  | otherwise  = SOP n (sde + sde') istate (pvars ++ pvars'') (simplify $ p + p'') ostate''
+  | otherwise   = composeUnsafe (extendFrame (inVals v) u) v
+
+-- Assumes Map.keys istate' `subset` Map.keys istate
+composeUnsafe :: (Eq a, Num a) => SOP a -> SOP a -> SOP a
+composeUnsafe u@(SOP dim sde istate pvars p ostate) v@(SOP dim' sde' istate' pvars' p' ostate') =
+  SOP dim (sde + sde') istate (pvars ++ pvars'') (simplify $ p + p'') ostate''
   where sub      = Map.foldlWithKey' (\sub q (Just i) -> Map.insert i (ostate!q) sub) Map.empty istate'
-        pvars''  = map (+ length pvars) pvars'
-        p''      = substMany sub $ addVars (length pvars) n p'
-        ostate'' = Map.map (simplify . substMany sub . addVars (length pvars) n) ostate'
+        subp     = substMany sub . addVars (vars p - dim') dim'
+        pvars''  = map (+ (vars p - dim')) pvars'
+        p''      = substMany sub . addVars (vars p - dim') dim' $  p'
+        ostate'' = Map.union (Map.map (simplify . substMany sub . addVars (vars p - dim') dim') ostate') ostate
+
 
 instance (Eq a, Num a) => Monoid (SOP a) where
   mempty  = identity0
@@ -136,21 +168,6 @@ axiomHHStrict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) o
   where f x = return (factorOut x $ poly sop) >>= toBooleanPoly >>= getSubst >>= \(y, psub) -> Just (x, y, psub)
         out = Map.elems $ outVals sop
 
-daggerGate :: Primitive -> Primitive
-daggerGate x = case x of
-  H _      -> x
-  X _      -> x
-  Y _      -> x -- WARNING: this is incorrect
-  CNOT _ _ -> x
-  S x      -> Sinv x
-  Sinv x   -> S x
-  T x      -> Tinv x
-  Tinv x   -> T x
-  Swap _ _ -> x
-
-dagger :: [Primitive] -> [Primitive]
-dagger = reverse . map daggerGate
-
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
 applyAxiom sop = case sop of
@@ -193,7 +210,7 @@ soptof = foldMap (sopCliffordT ids) tof
 
 soptoffoli :: SOP Z8
 soptoffoli = SOP {
-  n        = 3,
+  dim      = 3,
   sde      = 0,
   inVals   = (Map.fromList [("x", Just 0), ("y", Just 1), ("z", Just 2)]),
   pathVars = [],
@@ -216,7 +233,7 @@ toffoli x y z =
 
 toffoliSpec :: ID -> ID -> ID -> SOP Z8
 toffoliSpec x y z = SOP {
-  n        = 3,
+  dim      = 3,
   sde      = 0,
   inVals   = (Map.fromList [(x, Just 0), (y, Just 1), (z, Just 2)]),
   pathVars = [],
@@ -238,7 +255,7 @@ toffoliN = go 0
 
 toffoliNSpec :: [ID] -> SOP Z8
 toffoliNSpec xs = SOP {
-  n        = 2*(length xs) - 3,
+  dim      = length xs,
   sde      = 0,
   inVals   = Map.fromList $ (zip (xs ++ anc) [Just i | i <- [0..]]),
   pathVars = [],
