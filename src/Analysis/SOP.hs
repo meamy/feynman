@@ -104,7 +104,7 @@ composeUnsafe u@(SOP dim sde istate pvars p ostate) v@(SOP dim' sde' istate' pva
   SOP dim (sde + sde') istate (pvars ++ pvars'') (simplify $ p + p'') ostate''
   where sub      = Map.foldlWithKey' (\sub q (Just i) -> Map.insert i (ostate!q) sub) Map.empty istate'
         subp     = substMany sub . addVars (vars p - dim') dim'
-        pvars''  = map (+ (vars p - dim')) pvars'
+        pvars''  = map (+ max 0 (vars p - dim')) pvars'
         p''      = substMany sub . addVars (vars p - dim') dim' $  p'
         ostate'' = Map.union (Map.map (simplify . substMany sub . addVars (vars p - dim') dim') ostate') ostate
 
@@ -128,8 +128,8 @@ instance Num Z8 where
   signum (Z8 x)   = Z8 $ signum x
   fromInteger i   = Z8 $ fromIntegral $ i `mod` 8
 
-sopCliffordT :: [ID] -> Primitive -> SOP Z8
-sopCliffordT vars gate = case gate of
+toSOPWithHints :: [ID] -> Primitive -> SOP Z8
+toSOPWithHints vars gate = case gate of
   H x      -> init { pathVars = [num],
                      sde = s + 1,
                      poly = p + ofTerm (fromInteger 4) [fromJust (inv!x), num],
@@ -144,7 +144,27 @@ sopCliffordT vars gate = case gate of
   T x      -> init { poly = p + (ofTerm (fromInteger 1) [fromJust $ inv!x]) }
   Tinv x   -> init { poly = p + (ofTerm (fromInteger 7) [fromJust $ inv!x]) }
   Swap x y -> init { outVals = Map.insert x (outv!y) $ Map.insert y (outv!x) outv }
-  where init@(SOP num s inv pathv p outv) = identity vars
+  where init@(SOP num s inv pathv p outv) = identity $ sort vars
+
+toSOP :: Primitive -> SOP Z8
+toSOP gate = case gate of
+  H x      -> toSOPWithHints [x] gate
+  X x      -> toSOPWithHints [x] gate
+  Y x      -> toSOPWithHints [x] gate
+  Z x      -> toSOPWithHints [x] gate
+  CNOT x y -> toSOPWithHints [x,y] gate
+  S x      -> toSOPWithHints [x] gate
+  Sinv x   -> toSOPWithHints [x] gate
+  T x      -> toSOPWithHints [x] gate
+  Tinv x   -> toSOPWithHints [x] gate
+  Swap x y -> toSOPWithHints [x,y] gate
+
+
+circuitSOPWithHints :: [ID] -> [Primitive] -> SOP Z8
+circuitSOPWithHints vars circuit = foldMap (toSOPWithHints vars) circuit
+
+circuitSOP :: [Primitive] -> SOP Z8
+circuitSOP circuit = foldMap toSOP circuit
 
 {- Verification -}
 
@@ -184,15 +204,25 @@ reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 -- Main verification function
 verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
 verifySpec spec vars inputs gates =
-  let hConj      = map H inputs
-      init       = blank vars
-      circuitSOP = foldMap (sopCliffordT vars) (hConj ++ (dagger gates) ++ hConj)
-      reduced    = reduce (init <> circuitSOP <> spec)
+  let hConj   = map H inputs
+      init    = blank vars
+      sop     = circuitSOPWithHints vars (hConj ++ (dagger gates) ++ hConj)
+      reduced = reduce (init <> sop <> spec)
   in
     case reduced == init of
       True  -> Nothing
       False -> Just reduced
-                   
+
+validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validate vars inputs c1 c2 =
+  let hConj   = map H inputs
+      init    = blank $ Map.keys (inVals sop)
+      sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
+      reduced = reduce (init <> sop)
+  in
+    case reduced == init of
+      True  -> Nothing
+      False -> Just reduced
 
 {- Tests -}
 
@@ -205,8 +235,10 @@ tof = [ H "z",
         CNOT "y" "z", CNOT "z" "x", CNOT "x" "y",
         H "z" ]
 
+cH = [ Sinv "y", H "y", Tinv "y", CNOT "x" "y", T "y", H "y", S "y" ]
+
 ids = ["x", "y", "z"]
-soptof = foldMap (sopCliffordT ids) tof
+soptof = circuitSOPWithHints ids tof
 
 soptoffoli :: SOP Z8
 soptoffoli = SOP {
@@ -283,7 +315,7 @@ genproduct (x:xs)   =
   in
     [H z] ++ conj ++ genproduct xs ++ dagger conj ++ [H z]
 
-testprod i = reduce $ foldMap (sopCliffordT $ take i lst) $ genproduct (reverse $ take i lst)
+testprod i = reduce $ circuitSOPWithHints (take i lst) $ genproduct (reverse $ take i lst)
 
 genproduct1 :: [ID] -> [Primitive]
 genproduct1 []         = []
@@ -298,7 +330,7 @@ genproduct1 (x:xs)     =
   in
     [H z] ++ conj ++ genproduct1 xs ++ dagger conj ++ [H z]
 
-testprod1 i = reduce $ foldMap (sopCliffordT $ take i lst) $ genproduct1 (reverse $ take i lst)
+testprod1 i = reduce $ circuitSOPWithHints (take i lst) $ genproduct1 (reverse $ take i lst)
 
 reltoff :: [ID] -> [Primitive]
 reltoff []       = []
@@ -312,7 +344,7 @@ reltoff (x:xs)   =
   in
     [H z] ++ conj ++ spro ++ dagger conj ++ dagger spro ++ [H z]
 
-testrel i = reduce $ foldMap (sopCliffordT $ take i lst) $ reltoff (reverse $ take i lst)
+testrel i = reduce $ circuitSOPWithHints (take i lst) $ reltoff (reverse $ take i lst)
 
 toffoliNOneAnc :: [ID] -> [Primitive]
 toffoliNOneAnc []         = []
@@ -338,7 +370,7 @@ maslov = go 0
           in
             sub ++ go (i+1) (anc:xs) ++ (dagger sub)
 
-testmaslov i = reduce $ foldMap (sopCliffordT $ take i lst ++ ["_anc" ++ show j | j <- [0..i-3]]) $ maslov (reverse $ take i lst)
+testmaslov i = reduce $ circuitSOPWithHints (take i lst ++ ["_anc" ++ show j | j <- [0..i-3]]) $ maslov (reverse $ take i lst)
 
 verifyMaslovN :: Int -> Maybe (SOP Z8)
 verifyMaslovN n = verifySpec (toffoliNSpec inputs) vars inputs (maslov inputs)

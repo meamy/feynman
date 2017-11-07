@@ -114,6 +114,7 @@ daggerGate x = case x of
   H _      -> x
   X _      -> x
   Y _      -> x -- WARNING: this is incorrect
+  Z _      -> x
   CNOT _ _ -> x
   S x      -> Sinv x
   Sinv x   -> S x

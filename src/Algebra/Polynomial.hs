@@ -174,7 +174,9 @@ simplify :: (Eq a, Num a) => Multilinear a -> Multilinear a
 simplify p = p { terms = Map.filter (fromInteger 0 /=) $ terms p }
 
 addVars :: Int -> Int -> Multilinear a -> Multilinear a
-addVars n i (Multilinear v terms) = Multilinear (v + n) (Map.mapKeysMonotonic shiftAbove terms)
+addVars n i p@(Multilinear v terms)
+  | n <= 0    = p
+  | otherwise = Multilinear (v + n) (Map.mapKeysMonotonic shiftAbove terms)
   where shiftAbove m = let mask = m .&. (bit i - 1) in
           mask .|. (shiftL (m .&. complement mask) n)
 

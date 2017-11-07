@@ -12,6 +12,7 @@ import Control.Monad
 import Frontend.DotQC
 import Optimization.PhaseFold
 import Optimization.TPar
+import Analysis.SOP
 import Core (Primitive(CNOT, T, Tinv))
 
 import Tests
@@ -39,6 +40,8 @@ testPhaseFold qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") d
       printStats gates
       putStrLn "# Optimized circuit statistics:"
       printStats gates'
+      putStrLn "# Validation result:"
+      print $ validate q (Set.toList i) gates gates'
       print ret
       return $ Just ret
       
@@ -61,6 +64,8 @@ testCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") dec
       printStats gates
       putStrLn "# Optimized circuit statistics:"
       printStats gates'
+      putStrLn "# Validation result:"
+      print $ validate q (Set.toList i) gates gates'
       print ret
       return $ Just ret
 
@@ -76,6 +81,8 @@ testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs o
       printStats gates
       putStrLn "# Optimized circuit statistics:"
       printStats gates'
+      putStrLn "# Validation result:"
+      print $ validate q (Set.toList i) gates gates'
       print ret
       return $ Just ret
 
@@ -85,6 +92,7 @@ parseArgs pass (x:xs) = case x of
   "-phasefold" -> parseArgs (pass >=> runPhaseFold) xs
   "-cnotmin"   -> parseArgs (pass >=> runCnotMin) xs
   "-tpar"      -> parseArgs (pass >=> runTpar) xs
+  "-verify"    -> parseArgs (pass >=> runVerification) xs
   "Small"      -> runBenchmarks pass benchmarksSmall
   "Med"        -> runBenchmarks pass benchmarksMedium
   "All"        -> runBenchmarks pass benchmarksAll
@@ -105,4 +113,5 @@ parseArgs pass (x:xs) = case x of
 main :: IO ()
 main = do
   putStrLn "# Feyn -- copyright 2016 Matthew Amy"
+  --putStrLn $ show $ coverItOpen 4
   getArgs >>= parseArgs return
