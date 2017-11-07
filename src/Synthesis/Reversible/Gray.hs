@@ -8,6 +8,8 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Data.Ord (comparing)
+
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
@@ -48,9 +50,18 @@ findBestSplit (c:cs) vecs = foldl' g init cs
         init = case f c of (l, r) -> (l, c, [], r)
         g (l, c, cs, r) c' =
           let (l', r') = f c' in
-            if max (length l') (length r') > max (length l) (length r)
+            if max (length l') (length r') >= max (length l) (length r)
             then (l', c', c:cs, r')
             else (l, c, c':cs, r)
+
+findBestSplitMono :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findBestSplitMono xs vecs = (l, c, delete c xs, r)
+  where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
+        countCol c =
+            let (l, r) = f c in
+            max (length l) (length r)
+        c = maximumBy (comparing countCol) xs
+        (l, r) = f c
 
 graySynthesis :: [ID] -> Map ID F2Vec -> [Pt] -> Writer [Primitive] (Map ID F2Vec)
 graySynthesis ids out []     = return out
@@ -70,7 +81,7 @@ graySynthesis ids out (x:xs) = case x of
     graySynthesis ids out xs
   Pt [] Nothing _ _ -> graySynthesis ids out xs
   Pt (c:cs) targ Nothing vecs ->
-    let (vl, c', cs', vr) = findBestSplit (c:cs) vecs
+    let (vl, c', cs', vr) = findBestSplitMono (c:cs) vecs
         xzero = Pt cs' targ Nothing vl
         xone  = case targ of
           Just t  -> Pt cs' targ (Just c') vr
@@ -93,8 +104,34 @@ cnotMinGray0 input output xs =
           gates ++ linearSynth outin output []
 
 cnotMinGray input output xs =
-  let gates  = cnotMinGray0 input output xs
-      gates' = cnotMinGray0 input output $ filter (\(_, i) -> order i /= 1) xs
+  let gates   = cnotMinGray0 input output xs
+      gates'  = cnotMinGray0 input output $ filter (\(_, i) -> i `mod` 2 /= 0) xs
+      gates'' = cnotMinGray0 input output $ filter (\(s, i) -> i `mod` 2 /= 0 && wt s > 1) xs
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct
+  in
+    minimumBy (comparing countc) [gates, gates', gates'']
+
+-- Open-ended
+cnotMinGrayOpen0 input [] = []
+cnotMinGrayOpen0 input xs =
+  let ivecs  = Map.toList input
+      solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+  in
+    case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
+      Nothing  -> error "Fatal: something bad happened"
+      Just xs' ->
+        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
+        in
+          gates
+--  where xs = filter (\(_, i) -> i `mod` 8 /= 0) xs0
+
+cnotMinGrayOpen input xs =
+  let gates  = cnotMinGrayOpen0 input xs
+      gates' = cnotMinGrayOpen0 input $ filter (\(_, i) -> i `mod` 8 /= 0) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False
@@ -132,7 +169,10 @@ allCNOTs ids = concatMap f ids
   where f id = [ [CNOT id id'] | id'<-ids, id /= id']
 
 allSkeletons :: [ID] -> [[Primitive]]
-allSkeletons ids = allCNOTs ids ++ [x++y | y<-allSkeletons ids, x<-allCNOTs ids]
+allSkeletons ids = [[]] ++ allCNOTs ids ++ [x++y | y<-allSkeletons ids, x<-allCNOTs ids]
+
+check :: [ID] -> Map ID F2Vec -> Set F2Vec -> [Primitive] -> Bool
+check ids st vals = Set.isSubsetOf vals . maximalSkeleton ids st
 
 bruteForceSkeleton :: [ID] -> Set F2Vec -> Maybe [Primitive]
 bruteForceSkeleton ids vals = find (Set.isSubsetOf vals . maximalSkeleton ids st) $ allSkeletons ids

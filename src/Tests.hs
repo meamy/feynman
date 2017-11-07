@@ -1,11 +1,19 @@
 module Tests where
 
 import Data.List
+import Data.Maybe (fromJust)
+import Control.Monad (when)
 import Numeric
 import System.Time
 
 import Data.Set (Set)
 import qualified Data.Set as Set
+
+import Data.Map (Map)
+import qualified Data.Map as Map
+
+import Data.Array ((!), (//))
+import qualified Data.Array as Array
 
 import Frontend.DotQC
 import Optimization.PhaseFold
@@ -226,6 +234,13 @@ generateVecNonzero n = do
     then generateVecNonzero n
     else return $ F2Vec $ BitVector.fromBits bits
 
+generateVecNonunital :: Int -> Gen F2Vec
+generateVecNonunital n = do
+  bits <- vector n
+  if (length . filter (True==)) bits <= 1
+    then generateVecNonunital n
+    else return $ F2Vec $ BitVector.fromBits bits
+
 generateSizedSet :: Int -> Int -> Gen (Set F2Vec)
 generateSizedSet n m =
   let f set = if Set.size set >= m then return set else
@@ -248,6 +263,16 @@ runSingle n m = do
   let circ = cnotMinGray ist ist $ zip (Set.toList set) (repeat 1)
   return $ countCNOTs circ
 
+runDouble :: Int -> Int -> IO (Int, Int)
+runDouble n m = do
+  let ids = map show [1..n]
+  let ist = genInitSt ids
+  set <- generate $ generateSizedSet n m
+  let circ  = cnotMinGray ist ist $ zip (Set.toList set) (repeat 1)
+  let circ' = bruteForceASkeleton ids set ist
+  when (not $ check ids ist set circ) $ putStrLn "WARNING"
+  return $ (countCNOTs circ, countCNOTs $ fromJust circ')
+
 runExperiment :: Int -> Int -> Int -> IO ()
 runExperiment n m repeats = do
   results <- mapM (\_ -> runSingle n m) [1..repeats]
@@ -257,7 +282,90 @@ runExperiment n m repeats = do
 runExperiments :: Int -> Int -> IO ()
 runExperiments n repeats = do
   putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
-  sequence_ $ map (\m -> runExperiment n m repeats) [1..2^n-1]
+  sequence_ $ map (\m -> runExperiment n m repeats) ([0,2^(n-5)..2^n-1] ++ [2^n-1])
+
+runExperiment2 :: Int -> Int -> Int -> IO ()
+runExperiment2 n m repeats = do
+  results <- mapM (\_ -> runDouble n m) [1..repeats]
+  let avg lst = (fromIntegral (foldr (+) 0 lst)) / (fromIntegral repeats) :: Float
+  let avgs = (avg . fst $ unzip results, avg . snd $ unzip results)
+  putStrLn $ "  |S| = " ++ (show m) ++ ": " ++ (show avgs)
+  
+runExperiments2 :: Int -> Int -> IO ()
+runExperiments2 n repeats = do
+  putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
+  sequence_ $ map (\m -> runExperiment2 n m repeats) [1..2^n-1]
+
+powerset set
+  | Set.null set = Set.singleton Set.empty
+  | otherwise    = Set.union ps (Set.map (Set.insert x) ps)
+    where (x, xs) = Set.deleteFindMin set
+          ps      = powerset xs
+
+allSubsets = powerset . Set.deleteMin . Set.fromList . allVecs
+mostSubsets = powerset . Set.filter ((1 <) . wt) . Set.fromList . allVecs
+someSubsets = powerset . Set.filter ((6 >) . wt) . Set.fromList . allVecs
+
+computeMinAll n = Set.foldr (\x -> Map.insert x $ bruteForceASkeleton ids x ist) Map.empty pow
+  where ids = map show [1..n]
+        ist = genInitSt ids
+        pow = someSubsets n
+
+computeAlgAll n = Set.foldr (\x -> Map.insert x $ cnotMinGray ist ist $ zip (Set.toList x) (repeat 1)) Map.empty pow
+  where ids = map show [1..n]
+        ist = genInitSt ids
+        pow = allSubsets n
+
+computeHist = Map.mapKeysWith (++) (Set.size) . Map.map (\m -> [m])
+
+computeAvg :: Map Int [[Primitive]] -> Map Int Double
+computeAvg  = Map.map (\circs -> fromIntegral (sumLengths circs) / fromIntegral (length circs))
+  where sumLengths = foldr (\c -> (countCNOTs c +)) 0
+
+-- Trying to get all 4-qubit minimal circuits
+coverIt n =
+  let cnots = [(i, j) | i <- [0..n-1], j <- [0..n-1], i /= j]
+      extendByCnot (skel, st) (i, j) =
+        let j' = st!i + st!j in
+          (Set.insert j' skel, st//[(j, j')])
+      doit i (seen, minMap, newhorizon) (st, cnot) =
+        let st' = extendByCnot st cnot in
+          if Set.member st' seen
+          then (seen, minMap, newhorizon)
+          else (Set.insert st' seen,
+                if (snd st' == iarr)
+                then Set.foldr (\set -> Map.insertWith min set i) minMap (powerset $ fst st')
+                else minMap,
+                st':newhorizon)
+      iterate (seen, minMap, horizon) i =
+          foldl' (doit i) (seen, minMap, []) [(st, cnot) | st <- horizon, cnot <- cnots]
+      iarr = Array.array (0, n-1) [(i, bitI n i) | i <- [0..n-1]]
+      ist = (Set.fromList . Array.elems $ iarr, iarr)
+      imap = Set.foldr (\set -> Map.insert set 0) Map.empty $ powerset (fst ist)
+      (_, minMap, _) = foldl' iterate (Set.singleton ist, imap, [ist]) [1..2^n-1]
+  in
+    Map.mapWithKey (\k v -> fromIntegral (foldr (+) 0 v) / fromIntegral (length v)). Map.mapKeysWith (++) (Set.size) . Map.map (\m -> [m]) $ minMap
+
+coverItOpen n =
+  let cnots = [(i, j) | i <- [0..n-1], j <- [0..n-1], i /= j]
+      extendByCnot (skel, st) (i, j) =
+        let j' = st!i + st!j in
+          (Set.insert j' skel, st//[(j, j')])
+      doit i (seen, minMap, newhorizon) (st, cnot) =
+        let st' = extendByCnot st cnot in
+          if Set.member st' seen
+          then (seen, minMap, newhorizon)
+          else (Set.insert st' seen,
+                Set.foldr (\set -> Map.insertWith min set i) minMap (powerset $ fst st'),
+                st':newhorizon)
+      iterate (seen, minMap, horizon) i =
+          foldl' (doit i) (seen, minMap, []) [(st, cnot) | st <- horizon, cnot <- cnots]
+      iarr = Array.array (0, n-1) [(i, bitI n i) | i <- [0..n-1]]
+      ist = (Set.fromList . Array.elems $ iarr, iarr)
+      imap = Set.foldr (\set -> Map.insert set 0) Map.empty $ powerset (fst ist)
+      (_, minMap, _) = foldl' iterate (Set.singleton ist, imap, [ist]) [1..2^n-n]
+  in
+    Map.mapWithKey (\k v -> fromIntegral (foldr (+) 0 v) / fromIntegral (length v)). Map.mapKeysWith (++) (Set.size) . Map.map (\m -> [m]) $ minMap
 
 runVerSuite :: IO ()
 runVerSuite = do
