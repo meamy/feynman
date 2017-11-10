@@ -11,14 +11,15 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
-
 import Algebra.Base
 import Algebra.Linear
 import Synthesis.Phase
 import Core
 
-type AffineSynthesizer = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
-type Synthesizer       = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
+type AffineSynthesizer     = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
+type Synthesizer           = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
+type AffineOpenSynthesizer = Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> (Map ID (F2Vec, Bool), [Primitive])
+type OpenSynthesizer       = Map ID F2Vec -> [(F2Vec, Angle)] -> (Map ID F2Vec, [Primitive])
 
 {-- Synthesizers -}
 affineTrans :: Synthesizer -> AffineSynthesizer
@@ -28,6 +29,14 @@ affineTrans synth = \input output xs ->
       outX = f output
   in
     inX ++ (synth (Map.map fst input) (Map.map fst output) xs) ++ outX
+
+affineTransOpen :: OpenSynthesizer -> AffineOpenSynthesizer
+affineTransOpen synth = \input xs ->
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      (out, circ) = synth (Map.map fst input) xs
+  in
+    (Map.map (\bv -> (bv, False)) out, inX ++ circ)
 
 emptySynth :: Synthesizer
 emptySynth _ _ _ = []
@@ -91,3 +100,23 @@ cnotMinMost :: Synthesizer
 cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> order i /= 1) xs
 
+unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+unify v input output =
+  let input' = Map.insert v (output!v) input
+      gates  = linearSynth input input' []
+      rnk1   = rank $ transformMat (fromList . Map.elems . Map.delete v $ input')
+                                   (fromList . Map.elems . Map.delete v $ output)
+      rnk2   = rank $ transformMat (fromList . Map.elems . Map.delete v $ output)
+                                   (fromList . Map.elems . Map.delete v $ input')
+  in
+    if (rnk1 == (Map.size input) - 1) && (rnk2 == rnk1)
+    then (input', gates)
+    else (output, gates ++ (linearSynth input' output []))
+
+unifyAffine v input output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      (out, gates) = unify v (Map.map fst input) (Map.map fst output)
+  in
+    (Map.map (\bv -> (bv, False)) out, inX ++ gates)
+  

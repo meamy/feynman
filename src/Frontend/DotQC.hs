@@ -76,6 +76,7 @@ inv gate@(Gate g i p) =
     "T*"   -> Gate "T" i p
     "tof"  -> gate
     "cnot" -> gate
+    "swap" -> gate
 inv gate@(ParamGate g i f p) =
   case g of
     "Rz"   -> ParamGate g i (-f) p

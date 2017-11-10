@@ -115,7 +115,7 @@ cnotMinGray input output xs =
     minimumBy (comparing countc) [gates, gates', gates'']
 
 -- Open-ended
-cnotMinGrayOpen0 input [] = []
+cnotMinGrayOpen0 input [] = (input, [])
 cnotMinGrayOpen0 input xs =
   let ivecs  = Map.toList input
       solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
@@ -123,21 +123,19 @@ cnotMinGrayOpen0 input xs =
     case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
-        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
-            (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
-        in
-          gates
---  where xs = filter (\(_, i) -> i `mod` 8 /= 0) xs0
+        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs'] in
+          runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
 
 cnotMinGrayOpen input xs =
-  let gates  = cnotMinGrayOpen0 input xs
-      gates' = cnotMinGrayOpen0 input $ filter (\(_, i) -> i `mod` 8 /= 0) xs
+  let gates   = cnotMinGrayOpen0 input xs
+      gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> i `mod` 2 /= 0) xs
+      gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> i `mod` 2 /= 0 && wt s > 1) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False
-      countc = length . filter isct
+      countc = length . filter isct . snd
   in
-    if countc gates < countc gates' then gates else gates'
+    minimumBy (comparing countc) [gates, gates', gates'']
 
 {- Temp for testing -}
 ids  = ["a", "b", "c", "d"]
