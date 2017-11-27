@@ -12,6 +12,7 @@ import Optimization.PhaseFold
 import Optimization.TPar
 import Algebra.Linear
 import Synthesis.Reversible.Gray
+import Analysis.SOP
 import Core (Primitive(CNOT, T, Tinv))
 
 import qualified Data.BitVector as BitVector
@@ -216,3 +217,16 @@ runExperiments :: Int -> Int -> IO ()
 runExperiments n repeats = do
   putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
   sequence_ $ map (\m -> runExperiment n m repeats) [1..2^n-1]
+
+runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
+  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
+  (Nothing, _) -> Left "Failed (no main function)"
+  (_, Nothing) -> Left "Failed (no main function)"
+  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
+    let gates1 = toCliffordT body1
+        gates2 = toCliffordT body2
+    in
+      case validate q1 (Set.toList i1) gates1 gates2 of
+        Nothing  -> Right (qc1, qc2)
+        Just sop -> Left $ "Failed to validate: " ++ show sop
