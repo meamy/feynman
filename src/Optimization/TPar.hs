@@ -78,7 +78,7 @@ exists v st@(SOP dim ivals qvals terms phase) =
       vals          = Map.fromList $ zip (vars ++ [v]) avecs'
   in do
     put $ SOP dim' vals vals terms'' phase
-    return $ Map.toList orp
+    trace ("After Hadamard: " ++ (show vals)) (return $ Map.toList orp)
 
 replaceIval :: Map ID (F2Vec, Bool) -> AnalysisState -> AnalysisState
 replaceIval ivals' st = st { ivals = ivals' }

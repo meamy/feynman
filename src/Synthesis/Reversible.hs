@@ -1,6 +1,7 @@
 module Synthesis.Reversible where
 
 import Data.List hiding (transpose)
+import Data.Tuple (swap)
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -20,6 +21,8 @@ type AffineSynthesizer     = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F
 type Synthesizer           = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
 type AffineOpenSynthesizer = Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> (Map ID (F2Vec, Bool), [Primitive])
 type OpenSynthesizer       = Map ID F2Vec -> [(F2Vec, Angle)] -> (Map ID F2Vec, [Primitive])
+import Debug.Trace
+
 
 {-- Synthesizers -}
 affineTrans :: Synthesizer -> AffineSynthesizer
@@ -100,6 +103,10 @@ cnotMinMost :: Synthesizer
 cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> order i /= 1) xs
 
+-- Given x, U and V, apply a linear transformation L to U such that
+--   1) LU(x) = V(x), and
+--   2) span(LU - x) = span(V - x)
+{-
 unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
 unify v input output =
   let input' = Map.insert v (output!v) input
@@ -112,6 +119,44 @@ unify v input output =
     if (rnk1 == (Map.size input) - 1) && (rnk2 == rnk1)
     then (input', gates)
     else (output, gates ++ (linearSynth input' output []))
+-}
+
+addToSpan :: ID -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+addToSpan v input =
+  if inLinearSpan (Map.elems . Map.delete v $ input) (input!v)
+  then (input, [])
+  else
+    let (ids, vecs) = unzip $ Map.toList input in
+      case findDependent vecs of
+        Nothing -> error "Fatal: Adding to span of independent set"
+        Just i  -> (Map.insert (ids!!i) (vecs!!i + input!v) input, [CNOT v (ids!!i)])
+
+subsetize :: ID -> Map ID F2Vec -> (F2Vec -> Bool) -> (Map ID F2Vec, [Primitive])
+subsetize v input solver =
+  let x = input!v 
+      f accum u vec =
+        if u == v || solver vec
+        then (accum, vec)
+        else (accum ++ [CNOT v u], vec + x)
+  in
+    swap $ Map.mapAccumWithKey f [] input
+
+unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+unify v input output =
+  let input' = Map.insert v (output!v) input
+      gates  = linearSynth input input' []
+      vSolve = inLinearSpan (Map.elems . Map.delete v $ output)
+      (output', gates') =
+        if vSolve $ output!v
+        then addToSpan v input'
+        else subsetize v input' vSolve
+  in
+    (output', gates ++ gates')
+   -- if fullRank $ transformMat (fromList . Map.elems . Map.delete v $ output')
+   --                            (fromList . Map.elems . Map.delete v $ output)
+   -- then (output', gates ++ gates')
+   -- else trace ("unification failed: " ++ (show input) ++ (show output') ++ (show output)) $
+   --   (output, gates ++ (linearSynth input' output []))
 
 unifyAffine v input output =
   let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []

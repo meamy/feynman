@@ -238,6 +238,15 @@ moveSwapsIn xs =
   in
     move [] xs
 
+permute :: Int -> [ROp] -> Int
+permute =
+  let permuteROp i (Exchange j k)
+        | i == j     = k
+        | i == k     = j
+      permuteROp i _ = i
+  in
+    foldl permuteROp 
+
 {- Gaussian elimination methods -}
 {-
 toUpperEchelon :: F2Mat -> Writer F2Mat [ROp]
@@ -400,6 +409,9 @@ rank mat =
   let (echelon, _) = runWriter $ toEchelon mat in
     foldr (\v tot -> if popCount v > 0 then tot + 1 else tot) 0 $ vals echelon
 
+fullRank :: F2Mat -> Bool
+fullRank mat = m mat == n mat && rank mat == m mat
+
 columnReduceDry :: F2Mat -> Writer [ROp] Int
 columnReduceDry mat@(F2Mat m n vals) =
   let isOne v imap j = v @. (imap ! j)
@@ -449,8 +461,8 @@ increaseRank mat@(F2Mat m n vals) =
             (_, [])      ->
               let vec = shift (bitVec n 1) j in
                 mat { vals = vals ++ [vec] }
-            ([], x:xs)   -> toUpper (j+1) $ zeroAll j x xs
-            (x:xs, y:ys) -> toUpper (j+1) $ zeroAll j y (xs ++ x:ys)
+            ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs)
+            (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys))
   in
     toUpper 0 vals
 
@@ -560,6 +572,15 @@ inLinearSpan a =
       !aagT = mult agT aT
   in
     \b -> b == multRow b aagT
+
+findDependent :: [F2Vec] -> Maybe Int
+findDependent a =
+  let (mat, rops) = runWriter . toEchelon . fromList $ a
+      f (i, row)  = if bitVec 0 (n mat) == row
+                       then Just $ permute i (reverse rops)
+                       else Nothing
+  in
+    msum $ map f (zip [0..] (vals mat))
 
 addIndependent :: [F2Vec] -> (Int, [F2Vec])
 addIndependent a =
