@@ -474,6 +474,35 @@ increaseRankN mat@(F2Mat m n vals) r =
   in
     toUpper 0 vals r []
 
+increaseRankInd :: F2Mat -> F2Mat
+increaseRankInd mat@(F2Mat m n vals) = 
+  let isOne j v = v @. j
+
+      zeroAll j y []     = []
+      zeroAll j y (x:xs) =
+        let xs' = zeroAll j y xs in
+          if x @. j
+          then (y + x):xs'
+          else x:xs'
+
+      toUpper j xs sx
+        | j >= n    =
+          let mat'@(F2Mat _ _ vals') = resizeMat m (n+1) mat
+              vec  = shift (bitVec (n+1) 1) j
+          in
+            mat' { vals = vals' ++ [vec] }
+        | otherwise = case break (isOne j) xs of
+            (_, [])      ->
+              if any (isOne j) sx
+              then toUpper (j+1) xs sx
+              else 
+                let vec = shift (bitVec n 1) j in
+                  mat { vals = vals ++ [vec] }
+            ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) (x:sx)
+            (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys)) (y:sx)
+  in
+    toUpper 0 vals []
+
 {- Transformation matrix from one set of vectors to another -}
 transformMat :: F2Mat -> F2Mat -> F2Mat
 transformMat a b = mult b $ pseudoinverse a
@@ -529,7 +558,7 @@ inLinearSpan a =
 
 addIndependent :: [F2Vec] -> (Int, [F2Vec])
 addIndependent a =
-  let (F2Mat m n vals) = increaseRank $ fromList a in
+  let (F2Mat m n vals) = increaseRankInd $ fromList a in
     (n, vals)
 
 {- Testing -}

@@ -38,6 +38,7 @@ executable feyn
 
 executable feyn-prof
   main-is:             Feyn.hs
+  buildable:           False
   ghc-options:         -O2
                        -prof
                        -fprof-auto
