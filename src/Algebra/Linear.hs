@@ -587,6 +587,13 @@ addIndependent a =
   let (F2Mat m n vals) = increaseRankInd $ fromList a in
     (n, vals)
 
+sameSpace :: [F2Vec] -> [F2Vec] -> Bool
+sameSpace a b =
+  let solveA = inLinearSpan a
+      solveB = inLinearSpan b
+  in
+    all solveA b && all solveB a
+
 {- Testing -}
 rowRange = (10, 100)
 colRange = (10, 100)

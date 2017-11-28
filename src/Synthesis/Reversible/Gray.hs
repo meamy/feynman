@@ -16,6 +16,7 @@ import Control.Monad.Writer.Lazy
 import Data.Bits
 
 import Algebra.Base
+
 import Algebra.Linear
 import Synthesis.Phase
 import Synthesis.Reversible

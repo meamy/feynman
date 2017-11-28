@@ -151,12 +151,11 @@ unify v input output =
         then addToSpan v input'
         else subsetize v input' vSolve
   in
-    (output', gates ++ gates')
-   -- if fullRank $ transformMat (fromList . Map.elems . Map.delete v $ output')
-   --                            (fromList . Map.elems . Map.delete v $ output)
-   -- then (output', gates ++ gates')
-   -- else trace ("unification failed: " ++ (show input) ++ (show output') ++ (show output)) $
-   --   (output, gates ++ (linearSynth input' output []))
+    --(output', gates ++ gates')
+    if sameSpace (Map.elems . Map.delete v $ output') (Map.elems . Map.delete v $ output)
+    then (output', gates ++ gates')
+    else --trace ("unification failed: " ++ (show v) ++ " " ++ (show input) ++ (show output') ++ (show output)) $
+      (output, gates ++ (linearSynth input' output []))
 
 unifyAffine v input output =
   let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
