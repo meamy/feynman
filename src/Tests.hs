@@ -26,6 +26,8 @@ import Core (Primitive(CNOT, T, Tinv))
 import qualified Data.BitVector as BitVector
 import Test.QuickCheck
 
+import Control.Monad
+
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
 benchmarksPath = "benchmarks/"
@@ -207,26 +209,34 @@ runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main")
   Nothing -> Left "Failed (no main function)"
   Just (Decl n p body) ->
     let gates  = toCliffordT body
+        gates' = minCNOTMaster q (Set.toList i) gates
+        main   = Decl n p $ fromCliffordT gates'
+        ret    = simplifyDotQC $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
+    in
+      Right (c, ret)
+
+runCnotMinB :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runCnotMinB (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
+  Nothing -> Left "Failed (no main function)"
+  Just (Decl n p body) ->
+    let gates  = toCliffordT body
         gates' = minCNOT q (Set.toList i) gates
         main   = Decl n p $ fromCliffordT gates'
         ret    = simplifyDotQC $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
       Right (c, ret)
 
-{-
-runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
-  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
-  (Nothing, _) -> Left "Failed (no main function)"
-  (_, Nothing) -> Left "Failed (no main function)"
-  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
-    let gates1 = toCliffordT body1
-        gates2 = toCliffordT body2
+runCnotMinU :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runCnotMinU (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
+  Nothing -> Left "Failed (no main function)"
+  Just (Decl n p body) ->
+    let gates  = toCliffordT body
+        gates' = minCNOTOpen q (Set.toList i) gates
+        main   = Decl n p $ fromCliffordT gates'
+        ret    = simplifyDotQC $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
-      case validate q1 (Set.toList i1) gates1 gates2 of
-        Nothing  -> Right (qc1, qc2)
-        Just sop -> Left $ "Failed to validate: " ++ show sop
--}
+      Right (c, ret)
+
 -- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec
 generateVecNonzero n = do
@@ -367,6 +377,42 @@ coverItOpen n =
       (_, minMap, _) = foldl' iterate (Set.singleton ist, imap, [ist]) [1..2^n-n]
   in
     Map.mapWithKey (\k v -> fromIntegral (foldr (+) 0 v) / fromIntegral (length v)). Map.mapKeysWith (++) (Set.size) . Map.map (\m -> [m]) $ minMap
+
+bruteForceEfficient n s =
+  let cnots = [(i, j) | i <- [0..n-1], j <- [0..n-1], i /= j]
+      extendByCnot (skel, st, circ) (i, j) =
+        let j' = st!i + st!j in
+          (Set.insert j' skel, st//[(j, j')], circ ++ [CNOT (show i) (show j)])
+      doit i (seen, minMap, newhorizon) ((skel, st, circ), cnot) =
+        let (skel', st', circ') = extendByCnot (skel, st, circ) cnot in
+          if Set.member (skel', st') seen
+          then Right (seen, minMap, newhorizon)
+          else if Set.isSubsetOf s (skel') && st' == iarr
+               then Left circ'
+               else Right $
+                 (Set.insert (skel', st') seen,
+                  if (st' == iarr)
+                  then Set.foldr (\set -> Map.insertWith min set i) minMap (powerset skel')
+                  else minMap,
+                  (skel', st', circ'):newhorizon)
+      iterate (seen, minMap, horizon) i =
+          foldM (doit i) (seen, minMap, []) [((skel, st, circ), cnot) | (skel, st, circ) <- horizon, cnot <- cnots]
+      iskel = Set.fromList . Array.elems $ iarr
+      iarr = Array.array (0, n-1) [(i, bitI n i) | i <- [0..n-1]]
+      imap = Set.foldr (\set -> Map.insert set 0) Map.empty $ powerset iskel
+  in
+    foldM iterate (Set.singleton (iskel, iarr), imap, [(iskel, iarr, [])]) [1..2^n-1]
+
+-- Temporary test
+x1 = bitI 4 0
+x2 = bitI 4 1
+x3 = bitI 4 2
+x4 = bitI 4 3
+
+ids = ["a", "b", "c", "d"]
+ist = genInitSt ids
+set = Set.fromList [x1, x1+x2, x3, x1+x2+x3, x4, x1+x4, x3+x4, x1+x3+x4, x2+x3+x4]
+prep s = zip (Set.toList s) (repeat 1)
 
 runVerSuite :: IO ()
 runVerSuite = do

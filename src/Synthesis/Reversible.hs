@@ -2,6 +2,7 @@ module Synthesis.Reversible where
 
 import Data.List hiding (transpose)
 import Data.Tuple (swap)
+import Data.Maybe (fromJust)
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -50,7 +51,7 @@ linearSynth input output _ =
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
       rops = snd $ runWriter $ toReducedEchelonPMH mat
-      rops' = snd $ runWriter $ toReducedEchelonSqr mat
+      rops' = snd $ runWriter $ toReducedEchelonA mat
       isadd g = case g of
         Add _ _   -> True
         otherwise -> False
@@ -106,20 +107,22 @@ cnotMinMost input output xs = cnotMinMore input output xs'
 -- Given x, U and V, apply a linear transformation L to U such that
 --   1) LU(x) = V(x), and
 --   2) span(LU - x) = span(V - x)
-{-
-unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
-unify v input output =
-  let input' = Map.insert v (output!v) input
-      gates  = linearSynth input input' []
-      rnk1   = rank $ transformMat (fromList . Map.elems . Map.delete v $ input')
-                                   (fromList . Map.elems . Map.delete v $ output)
-      rnk2   = rank $ transformMat (fromList . Map.elems . Map.delete v $ output)
-                                   (fromList . Map.elems . Map.delete v $ input')
-  in
-    if (rnk1 == (Map.size input) - 1) && (rnk2 == rnk1)
-    then (input', gates)
-    else (output, gates ++ (linearSynth input' output []))
--}
+
+synthV :: ID -> F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x of
+  Nothing -> error "Fatal: vector not in linear span"
+  Just y  ->
+    let u      = case find (y@.) [0..width y-1] of
+          Nothing -> v
+          Just i  -> (Map.keys input)!!i
+        input' = Map.insert u x input
+        gates  = linearSynth input input' []
+    in
+      if v == u
+      then (input', gates)
+      else
+        (Map.insert v x (Map.insert u (input!v) input), gates ++ [Swap u v])
+    
 
 addToSpan :: ID -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
 addToSpan v input =
@@ -143,8 +146,7 @@ subsetize v input solver =
 
 unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
 unify v input output =
-  let input' = Map.insert v (output!v) input
-      gates  = linearSynth input input' []
+  let (input', gates) = synthV v (output!v) input
       vSolve = inLinearSpan (Map.elems . Map.delete v $ output)
       (output', gates') =
         if vSolve $ output!v

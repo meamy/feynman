@@ -91,6 +91,8 @@ parseArgs pass []     = return ()
 parseArgs pass (x:xs) = case x of
   "-phasefold" -> parseArgs (pass >=> runPhaseFold) xs
   "-cnotmin"   -> parseArgs (pass >=> runCnotMin) xs
+  "-cnotminb"  -> parseArgs (pass >=> runCnotMinB) xs
+  "-cnotminu"  -> parseArgs (pass >=> runCnotMinU) xs
   "-tpar"      -> parseArgs (pass >=> runTpar) xs
   "-verify"    -> parseArgs (pass >=> runVerification) xs
   "VerBench"   -> runVertest benchmarksMedium

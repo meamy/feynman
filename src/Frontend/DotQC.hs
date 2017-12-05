@@ -68,6 +68,7 @@ inv gate@(Gate g i p) =
     "X"    -> gate
     "Y"    -> gate
     "Z"    -> gate
+    "Zd"   -> gate
     "S"    -> Gate "S*" i p
     "S*"   -> Gate "S" i p
     "P"    -> Gate "P*" i p
@@ -140,14 +141,26 @@ gateToCliffordT (Gate g i p) =
         ("T*", [x])     -> [Tinv x]
         ("tof", [x])    -> [X x]
         ("tof", [x,y])  -> [CNOT x y]
+        ("cnot", [x,y]) -> [CNOT x y]
+        ("swap", [x,y]) -> [Swap x y]
         ("tof", [x,y,z])-> [H z, T x, T y, T z, CNOT x y, CNOT y z,
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
                             Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
-        ("cnot", [x,y]) -> [CNOT x y]
-        ("swap", [x,y]) -> [Swap x y]
         ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
                             Tinv x, CNOT y z, CNOT z x, CNOT x y]
+        ("Zd", [x,y,z])  -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
+                             CNOT z x, T x, T y, Tinv z, CNOT y x,
+                             T x, CNOT y z, CNOT z x, CNOT x y]
+        {-("tof", [x,y,z])-> [H z, T x, T y, T z, CNOT x y, CNOT y z,
+                            Tinv y, T z, CNOT x z, Tinv z, CNOT y z, Tinv z,
+                            CNOT x y, CNOT x z, H z]
+        ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
+                            Tinv y, T z, CNOT x z, Tinv z, CNOT y z, Tinv z,
+                            CNOT x y, CNOT x z]
+        ("Zd", [x,y,z]) -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
+                            T y, Tinv z, CNOT x z, T z, CNOT y z, T z,
+                            CNOT x y, CNOT x z]-}
   in
     concat $ genericReplicate i circ
 gateToCliffordT (ParamGate g i theta p) =

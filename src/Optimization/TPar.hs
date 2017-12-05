@@ -1,6 +1,7 @@
 module Optimization.TPar where
 
 import Data.List hiding (transpose)
+import Data.Ord (comparing)
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -135,7 +136,7 @@ applyGate synth gates g = case g of
     bv <- getSt v
     st <- get
     orphans <- exists v st
-    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [H v]
+    return $ gates ++ (synth (ivals st) (qvals st) orphans) ++ [H v]
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
@@ -253,4 +254,15 @@ tpar _ _ = id -- gtpar tparMore
 
 {- minCNOT: CNOT minimization algorithm -}
 minCNOT = gtpar cnotMinGray
---minCNOT = gtparopen cnotMinGrayOpen
+
+minCNOTOpen = gtparopen cnotMinGrayOpen
+
+minCNOTMaster vars inputs gates =
+  let option1 = gtpar cnotMinGray vars inputs gates
+      option2 = gtparopen cnotMinGrayOpen vars inputs gates
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct
+  in
+    minimumBy (comparing countc) [option1, option2]
