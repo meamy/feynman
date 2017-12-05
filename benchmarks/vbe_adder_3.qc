@@ -9,19 +9,19 @@ H 9
 
 Z 1 2 3
 tof 1 2
-Z 0 2 3
+Zd 0 2 3
 
 H 3
 
 Z 4 5 6
 tof 4 5
-Z 3 5 6
+Zd 3 5 6
 
 H 6
 
 Z 7 8 9
 tof 7 8
-Z 6 8 9
+Zd 6 8 9
 tof 6 8
 
 H 9
@@ -29,7 +29,7 @@ H 6
 
 Z 3 5 6
 tof 4 5
-Z 4 5 6
+Zd 4 5 6
 tof 3 5
 tof 4 5
 
@@ -38,7 +38,7 @@ H 3
 
 Z 0 2 3
 tof 1 2
-Z 1 2 3
+Zd 1 2 3
 tof 0 2
 tof 1 2
 

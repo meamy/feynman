@@ -54,12 +54,12 @@ H d6
 H c8
 H d8
 
-Z c0 b1 c1
-Z d2 b3 c3
-Z d4 b5 d5
-Z d6 b7 c7
-Z d8 b9 c9
-Z c4 c6 c5
+Zd c0 b1 c1
+Zd d2 b3 c3
+Zd d4 b5 d5
+Zd d6 b7 c7
+Zd d8 b9 c9
+Zd c4 c6 c5
 
 H c1
 H c5
@@ -71,7 +71,7 @@ Z d5 c6 c7
 H c3
 H d5
 
-Z c3 c5 c7
+Zd c3 c5 c7
 Z c3 c4 d5
 
 H c7
@@ -83,19 +83,12 @@ H d6
 H d8
 H c5
 
-Z c1 b2 d2
-Z c3 b4 d4
-Z d5 b6 d6
-Z c7 b8 d8
+Zd c1 b2 d2
+Zd c3 b4 d4
+Zd d5 b6 d6
+Zd c7 b8 d8
 Z c7 c8 c9
 Z c4 c6 c5
-
-H d2
-H d4
-H d6
-H d8
-H c9
-H c5
 
 H c2
 H c4
@@ -106,6 +99,17 @@ Z b2 b3 c2
 Z b4 b5 c4
 Z b6 b7 c6
 Z b8 b9 c8
+
+H d2
+H d4
+H d6
+H d8
+H c9
+H c5
+H c2
+H c4
+H c6
+H c8
 
 tof b0 e
 tof b1 c0
@@ -129,9 +133,5 @@ tof a7 b7
 tof a8 b8
 tof a9 b9
 
-H c2
-H c4
-H c6
-H c8
 
 END

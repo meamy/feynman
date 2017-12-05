@@ -27,7 +27,7 @@ X y4
 H y0
 H y3
 Z x1 y5 y3
-Z x1 y4 y0
+Zd x1 y4 y0
 H y3
 H y0
 X x1
@@ -37,8 +37,8 @@ tof y2 y5
 
 H y2
 H y5
-Z x1 y4 y2
-Z x0 x2 y5
+Zd x1 y4 y2
+Zd x0 x2 y5
 H y5
 H y2
 X x0

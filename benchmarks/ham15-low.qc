@@ -51,10 +51,10 @@ H k
 Z 0 o k
 H k
 H 0
-Z 1 n 0
+Zd 1 n 0
 H 0
 H 1
-Z l m 1
+Zd l m 1
 H 1
 tof k j
 tof k g
@@ -70,7 +70,7 @@ H l
 Z 0 o l
 H l
 H 0
-Z m n 0
+Zd m n 0
 H 0
 tof k f
 tof l k
@@ -84,7 +84,7 @@ H l
 Z 0 o l
 H l
 H 0
-Z m n 0
+Zd m n 0
 H 0
 tof l m
 tof l f
@@ -99,7 +99,7 @@ H n
 Z 0 o n
 H n
 H 0
-Z l m 0
+Zd l m 0
 H 0
 tof n k
 tof k a
@@ -125,7 +125,7 @@ H o
 Z 0 n o
 H o
 H 0
-Z l m 0
+Zd l m 0
 H 0
 tof o m
 tof m e
