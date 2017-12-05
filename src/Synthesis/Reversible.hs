@@ -50,7 +50,7 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      rops = snd $ runWriter $ toReducedEchelonPMH mat
+      rops = snd $ runWriter $ toReducedEchelonPMHA mat
       rops' = snd $ runWriter $ toReducedEchelonA mat
       isadd g = case g of
         Add _ _   -> True
