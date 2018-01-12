@@ -58,6 +58,7 @@ instance (Eq a, Num a, Show a) => Show (Multilinear a) where
     | isZero p    = "0"
     | otherwise = intercalate " + " $ map showTerm (Map.assocs terms)
     where showTerm (m, a)
+            | degMon m == 0 = show a
             | a == fromInteger 0 = "0"
             | a == fromInteger 1 = showMono m
             | otherwise          = (show a) ++ "*" ++ (showMono m)
@@ -123,8 +124,12 @@ add p q = Multilinear (max (vars p) (vars q)) $ Map.unionWith (+) (terms p) (ter
 
 mult :: (Eq a, Num a) => Multilinear a -> Multilinear a -> Multilinear a
 mult p q = Map.foldlWithKey' f zero (terms p)
-    where f poly m a        = (+) poly $ q { terms = Map.foldlWithKey' (g m a) Map.empty (terms q) }
-          g m a terms m' a' = Map.insert (m .|. m') (a * a') terms
+    where f poly m a        = (+) poly $ Multilinear n (Map.foldlWithKey' (g m a) Map.empty (terms q))
+          g m a terms m' a' = Map.alter (h $ a * a') (m .|. m') terms
+          h a b             = case b of
+            Nothing -> Just a
+            Just c  -> Just $ a + c
+          n                 = max (vars p) (vars q)
 
 instance (Eq a, Num a) => Num (Multilinear a) where
   (+) = add
