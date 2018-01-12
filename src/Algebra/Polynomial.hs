@@ -162,9 +162,12 @@ substMany sub p@(Multilinear n terms) = Map.foldlWithKey' f zero terms
 -- Pick a substitution, if possible, for a variable assuming p = 0. Favours higher variables indices
 -- Note that simplification is crucial here
 getSubst :: (Eq a, Fractional a) => Multilinear a -> Maybe (Int, Multilinear a)
-getSubst p = case (break (\(m, _) -> degMon m == 1) $ Map.toDescList $ terms $ simplify p) of
+getSubst p = case (break f $ Map.toDescList $ terms $ simplify p) of
   (terms, [])            -> Nothing
   (terms, (m, a):terms') -> Just (firstVar m, scale (recip a) $ p { terms = Map.fromDescList $ terms ++ terms' })
+  where f (m, a) =
+          let i = firstVar m in
+            degMon m == 1 && not (appearsIn i (simplify $ p - ofTerm a [i]))
 
 {- Transformations -}
 
