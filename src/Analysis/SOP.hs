@@ -20,6 +20,8 @@ import Data.Coerce
 
 import Control.Monad
 
+import Debug.Trace
+
 {- Invariants:
    sort . Map.elems == Map.elems -}
 data SOP a = SOP {
@@ -32,9 +34,10 @@ data SOP a = SOP {
   } deriving (Eq)
 
 instance (Show a, Eq a, Num a) => Show (SOP a) where
-  show sop = printf "|%s> --> 1/sqrt(2)^%d Sum e^i*pi*{%s}|%s>" is (sde sop) (show $ poly sop) os
+  show sop = printf "|%s> --> 1/sqrt(2)^%d Sum[%s] e^i*pi*{%s}|%s>" is (sde sop) pvars (show $ poly sop) os
     where is = concatMap (showPoly . (maybe (zero :: Multilinear Bool) ofVar)) $ Map.elems $ inVals sop
           os = concatMap showPoly $ Map.elems $ outVals sop
+          pvars = intercalate "," $ map (\i -> "x" ++ show i) (pathVars sop)
           showPoly p
             | isMono p  = show p
             | otherwise = "(" ++ show p ++ ")"
@@ -180,28 +183,49 @@ injectZ2 a = case order a of
   2 -> Just True
   _ -> Nothing
 
-toBooleanPoly :: Fin a => Multilinear a -> Maybe (Multilinear Bool)
-toBooleanPoly = convertMaybe injectZ2
+toBooleanPoly :: (Eq a, Fin a) => Multilinear a -> Maybe (Multilinear Bool)
+toBooleanPoly = convertMaybe injectZ2 . simplify
 
-axiomHHStrict :: Fin a => SOP a -> Maybe (Int, Int, Multilinear Bool)
+axiomSimplify :: (Eq a, Fin a) => SOP a -> Maybe Int
+axiomSimplify sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
+  where f x = if x `appearsIn` (poly sop) then Nothing else Just x
+        out = Map.elems $ outVals sop
+
+axiomHHStrict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
 axiomHHStrict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
   where f x = return (factorOut x $ poly sop) >>= toBooleanPoly >>= getSubst >>= \(y, psub) -> Just (x, y, psub)
+        out = Map.elems $ outVals sop
+
+axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)
+axiomSH3Strict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
+  where f x = return (factorOut x $ (poly sop) - (ofTerm 2 [x])) >>= toBooleanPoly >>= \q -> Just (x, q)
         out = Map.elems $ outVals sop
 
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
 applyAxiom sop = case sop of
+  (axiomSimplify -> Just xrem) -> Right $
+    sop { sde      = sde sop - 2,
+          pathVars = pathVars sop \\ [xrem] }
   (axiomHHStrict -> Just (xrem, xsub, xeq)) -> Right $
     sop { sde      = sde sop - 2,
-            pathVars = pathVars sop \\ [xrem, xsub],
-            poly     = simplify . subst xsub xeq . removeVar xrem $ poly sop,
-            outVals  = Map.map (simplify . subst xsub xeq) $ outVals sop }
+          pathVars = pathVars sop \\ [xrem, xsub],
+          poly     = simplify . subst xsub xeq . removeVar xrem $ poly sop,
+          outVals  = Map.map (simplify . subst xsub xeq) $ outVals sop }
+  (axiomSH3Strict -> Just (xrem, xeq)) -> Right $
+    sop { sde = sde sop - 1,
+          pathVars = pathVars sop \\ [xrem],
+          poly     =
+            let r = removeVar xrem $ poly sop in
+                simplify $ constant 1 + distribute (vars $ poly sop) 6 xeq + r }
   _ -> Left sop
 
 reduce :: (Eq a, Fin a) => SOP a -> SOP a
 reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 
--- Main verification function
+
+-- Main verification functions
+
 verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
 verifySpec spec vars inputs gates =
   let hConj   = map H inputs
@@ -213,12 +237,22 @@ verifySpec spec vars inputs gates =
       True  -> Nothing
       False -> Just reduced
 
+-- If the sum-over-paths is verifiably unitary, we only need to check the |00...0> output state
+unitaryTrans :: SOP Z8 -> SOP Z8
+unitaryTrans sop = foldl' f sop (Map.keys $ inVals sop)
+  where f sop x = case getSubst ((outVals sop)!x) of
+          Nothing        -> sop
+          Just (y, psub) -> sop { pathVars = pathVars sop \\ [y],
+                                  poly     = simplify . subst y psub $ poly sop,
+                                  outVals  = Map.map (simplify . subst y psub) $ outVals sop }
+                                
+
 validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let hConj   = map H inputs
       init    = blank $ Map.keys (inVals sop)
       sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
-      reduced = reduce (init <> sop)
+      reduced = reduce $ unitaryTrans $ reduce (init <> sop)
   in
     case reduced == init of
       True  -> Nothing
@@ -235,7 +269,14 @@ tof = [ H "z",
         CNOT "y" "z", CNOT "z" "x", CNOT "x" "y",
         H "z" ]
 
-cH = [ Sinv "y", H "y", Tinv "y", CNOT "x" "y", T "y", H "y", S "y" ]
+cH = [ Sinv "y", H "y", Tinv "y", CNOT "x" "y", T "y", H "y", S "y"]
+
+omeg = [ S "x", H "x", S "x", H "x", S "x", H "x" ]
+
+cT = [H "z", Sinv "x", CNOT "x" "y", CNOT "y" "z", CNOT "z" "x", T "x", Tinv "z",
+      CNOT "y" "x", CNOT "y" "z", T "x", Tinv "z", CNOT "x" "z", H "x", T "x", H "x",
+      CNOT "x" "z", Tinv "x", T "z", CNOT "y" "z", CNOT "y" "x", Tinv "x", T "z",
+      CNOT "z" "x", CNOT "y" "z", CNOT "x" "y", S "x", H "z"]
 
 ids = ["x", "y", "z"]
 soptof = circuitSOPWithHints ids tof
