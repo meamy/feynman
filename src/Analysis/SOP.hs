@@ -71,7 +71,7 @@ blank vars = SOP {
   }
 
 {- Operators -}
-
+-- FIXME: ofMultilinear sometimes gets called with n< number of vars
 extendFrame :: Map ID (Maybe Int) -> SOP a -> SOP a
 extendFrame vals sop@(SOP dim sde ivals pvars p ovals) = SOP dim' sde ivals' pvars' p' ovals'
   where
@@ -245,14 +245,13 @@ unitaryTrans sop = foldl' f sop (Map.keys $ inVals sop)
           Just (y, psub) -> sop { pathVars = pathVars sop \\ [y],
                                   poly     = simplify . subst y psub $ poly sop,
                                   outVals  = Map.map (simplify . subst y psub) $ outVals sop }
-                                
 
 validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let hConj   = map H inputs
       init    = blank $ Map.keys (inVals sop)
       sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
-      reduced = reduce $ unitaryTrans $ reduce (init <> sop)
+      reduced = reduce (init <> sop)
   in
     case reduced == init of
       True  -> Nothing
