@@ -33,7 +33,8 @@ executable feyn
                        parsec, parsec-numbers,
                        deepseq,
                        fgl,
-                       old-time
+                       old-time,
+                       bimap
   default-language:    Haskell2010
 
 executable feyn-prof

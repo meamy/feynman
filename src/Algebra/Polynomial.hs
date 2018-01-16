@@ -1,7 +1,13 @@
 module Algebra.Polynomial where
 
-import Data.Map (Map, (!))
+import Data.Map (Map)
 import qualified Data.Map as Map
+
+import Data.Bimap (Bimap, (!), (!>))
+import qualified Data.Bimap as Bimap
+
+import Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
 
 import Data.Monoid ((<>))
 import Data.Maybe
@@ -31,47 +37,51 @@ instance Fractional Bool where
 -- two O(n) operations, to find and subsequently get the variable number. We could
 -- speed this up by adding a second constructor explicitly for degree 1 monomials.
 -- There's a tradeoff as Monomial can no longer be unboxed
-type Monomial = Integer
+type Monomial = IntSet
 
-bits :: (Bits a) => [Int] -> a
-bits = foldl' (\m i -> m .|. bit i) zeroBits
+monomial :: [Int] -> Monomial
+monomial = IntSet.fromList
 
-bitSet :: (Bits a) => Int -> a -> [Int]
-bitSet n m = mapMaybe (\i -> if testBit m i then Just i else Nothing) [0..n-1]
+monomialVars :: Monomial -> [Int]
+monomialVars = IntSet.elems
 
-degMon :: Monomial -> Int
-degMon = popCount
+monomialDegree :: Monomial -> Int
+monomialDegree = IntSet.size
 
+inMonomial :: Int -> Monomial -> Bool
+inMonomial = IntSet.member
 
--- WARNING: Can loop infinitely if popCount < 1
-firstVar :: Monomial -> Int
-firstVar m = fromJust $ findIndex (testBit m) [0..]
+multMonomial :: Monomial -> Monomial -> Monomial
+multMonomial = IntSet.union
+
+mapMonomial :: (Int -> Int) -> Monomial -> Monomial
+mapMonomial = IntSet.map
 
 {- Multi-linear polynomials -}
 data Multilinear a = Multilinear {
-  vars  :: !Int,
+  vars  :: !(Bimap String Int),
   terms :: !(Map Monomial a)
   } deriving (Eq)
 
 instance (Eq a, Num a, Show a) => Show (Multilinear a) where
-  show p@(Multilinear n terms)
+  show p@(Multilinear vars terms)
     | isZero p    = "0"
     | otherwise = intercalate " + " $ map showTerm (Map.assocs terms)
     where showTerm (m, a)
-            | degMon m == 0 = show a
-            | a == fromInteger 0 = "0"
-            | a == fromInteger 1 = showMono m
-            | otherwise          = (show a) ++ "*" ++ (showMono m)
-          showMono m = concatMap (\i -> if testBit m i then "x" ++ show i else "") [0..n-1]
+            | monomialDegree m == 0 = show a
+            | a == fromInteger 0    = show a
+            | a == fromInteger 1    = showMono m
+            | otherwise             = (show a) ++ (showMono m)
+          showMono = concatMap (vars!>) . monomialVars
 
-deg :: (Eq a, Num a) => Multilinear a -> Int
-deg p
+degree :: (Eq a, Num a) => Multilinear a -> Int
+degree p
   | isZero p    = -1
   | otherwise = maximum $ map degTerm $ Map.toList $ terms p
-  where degTerm (m, k) = if k == fromInteger 0 then -1 else degMon m
+  where degTerm (m, k) = if k == fromInteger 0 then -1 else monomialDegree m
 
-coeffs :: Multilinear a -> [a]
-coeffs = Map.elems . terms
+coefficients :: Multilinear a -> [a]
+coefficients = Map.elems . terms
 
 {- Tests -}
 
@@ -81,36 +91,30 @@ isZero = Map.null . terms
 isMono :: Multilinear a -> Bool
 isMono = (1 >=) . Map.size . terms
 
-appearsIn :: Int -> Multilinear a -> Bool
-appearsIn i = any (flip testBit $ i) . Map.keys . terms
+appearsIn :: String -> Multilinear a -> Bool
+appearsIn v (Multilinear vars terms) = any (vars!v `inMonomial`) . Map.keys $ terms
 
 {- Constructors -}
 zero :: Multilinear a
-zero = Multilinear 0 Map.empty
+zero = Multilinear Bimap.empty Map.empty
 
 one :: Num a => Multilinear a
-one = Multilinear 0 $ Map.singleton 0 (fromInteger 1)
+one = constant $ fromInteger 1
 
 constant :: Num a => a -> Multilinear a
-constant a = Multilinear 0 $ Map.singleton 0 a
+constant a = Multilinear (Bimap.empty) $ Map.singleton (monomial []) a
 
-ofTerm :: (Eq a, Num a) => a -> [Int] -> Multilinear a
+ofTerm :: (Eq a, Num a) => a -> [String] -> Multilinear a
 ofTerm a xs
   | a == fromInteger 0 = zero
-  | otherwise          = Multilinear (maximum xs + 1) $ Map.singleton (bits xs) a
+  | otherwise          = Multilinear vars $ Map.singleton (monomial [0..length xs - 1]) a
+  where vars = Bimap.fromAscPairList $ zip (sort xs) [0..]
 
-ofTermDirect :: (Eq a, Num a) => Int -> a -> Monomial -> Multilinear a
-ofTermDirect n a m
-  | a == fromInteger 0 = zero
-  | otherwise          = Multilinear n $ Map.singleton m a
+ofVar :: (Eq a, Num a) => String -> Multilinear a
+ofVar v = ofTerm (fromInteger 1) [v]
 
-ofVar :: (Eq a, Num a) => Int -> Multilinear a
-ofVar i = ofTerm (fromInteger 1) [i]
-
--- WARNING: sub must be monotonic
-ofMultilinear :: Map Int Int -> Int -> Multilinear a -> Multilinear a
-ofMultilinear sub n p = p { vars = n, terms = Map.mapKeysMonotonic f $ terms p }
-  where f m = Map.foldlWithKey' (\m' i j -> m' .|. shift (m .&. shift 1 i) (j - i)) 0 sub
+ofMonomial :: (Eq a, Num a) => [String] -> Multilinear a
+ofMonomial xs = ofTerm (fromInteger 1) xs
 
 {- Operators -}
 
@@ -119,21 +123,23 @@ scale a p
   | a == fromInteger 0 = zero
   | otherwise          = p { terms = Map.map (a *) $ terms p }
 
-add :: (Eq a, Num a) => Multilinear a -> Multilinear a -> Multilinear a
-add p q = Multilinear (max (vars p) (vars q)) $ Map.unionWith (+) (terms p) (terms q)
+unsafeAdd :: (Eq a, Num a) => Multilinear a -> Multilinear a -> Multilinear a
+unsafeAdd p q = Multilinear (vars p) $ Map.unionWith (+) (terms p) (terms q)
 
-mult :: (Eq a, Num a) => Multilinear a -> Multilinear a -> Multilinear a
-mult p q = Map.foldlWithKey' f zero (terms p)
-    where f poly m a        = (+) poly $ Multilinear n (Map.foldlWithKey' (g m a) Map.empty (terms q))
-          g m a terms m' a' = Map.alter (h $ a * a') (m .|. m') terms
+unsafeMult :: (Eq a, Num a) => Multilinear a -> Multilinear a -> Multilinear a
+unsafeMult p q = Map.foldlWithKey' f init (terms p)
+    where init              = zero { vars = vars p }
+          f acc m a         =
+            let amq = Multilinear (vars p) (Map.foldlWithKey' (g m a) Map.empty (terms q)) in
+              unsafeAdd acc amq
+          g m a terms m' a' = Map.alter (h $ a * a') (multMonomial m m') terms
           h a b             = case b of
             Nothing -> Just a
             Just c  -> Just $ a + c
-          n                 = max (vars p) (vars q)
 
 instance (Eq a, Num a) => Num (Multilinear a) where
-  (+) = add
-  (*) = mult
+  p + q = (uncurry unsafeAdd) $ unifyFrame p q
+  p * q = (uncurry unsafeMult) $ unifyFrame p q
   negate p = p { terms = Map.map negate (terms p) }
   abs    p = p { terms = Map.map abs (terms p) }
   signum p = p
@@ -141,6 +147,12 @@ instance (Eq a, Num a) => Num (Multilinear a) where
 
 {- Substitutions -}
 
+renameMonotonic :: Map String String -> Multilinear a -> Multilinear a
+renameMonotonic sub p = Multilinear vars' terms'
+  where vars'  = Bimap.mapMonotonic (\v -> Map.findWithDefault v v sub) $ vars p
+        terms' = Map.mapKeys (mapMonomial $ \i -> vars'!((vars p)!>i)) $ terms p
+
+{-
 -- Substitution assumes all variables in the substitution are already tracked
 subst :: (Eq a, Num a) => Int -> Multilinear Bool -> Multilinear a -> Multilinear a
 subst i sub (Multilinear n terms) = Map.foldlWithKey' f zero terms
@@ -168,9 +180,11 @@ getSubst p = case (break f $ Map.toDescList $ terms $ simplify p) of
   where f (m, a) =
           let i = firstVar m in
             degMon m == 1 && not (appearsIn i (simplify $ p - ofTerm a [i]))
+-}
 
 {- Transformations -}
 
+{-
 -- WARNING: sub must be monotonic & must obey k > k' => v > v' for all pairs (k, v), (k', v') in sub
 reindex :: Map Int Int -> Multilinear a -> Multilinear a
 reindex sub = ofMultilinear sub (n + 1)
@@ -212,17 +226,48 @@ convert f p = p { terms = Map.map f $ terms p }
 
 convertMaybe :: (a -> Maybe b) -> Multilinear a -> Maybe (Multilinear b)
 convertMaybe f p = mapM f (terms p) >>= \terms' -> return $ p { terms = terms' }
+-}
+
+{- Internal -}
+
+-- Merges two variable maps, producing a new variable map and a substitution
+-- map for the second input
+mergeVars :: Bimap String Int -> Bimap String Int -> (Bimap String Int, Map Int Int)
+mergeVars vars vars' =
+  let maxVar              = 1 + fst (Bimap.findMaxR vars)
+      (vars'', sub, _)    = Bimap.fold f (vars, Map.empty, maxVar) vars'
+      f v i (acc, sub, j) = case (Bimap.lookup v acc, Bimap.lookupR i acc) of
+          (Just i', _)
+            | i == i'   -> (acc, sub, j)
+            | otherwise -> (acc, Map.insert i i' sub, j)
+          (_, Nothing)  -> (Bimap.insert v i acc, sub, j)
+          (_, Just _)   -> (Bimap.insert v j acc, Map.insert i j sub, j+1)
+  in
+    (vars'', sub)
+
+unifyFrame :: Multilinear a -> Multilinear a -> (Multilinear a, Multilinear a)
+unifyFrame p q =
+  let (vars', sub) = mergeVars (vars p) (vars q)
+      p'           = p { vars = vars' }
+      q'           =
+        let subst i = Map.findWithDefault i i sub in
+          q { vars = vars',
+              terms = Map.mapKeys (IntSet.map subst) $ terms q }
+  in
+    (p', q')
+    
+-- Repacks a multilinear polynomial
 
 {- Debug -}
 
 {- Tests -}
-p1 = ofTerm 2 [0]
-p2 = ofTerm 3 [1]
-p3 = ofTerm 7 [0,1,3]
+p1 = ofTerm 2 ["x"]
+p2 = ofTerm 3 ["y"]
+p3 = ofTerm 7 ["x","y","z"]
 p4 = zero
-p5 = ofTerm 0 [3]
+p5 = ofTerm 0 ["z"]
 
-x0 = ofVar 0 :: Multilinear Bool
-x1 = ofVar 1 :: Multilinear Bool
-x2 = ofVar 2 :: Multilinear Bool
-x3 = ofVar 3 :: Multilinear Bool
+x0 = ofVar "x0" :: Multilinear Bool
+x1 = ofVar "x1" :: Multilinear Bool
+x2 = ofVar "x2" :: Multilinear Bool
+x3 = ofVar "x3" :: Multilinear Bool
