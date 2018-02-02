@@ -54,8 +54,8 @@ multMonomial = Set.union
 mapMonomial :: (String -> String) -> Monomial -> Monomial
 mapMonomial = Set.map
 
-removeVar :: String -> Monomial -> Monomial
-removeVar = Set.delete
+reduceMonomial :: String -> Monomial -> Monomial
+reduceMonomial = Set.delete
 
 firstVar :: Monomial -> String
 firstVar = Set.elemAt 0
@@ -160,7 +160,7 @@ renameMonotonic sub p = simplify $ Multilinear terms'
 subst :: (Eq a, Num a) => String -> Multilinear Bool -> Multilinear a -> Multilinear a
 subst v exp (Multilinear terms) = simplify $ Map.foldlWithKey' f zero terms
   where f p' m a
-          | v `inMonomial` m = p' + (distribute a $ ofTermDirect True (removeVar v m) * exp)
+          | v `inMonomial` m = p' + (distribute a $ ofTermDirect True (reduceMonomial v m) * exp)
           | otherwise        = p' + (ofTermDirect a m)
 
 -- Simultaneous substitution
@@ -169,15 +169,15 @@ substMany sub p@(Multilinear terms) = simplify $ Map.foldlWithKey' f zero terms
   where f p' m a = p' + (distribute a $ foldl' (*) one (map g $ monomialVars m))
         g v      = Map.findWithDefault (ofVar v) v sub
 
--- Pick a substitution, if possible, for a variable assuming p = 0. Favours higher variables indices
+-- Pick a substitution, if possible, for a candidate variable assuming p = 0. Favours higher variables indices
 -- Note that simplification is crucial here
-getSubst :: (Eq a, Fractional a) => Multilinear a -> Maybe (String, Multilinear a)
-getSubst p = case (break f . Map.toDescList . terms $ simplify p) of
+solveForX :: (Eq a, Fractional a) => [String] -> Multilinear a -> Maybe (String, Multilinear a)
+solveForX cand p = case (break f . Map.toDescList . terms $ simplify p) of
   (terms, [])            -> Nothing
   (terms, (m, a):terms') -> Just (firstVar m, scale (recip a) $ p { terms = Map.fromDescList $ terms ++ terms' })
   where f (m, a) =
           let v = firstVar m in
-            monomialDegree m == 1 && not (appearsIn v (simplify $ p - ofTermDirect a m))
+            monomialDegree m == 1 && elem v cand && not (appearsIn v (simplify $ p - ofTermDirect a m))
 
 {- Transformations -}
 
@@ -186,7 +186,11 @@ simplify p = p { terms = Map.filter (fromInteger 0 /=) $ terms p }
 
 factorOut :: String -> Multilinear a -> Multilinear a
 factorOut v p = p { terms = terms' }
-  where terms' = Map.mapKeysMonotonic (removeVar v) . Map.filterWithKey (\m _ -> v `inMonomial` m) $ terms p
+  where terms' = Map.mapKeysMonotonic (reduceMonomial v) . Map.filterWithKey (\m _ -> v `inMonomial` m) $ terms p
+
+removeVar :: String -> Multilinear a -> Multilinear a
+removeVar v p = p { terms = terms' }
+  where terms' = Map.mapKeysMonotonic (reduceMonomial v) $ terms p
 
 distributeM :: (Eq a, Num a) => a -> [Monomial] -> Multilinear a
 distributeM a [] = zero

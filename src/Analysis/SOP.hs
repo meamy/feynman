@@ -20,14 +20,14 @@ import Data.Coerce
 
 import Control.Monad
 
+  
 import Debug.Trace
 
 {- Invariants:
    sort . Map.elems == Map.elems -}
 data SOP a = SOP {
-  dim      :: Int,
   sde      :: Int,
-  inVals   :: Map ID (Maybe Int),
+  inVals   :: Map ID Bool,
   pathVars :: [Int],
   poly     :: Multilinear a,
   outVals  :: Map ID (Multilinear Bool)
@@ -35,83 +35,62 @@ data SOP a = SOP {
 
 instance (Show a, Eq a, Num a) => Show (SOP a) where
   show sop = printf "|%s> --> 1/sqrt(2)^%d Sum[%s] e^i*pi*{%s}|%s>" is (sde sop) pvars (show $ poly sop) os
-    where is = concatMap (showPoly . (maybe (zero :: Multilinear Bool) ofVar)) $ Map.elems $ inVals sop
+    where is = concatMap (\(v, b) -> if b then v else "0") . Map.toList $ inVals sop
           os = concatMap showPoly $ Map.elems $ outVals sop
-          pvars = intercalate "," $ map (\i -> "x" ++ show i) (pathVars sop)
+          pvars = intercalate "," . map (\i -> pathVar i) $ pathVars sop
           showPoly p
             | isMono p  = show p
             | otherwise = "(" ++ show p ++ ")"
 
-valid :: SOP a -> Bool
-valid sop = (dim sop) + (length . pathVars $ sop) == (vars . poly $ sop)
+pathVar :: Int -> ID
+pathVar i = "p" ++ show i
 
 {- Constructors -}
 
 identity0 :: SOP a
-identity0 = SOP 0 0 Map.empty [] zero Map.empty
+identity0 = SOP 0 Map.empty [] zero Map.empty
 
 identity :: [ID] -> SOP a
 identity vars = SOP {
-  dim      = length vars,
   sde      = 0,
-  inVals   = Map.fromList $ zip vars [Just i | i <- [0..]],
+  inVals   = Map.fromList $ zip vars [True | v <- vars],
   pathVars = [],
   poly     = zero,
-  outVals  = Map.fromList $ zip vars [ofVar i | i <- [0..]]
+  outVals  = Map.fromList $ zip vars [ofVar v | v <- vars]
   }
 
 blank :: [ID] -> SOP a
 blank vars = SOP {
-  dim      = 0,
   sde      = 0,
-  inVals   = Map.fromList $ zip vars [Nothing | i <- [0..]],
+  inVals   = Map.fromList $ zip vars [False | i <- vars],
   pathVars = [],
   poly     = zero,
-  outVals  = Map.fromList $ zip vars [zero | i <- [0..]]
+  outVals  = Map.fromList $ zip vars [zero | i <- vars]
   }
 
 {- Operators -}
--- FIXME: ofMultilinear sometimes gets called with n< number of vars
-extendFrame :: Map ID (Maybe Int) -> SOP a -> SOP a
-extendFrame vals sop@(SOP dim sde ivals pvars p ovals) = SOP dim' sde ivals' pvars' p' ovals'
-  where
-    (dim', ivals') =
-      let f dim v = case v of
-            Just _  -> (dim+1, Just dim)
-            Nothing -> (dim, Nothing)
-      in
-        Map.mapAccum f 0 $ Map.union ivals vals
-    sub =
-      let qv = mapMaybe (\(k, mi) -> mi >>= \i -> return (i, fromJust $ ivals'!k)) . Map.toAscList $ ivals
-          pv = zip pvars pvars'
-      in
-        Map.fromAscList $ qv ++ pv
-    pvars' = map (+ (dim' - dim)) pvars
-    p' = ofMultilinear sub (dim' + length pvars) p
-    ovals' =
-      let f k v = case ovals!?k of
-                    Just poly -> ofMultilinear sub (dim' + length pvars) poly
-                    Nothing   -> maybe zero ofVar $ v
-      in
-        Map.mapWithKey f ivals'
-
 compose :: (Eq a, Num a) => SOP a -> SOP a -> SOP a
 compose u v
   | u == mempty = v
   | v == mempty = u
-  | otherwise   = composeUnsafe (extendFrame (inVals v) u) v
-
--- Assumes Map.keys istate' `subset` Map.keys istate
-composeUnsafe :: (Eq a, Num a) => SOP a -> SOP a -> SOP a
-composeUnsafe u@(SOP dim sde istate pvars p ostate) v@(SOP dim' sde' istate' pvars' p' ostate') =
-  SOP dim (sde + sde') istate (pvars ++ pvars'') (simplify $ p + p'') ostate''
-  where sub      = Map.foldlWithKey' (\sub q (Just i) -> Map.insert i (ostate!q) sub) Map.empty istate'
-        subp     = substMany sub . addVars (vars p - dim') dim'
-        pvars''  = map (+ max 0 (vars p - dim')) pvars'
-        p''      = substMany sub . addVars (vars p - dim') dim' $  p'
-        ostate'' = Map.union (Map.map (simplify . substMany sub . addVars (vars p - dim') dim') ostate') ostate
-
-
+  | otherwise   =
+    let varShift = case null (pathVars v) of
+          True  -> 0
+          False -> maximum ([-1] ++ pathVars u) - minimum (pathVars v) + 1
+        sub =
+          let f v True  = Map.insert v $ Map.findWithDefault (ofVar v) v (outVals u)
+              f v False = error $ "Composing " ++ v ++ " with |0> on the right"
+              initMap = Map.fromList [(pathVar i, ofVar $ pathVar $ i + varShift) | i <- pathVars v]
+          in
+            Map.foldrWithKey f initMap (inVals v)
+    in SOP {
+      sde      = sde u + sde v,
+      inVals   = Map.union (inVals u) (inVals v),
+      pathVars = pathVars u ++ map (+ varShift) (pathVars v),
+      poly     = poly u + substMany sub (poly v),
+      outVals  = Map.union (Map.map (simplify . substMany sub) $ outVals v) (outVals u)
+      }
+      
 instance (Eq a, Num a) => Monoid (SOP a) where
   mempty  = identity0
   mappend = compose
@@ -133,21 +112,21 @@ instance Num Z8 where
 
 toSOPWithHints :: [ID] -> Primitive -> SOP Z8
 toSOPWithHints vars gate = case gate of
-  H x      -> init { pathVars = [num],
+  H x      -> init { pathVars = [0],
                      sde = s + 1,
-                     poly = p + ofTerm (fromInteger 4) [fromJust (inv!x), num],
-                     outVals = Map.insert x (ofVar num) outv }
+                     poly = p + ofTerm (fromInteger 4) [x, "p0"],
+                     outVals = Map.insert x (ofVar "p0") outv }
   X x      -> init { outVals = Map.adjust (+ (constant True)) x outv }
-  Y x      -> init { poly = p + (constant $ fromInteger 2) + (ofTerm (fromInteger 4) [fromJust $ inv!x]),
+  Y x      -> init { poly = p + (constant $ fromInteger 2) + (ofTerm (fromInteger 4) [x]),
                      outVals = Map.adjust (+ (constant True)) x outv }
-  Z x      -> init { poly = p + (ofTerm (fromInteger 4) [fromJust $ inv!x]) }
-  CNOT x y -> init { outVals = Map.adjust (+ (ofVar (fromJust $ inv!x))) y outv }
-  S x      -> init { poly = p + (ofTerm (fromInteger 2) [fromJust $ inv!x]) }
-  Sinv x   -> init { poly = p + (ofTerm (fromInteger 6) [fromJust $ inv!x]) }
-  T x      -> init { poly = p + (ofTerm (fromInteger 1) [fromJust $ inv!x]) }
-  Tinv x   -> init { poly = p + (ofTerm (fromInteger 7) [fromJust $ inv!x]) }
+  Z x      -> init { poly = p + (ofTerm (fromInteger 4) [x]) }
+  CNOT x y -> init { outVals = Map.adjust (+ (ofVar x)) y outv }
+  S x      -> init { poly = p + (ofTerm (fromInteger 2) [x]) }
+  Sinv x   -> init { poly = p + (ofTerm (fromInteger 6) [x]) }
+  T x      -> init { poly = p + (ofTerm (fromInteger 1) [x]) }
+  Tinv x   -> init { poly = p + (ofTerm (fromInteger 7) [x]) }
   Swap x y -> init { outVals = Map.insert x (outv!y) $ Map.insert y (outv!x) outv }
-  where init@(SOP num s inv pathv p outv) = identity $ sort vars
+  where init@(SOP s inv pathv p outv) = identity vars
 
 toSOP :: Primitive -> SOP Z8
 toSOP gate = case gate of
@@ -187,37 +166,42 @@ toBooleanPoly :: (Eq a, Fin a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2 . simplify
 
 axiomSimplify :: (Eq a, Fin a) => SOP a -> Maybe Int
-axiomSimplify sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
-  where f x = if x `appearsIn` (poly sop) then Nothing else Just x
-        out = Map.elems $ outVals sop
+axiomSimplify sop = msum . (map g) . filter f $ pathVars sop
+  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+        g i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
 
 axiomHHStrict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHStrict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
-  where f x = return (factorOut x $ poly sop) >>= toBooleanPoly >>= getSubst >>= \(y, psub) -> Just (x, y, psub)
-        out = Map.elems $ outVals sop
+axiomHHStrict sop = msum . (map g) . filter f $ pathVars sop
+  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+        g i = do
+          p'        <- return $ factorOut (pathVar i) $ poly sop
+          p''       <- toBooleanPoly p'
+          (j, psub) <- solveForX (map pathVar $ pathVars sop) p''
+          return (i, read $ tail j, psub)
 
 axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)
-axiomSH3Strict sop = msum . (map f) . filter (\i -> all (not . (i `appearsIn`)) out) $ pathVars sop
-  where f x = return (factorOut x $ (poly sop) - (ofTerm 2 [x])) >>= toBooleanPoly >>= \q -> Just (x, q)
-        out = Map.elems $ outVals sop
+axiomSH3Strict sop = msum . (map g) . filter f $ pathVars sop
+  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+        g i =
+          let p' = factorOut (pathVar i) $ (poly sop) - (ofTerm 2 [pathVar i]) in
+            toBooleanPoly p' >>= \q -> Just (i, q)
 
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
 applyAxiom sop = case sop of
-  (axiomSimplify -> Just xrem) -> Right $
+  (axiomSimplify -> Just rem) -> Right $
     sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [xrem] }
-  (axiomHHStrict -> Just (xrem, xsub, xeq)) -> Right $
+          pathVars = pathVars sop \\ [rem] }
+  (axiomHHStrict -> Just (rem, sub, eq)) -> Right $
     sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [xrem, xsub],
-          poly     = simplify . subst xsub xeq . removeVar xrem $ poly sop,
-          outVals  = Map.map (simplify . subst xsub xeq) $ outVals sop }
-  (axiomSH3Strict -> Just (xrem, xeq)) -> Right $
-    sop { sde = sde sop - 1,
-          pathVars = pathVars sop \\ [xrem],
-          poly     =
-            let r = removeVar xrem $ poly sop in
-                simplify $ constant 1 + distribute (vars $ poly sop) 6 xeq + r }
+          pathVars = pathVars sop \\ [rem, sub],
+          poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
+          outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
+  (axiomSH3Strict -> Just (rem, eq)) -> Right $
+    sop { sde      = sde sop - 1,
+          pathVars = pathVars sop \\ [rem],
+          poly     = simplify $ constant 1 + distribute 6 eq + removeVar (pathVar rem) (poly sop)
+        }
   _ -> Left sop
 
 reduce :: (Eq a, Fin a) => SOP a -> SOP a
@@ -240,9 +224,9 @@ verifySpec spec vars inputs gates =
 -- If the sum-over-paths is verifiably unitary, we only need to check the |00...0> output state
 unitaryTrans :: SOP Z8 -> SOP Z8
 unitaryTrans sop = foldl' f sop (Map.keys $ inVals sop)
-  where f sop x = case getSubst ((outVals sop)!x) of
+  where f sop x = case solveForX (map pathVar $ pathVars sop) ((outVals sop)!x) of
           Nothing        -> sop
-          Just (y, psub) -> sop { pathVars = pathVars sop \\ [y],
+          Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
                                   poly     = simplify . subst y psub $ poly sop,
                                   outVals  = Map.map (simplify . subst y psub) $ outVals sop }
 
@@ -251,7 +235,7 @@ validate vars inputs c1 c2 =
   let hConj   = map H inputs
       init    = blank $ Map.keys (inVals sop)
       sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
-      reduced = reduce (init <> sop)
+      reduced = reduce . unitaryTrans $ init <> sop
   in
     case reduced == init of
       True  -> Nothing
@@ -277,20 +261,6 @@ cT = [H "z", Sinv "x", CNOT "x" "y", CNOT "y" "z", CNOT "z" "x", T "x", Tinv "z"
       CNOT "x" "z", Tinv "x", T "z", CNOT "y" "z", CNOT "y" "x", Tinv "x", T "z",
       CNOT "z" "x", CNOT "y" "z", CNOT "x" "y", S "x", H "z"]
 
-ids = ["x", "y", "z"]
-soptof = circuitSOPWithHints ids tof
-
-soptoffoli :: SOP Z8
-soptoffoli = SOP {
-  dim      = 3,
-  sde      = 0,
-  inVals   = (Map.fromList [("x", Just 0), ("y", Just 1), ("z", Just 2)]),
-  pathVars = [],
-  poly     = zero,
-  outVals   = (Map.fromList [("x", ofVar 0), ("y", ofVar 1), ("z", ofVar 2 + ofTerm True [0,1])])
-  }
-
-
 -- toffoli gates
 toffoli :: ID -> ID -> ID -> [Primitive]
 toffoli x y z =
@@ -305,12 +275,11 @@ toffoli x y z =
 
 toffoliSpec :: ID -> ID -> ID -> SOP Z8
 toffoliSpec x y z = SOP {
-  dim      = 3,
   sde      = 0,
-  inVals   = (Map.fromList [(x, Just 0), (y, Just 1), (z, Just 2)]),
+  inVals   = (Map.fromList [(x, True), (y, True), (z, True)]),
   pathVars = [],
   poly     = zero,
-  outVals   = (Map.fromList [(x, ofVar 0), (y, ofVar 1), (z, ofVar 2 + ofTerm True [0,1])])
+  outVals   = (Map.fromList [(x, ofVar x), (y, ofVar y), (z, ofVar z + ofTerm True [x,y])])
   }
 
 toffoliN :: [ID] -> [Primitive]
@@ -327,15 +296,15 @@ toffoliN = go 0
 
 toffoliNSpec :: [ID] -> SOP Z8
 toffoliNSpec xs = SOP {
-  dim      = length xs,
   sde      = 0,
-  inVals   = Map.fromList $ (zip (xs ++ anc) [Just i | i <- [0..]]),
+  inVals   = Map.fromList $ [(x, True) | x <- xs] ++ [(y, False) | y <- anc],
   pathVars = [],
   poly     = zero,
-  outVals  = Map.insert (last xs) product $ Map.fromList $ zip (xs ++ anc) [ofVar i | i <- [0..]]
+  outVals  = Map.insert (last xs) product outInit
   }
-  where anc = ["_anc" ++ show i | i <- [0..length xs - 3]]
-        product = ofVar (length xs - 1) + (foldr (\i p -> ofVar i * p) one [0..length xs - 2])
+  where anc     = ["_anc" ++ show i | i <- [0..length xs - 3]]
+        product = ofVar (last xs) + ofTerm True (init xs)
+        outInit = Map.fromList $ [(x, ofVar x) | x <- xs] ++ [(y, constant False) | y <- anc]
 
 verifyToffoliN :: Int -> Maybe (SOP Z8)
 verifyToffoliN n = verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs)
