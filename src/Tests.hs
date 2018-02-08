@@ -12,7 +12,7 @@ import Optimization.PhaseFold
 import Optimization.TPar
 import Algebra.Linear
 import Synthesis.Reversible.Gray
-import Syntax (Primitive(CNOT, T, Tinv))
+import Core (Primitive(CNOT, T, Tinv))
 
 import qualified Data.BitVector as BitVector
 import Test.QuickCheck

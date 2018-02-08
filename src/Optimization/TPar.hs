@@ -19,7 +19,7 @@ import Data.Bits
 import Debug.Trace
 
 
-import Syntax
+import Core
 import Algebra.Linear
 import Algebra.Matroid
 import Synthesis.Phase

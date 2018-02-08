@@ -14,7 +14,7 @@ import Control.Monad.Writer.Lazy
 
 import Algebra.Linear
 import Synthesis.Phase
-import Syntax
+import Core
 
 type AffineSynthesizer = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Int)] -> [Primitive]
 type Synthesizer       = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Int)] -> [Primitive]

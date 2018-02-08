@@ -12,7 +12,7 @@ import Control.Monad
 import Frontend.DotQC
 import Optimization.PhaseFold
 import Optimization.TPar
-import Syntax (Primitive(CNOT, T, Tinv))
+import Core (Primitive(CNOT, T, Tinv))
 
 import Tests
 

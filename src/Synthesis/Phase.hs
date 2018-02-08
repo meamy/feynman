@@ -1,6 +1,6 @@
 module Synthesis.Phase where
 
-import Syntax
+import Core
 
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of

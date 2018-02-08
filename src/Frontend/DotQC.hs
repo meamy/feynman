@@ -12,7 +12,7 @@ import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
 import Control.Monad
 
-import Syntax (ID, Primitive(..), showLst)
+import Core (ID, Primitive(..), showLst)
 
 type Nat = Word
 --type ID = String

@@ -16,7 +16,7 @@ import Data.Graph.Inductive.Query.DFS
 import Data.Bits
 
 
-import Syntax
+import Core
 import Algebra.Linear
 import Synthesis.Phase
 

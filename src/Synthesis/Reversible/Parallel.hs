@@ -9,7 +9,7 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
-import Syntax
+import Core
 import Algebra.Linear
 import Algebra.Matroid
 import Synthesis.Phase

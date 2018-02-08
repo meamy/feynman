@@ -16,7 +16,7 @@ import Data.Bits
 import Algebra.Linear
 import Synthesis.Phase
 import Synthesis.Reversible
-import Syntax
+import Core
 
 {- Gray code synthesis -}
 data Pt = Pt {

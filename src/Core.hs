@@ -1,4 +1,4 @@
-module Syntax where
+module Core where
 
 import Data.List
 
