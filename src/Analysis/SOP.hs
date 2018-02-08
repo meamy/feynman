@@ -13,13 +13,16 @@ import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 
 import Algebra.Polynomial
-import Syntax hiding (toffoli)
+import Syntax hiding (toffoli, subst)
+import qualified Syntax as Syntax
 
 import Data.Ratio
 import Data.Coerce
 
 import Control.Monad
 
+
+import Test.QuickCheck
   
 import Debug.Trace
 
@@ -68,6 +71,16 @@ blank vars = SOP {
   outVals  = Map.fromList $ zip vars [zero | i <- vars]
   }
 
+ofKet :: Map ID Bool -> SOP a
+ofKet ket = SOP {
+  sde      = 0,
+  inVals   = Map.map (\_ -> False) ket,
+  pathVars = [],
+  poly     = zero,
+  outVals  = Map.map constant ket
+  }
+
+
 {- Operators -}
 compose :: (Eq a, Num a) => SOP a -> SOP a -> SOP a
 compose u v
@@ -90,6 +103,38 @@ compose u v
       poly     = poly u + substMany sub (poly v),
       outVals  = Map.union (Map.map (simplify . substMany sub) $ outVals v) (outVals u)
       }
+
+restrict :: (Eq a, Num a) => SOP a -> Map ID Bool -> SOP a
+restrict sop bra = foldl' f sop $ Map.keys bra
+  where f sop x =
+          let x' = (outVals sop)!x in
+            if degree x' < 1
+            then
+              if x' == constant (bra!x)
+              then sop
+              else SOP 0 Map.empty [] zero Map.empty
+            else
+              case solveForX (map pathVar $ pathVars sop) (constant (bra!x) + x') of
+                Nothing        -> error $ "Can't reify " ++ (show $ constant (bra!x) + x') ++ " = 0"
+                Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
+                                  poly     = simplify . subst y psub $ poly sop,
+                                  outVals  = Map.map (simplify . subst y psub) $ outVals sop }
+
+tryRestrict :: (Eq a, Num a) => SOP a -> Map ID Bool -> SOP a
+tryRestrict sop bra = foldl' f sop $ Map.keys bra
+  where f sop x =
+          let x' = (outVals sop)!x in
+            if degree x' < 1
+            then
+              if x' == constant (bra!x)
+              then sop
+              else SOP 0 Map.empty [] zero Map.empty
+            else
+              case solveForX (map pathVar $ pathVars sop) (constant (bra!x) + x') of
+                Nothing        -> sop
+                Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
+                                  poly     = simplify . subst y psub $ poly sop,
+                                  outVals  = Map.map (simplify . subst y psub) $ outVals sop }
       
 instance (Eq a, Num a) => Monoid (SOP a) where
   mempty  = identity0
@@ -207,6 +252,9 @@ applyAxiom sop = case sop of
 reduce :: (Eq a, Fin a) => SOP a -> SOP a
 reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 
+-- Applies reduction axioms to evaluate an SOP form
+evaluate :: SOP Z8 -> Map ID Bool -> Map ID Bool -> SOP Z8
+evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 
 -- Main verification functions
 
@@ -395,4 +443,43 @@ relToff4 w x y z =
     Tinv y,
     CNOT z y,
 -}
-    
+
+genCCZ :: [String] -> Gen [Primitive]
+genCCZ xs = do
+  x <- elements xs
+  y <- elements $ xs \\ [x]
+  z <- elements $ xs \\ [x,y]
+  return $ ccz x y z
+
+genCZ :: [String] -> Gen [Primitive]
+genCZ xs = do
+  x <- elements xs
+  y <- elements $ xs \\ [x]
+  return $ cz x y
+
+genZ :: [String] -> Gen [Primitive]
+genZ xs = do
+  x <- elements xs
+  return $ [Z x]
+
+genMaioranaG :: [String] -> Int -> Gen [Primitive]
+genMaioranaG xs 0 = return []
+genMaioranaG xs i = do
+  ccz   <- genCCZ xs
+  cliff <- replicateM 200 $ oneof [genCZ xs, genZ xs]
+  next  <- genMaioranaG xs (i-1)
+  return $ concat (ccz:cliff) ++ next
+
+hiddenShift :: Int -> Int -> Gen ([Primitive], [String])
+hiddenShift n alternations = do
+  s <- sublistOf vars
+  g <- genMaioranaG (take n2 vars) alternations
+  let hTrans = map H vars
+      xTrans = map X s 
+      cTrans = concat [cz (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
+      sub = Map.fromList $ zip (take n2 vars) (drop n2 vars)
+      f' = (Syntax.subst sub g) ++ cTrans
+      f  = xTrans ++ g ++ cTrans ++ xTrans
+  return (hTrans ++ f ++ hTrans ++ f' ++ hTrans, s)
+  where n2 = n `div` 2
+        vars = ["x" ++ show i | i <- [0..n-1]]

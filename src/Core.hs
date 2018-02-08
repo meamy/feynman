@@ -6,6 +6,9 @@ import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Data.Map (Map)
+import qualified Data.Map as Map
+
 import Text.ParserCombinators.Parsec hiding (space)
 import Control.Monad
 
@@ -125,12 +128,39 @@ daggerGate x = case x of
 dagger :: [Primitive] -> [Primitive]
 dagger = reverse . map daggerGate
 
+substGate :: Map ID ID -> Primitive -> Primitive
+substGate sub gate = case gate of
+  H x      -> H $ f x
+  X x      -> H $ f x
+  Y x      -> Y $ f x
+  Z x      -> Z $ f x
+  CNOT x y -> CNOT (f x) (f y)
+  S x      -> S $ f x
+  Sinv x   -> Sinv $ f x
+  T x      -> T $ f x
+  Tinv x   -> Tinv $ f x
+  Swap x y -> Swap (f x) (f y)
+  where f x = Map.findWithDefault x x sub
+
+subst :: Map ID ID -> [Primitive] -> [Primitive]
+subst sub = map (substGate sub)
+
+-- Builtin circuits
+
+ccz :: ID -> ID -> ID -> [Primitive]
+ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
+             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
+             Tinv x, CNOT y z, CNOT z x, CNOT x y]
+
+cz  :: ID -> ID -> [Primitive]
+cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
 
 -- Printing
 
 instance Show Primitive where
   show (H x)      = "H " ++ x
   show (X x)      = "X " ++ x
+  show (Z x)      = "Z " ++ x
   show (Y x)      = "Y " ++ x
   show (CNOT x y) = "tof " ++ x ++ " " ++ y
   show (S x)      = "S " ++ x

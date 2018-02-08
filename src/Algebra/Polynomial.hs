@@ -152,6 +152,10 @@ instance (Eq a, Num a) => Num (Multilinear a) where
 
 -- Rename some variables
 -- NOTE: Doesn't check for overlap
+rename :: (Eq a, Num a) => Map String String -> Multilinear a -> Multilinear a
+rename sub p = simplify $ Multilinear terms'
+  where terms' = Map.mapKeys (mapMonomial (sub!)) $ terms p
+
 renameMonotonic :: (Eq a, Num a) => Map String String -> Multilinear a -> Multilinear a
 renameMonotonic sub p = simplify $ Multilinear terms'
   where terms' = Map.mapKeysMonotonic (mapMonomial (sub!)) $ terms p
@@ -184,13 +188,14 @@ solveForX cand p = case (break f . Map.toDescList . terms $ simplify p) of
 simplify :: (Eq a, Num a) => Multilinear a -> Multilinear a
 simplify p = p { terms = Map.filter (fromInteger 0 /=) $ terms p }
 
+-- NOTE: the variable removal here isn't monotonic wrt the set ordering, hence the O(nlogn) map
 factorOut :: String -> Multilinear a -> Multilinear a
 factorOut v p = p { terms = terms' }
-  where terms' = Map.mapKeysMonotonic (reduceMonomial v) . Map.filterWithKey (\m _ -> v `inMonomial` m) $ terms p
+  where terms' = Map.mapKeys (reduceMonomial v) . Map.filterWithKey (\m _ -> v `inMonomial` m) $ terms p
 
 removeVar :: String -> Multilinear a -> Multilinear a
 removeVar v p = p { terms = terms' }
-  where terms' = Map.mapKeysMonotonic (reduceMonomial v) $ terms p
+  where terms' = Map.filterWithKey (\m _ -> not $ inMonomial v m) $ terms p
 
 distributeM :: (Eq a, Num a) => a -> [Monomial] -> Multilinear a
 distributeM a [] = zero
