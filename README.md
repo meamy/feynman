@@ -4,8 +4,7 @@
 
 Feynman is a set of algorithms and tools designed to explore the use of
 Richard Feynman's sum-over-paths technique in quantum circuit analysis,
-optimization and simulation. More accurately it's the vessel for one lowly 
-PhD student (Matthew Amy)'s research.
+optimization and simulation.
 
 ## Prerequisites
 
@@ -60,7 +59,9 @@ Various optimization algorithms can be run on the input file, including the
 ./feyn -tpar <filename>.qc
 ```
 
-Other options include `-phasefold` and `-cnotmin`, which are very mysterious.
+Other options include `-phasefold` and `-cnotmin`. The former applies a
+variation of the t-par algorithm where circuits are not re-synthesized, while
+the latter attempts to resynthesize circuits minimizing CNOT counts.
 
 ### Benchmarks
 
