@@ -110,9 +110,9 @@ restrict sop bra = foldl' f sop $ Map.keys bra
           let x' = (outVals sop)!x in
             if degree x' < 1
             then
-              if x' == constant (bra!x)
+              if (simplify x') == (simplify $ constant (bra!x))
               then sop
-              else SOP 0 Map.empty [] zero Map.empty
+              else error "Zero amplitude on target state" --SOP 0 Map.empty [] zero Map.empty
             else
               case solveForX (map pathVar $ pathVars sop) (constant (bra!x) + x') of
                 Nothing        -> error $ "Can't reify " ++ (show $ constant (bra!x) + x') ++ " = 0"

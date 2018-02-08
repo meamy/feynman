@@ -176,6 +176,19 @@ runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main")
     in
       Right (c, ret)
 
+runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
+  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
+  (Nothing, _) -> Left "Failed (no main function)"
+  (_, Nothing) -> Left "Failed (no main function)"
+  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
+    let gates1 = toCliffordT body1
+        gates2 = toCliffordT body2
+    in
+      case validate q1 (Set.toList i1) gates1 gates2 of
+        Nothing  -> Right (qc1, qc2)
+        Just sop -> Left $ "Failed to validate: " ++ show sop
+
 
 -- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec
@@ -218,15 +231,14 @@ runExperiments n repeats = do
   putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
   sequence_ $ map (\m -> runExperiment n m repeats) [1..2^n-1]
 
-runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
-  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
-  (Nothing, _) -> Left "Failed (no main function)"
-  (_, Nothing) -> Left "Failed (no main function)"
-  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
-    let gates1 = toCliffordT body1
-        gates2 = toCliffordT body2
-    in
-      case validate q1 (Set.toList i1) gates1 gates2 of
-        Nothing  -> Right (qc1, qc2)
-        Just sop -> Left $ "Failed to validate: " ++ show sop
+-- Utilities for interactive debugging and testing
+
+gatelistOfFile :: String -> IO [Primitive]
+gatelistOfFile fname = do
+  s <- readFile fname
+  case parseDotQC s of
+    Left err -> putStrLn (show err) >> return []
+    Right c  ->
+      case find (\(Frontend.DotQC.Decl n _ _) -> n == "main") (Frontend.DotQC.decls c) of
+        Nothing -> putStrLn "No main function!" >> return []
+        Just (Frontend.DotQC.Decl _ _ body) -> return $ toCliffordT body
