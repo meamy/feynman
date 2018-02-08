@@ -253,7 +253,7 @@ reduce :: (Eq a, Fin a) => SOP a -> SOP a
 reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 
 -- Applies reduction axioms to evaluate an SOP form
-evaluate :: SOP Z8 -> Map ID Bool -> Map ID Bool -> SOP Z8
+evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> SOP a
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 
 -- Main verification functions
@@ -269,23 +269,14 @@ verifySpec spec vars inputs gates =
       True  -> Nothing
       False -> Just reduced
 
--- If the sum-over-paths is verifiably unitary, we only need to check the |00...0> output state
-unitaryTrans :: SOP Z8 -> SOP Z8
-unitaryTrans sop = foldl' f sop (Map.keys $ inVals sop)
-  where f sop x = case solveForX (map pathVar $ pathVars sop) ((outVals sop)!x) of
-          Nothing        -> sop
-          Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
-                                  poly     = simplify . subst y psub $ poly sop,
-                                  outVals  = Map.map (simplify . subst y psub) $ outVals sop }
-
 validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let hConj   = map H inputs
-      init    = blank $ Map.keys (inVals sop)
+      ket     = Map.fromList [(v, False) | v <- Map.keys (inVals sop)]
       sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
-      reduced = reduce . unitaryTrans $ init <> sop
+      reduced = evaluate sop ket ket
   in
-    case reduced == init of
+    case reduced == blank (Map.keys $ inVals sop) of
       True  -> Nothing
       False -> Just reduced
 
