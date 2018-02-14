@@ -122,6 +122,9 @@ ofMonomial xs = ofTerm (fromInteger 1) xs
 
 {- Operators -}
 
+getConstant :: (Eq a, Num a) => Multilinear a -> a
+getConstant = Map.findWithDefault (fromInteger 0) (monomial []) . terms
+
 scale :: (Eq a, Num a) => a -> Multilinear a -> Multilinear a
 scale a p
   | a == fromInteger 0 = zero

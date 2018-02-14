@@ -252,6 +252,26 @@ scaledExp i (Z8 x)
   | i `mod` 2 == 0 = scaleD (D (1,i `div` 2)) (expZ8 $ Z8 x)
   | otherwise      = scaledExp (i+1) (Z8 $ mod (x-1) 8) + scaledExp (i+1) (Z8 $ mod (x+1) 8)
 
+isClosed :: SOP a -> Bool
+isClosed = all not . Map.elems . inVals
+
+isKet :: SOP a -> Bool
+isKet = all ((< 1) . degree) . Map.elems . outVals
+
+amplitude :: SOP Z8 -> Maybe DOmega
+amplitude sop
+  | not (isClosed sop) = Nothing
+  | not (isKet sop)    = Nothing
+  | otherwise          = case pathVars sop of
+      []   -> Just $ scaledExp (sde sop) (getConstant $ poly sop)
+      x:xs ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant False) $ poly sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant True) $ poly sop }
+        in
+          (+) <$> amplitude sop0 <*> amplitude sop1
+
 {- Verification -}
 
 class Num a => Fin a where
@@ -337,7 +357,7 @@ validate vars inputs c1 c2 =
   in
     case reduced == blank (Map.keys $ inVals sop) of
       True  -> Nothing
-      False -> Just reduced
+      False -> trace ("Amplitude: " ++ (show $ fromJust $ amplitude reduced)) Just reduced
 
 {- Tests -}
 
