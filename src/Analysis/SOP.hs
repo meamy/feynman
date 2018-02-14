@@ -193,6 +193,65 @@ circuitSOPWithHints vars circuit = foldMap (toSOPWithHints vars) circuit
 circuitSOP :: [Primitive] -> SOP Z8
 circuitSOP circuit = foldMap toSOP circuit
 
+{- Simulation -}
+
+newtype DyadicInt = D (Int, Int) deriving (Eq) -- NOTE: must be in lowest form
+newtype DOmega    = DOmega (DyadicInt, DyadicInt, DyadicInt, DyadicInt) deriving (Eq)
+
+instance Show DyadicInt where
+  show (D (a,n)) = show a ++ "/2^" ++ show n
+
+instance Num DyadicInt where
+  (D (a,n)) + (D (b,m))
+    | a == 0 = D (b,m)
+    | b == 0 = D (a,n)
+    | n == m = D ((a + b) `div` 2, n-1)
+    | otherwise =
+      let n' = max n m in
+        D (a * 2^(n' - n) + b * 2^(n' - m), n')
+  (D (a,n)) * (D (b,m)) = D (a * b, n + m)
+  negate (D (a,n)) = D (-a, n)
+  abs (D (a,n))    = D (abs a, n)
+  signum (D (a,n)) = D (signum a, 0)
+  fromInteger i    = D (fromInteger i, 0)
+
+instance Show DOmega where
+  show (DOmega (a,b,c,d)) =
+    show a ++ " + " ++
+    show b ++ "*w + " ++
+    show c ++ "*w^2 + " ++
+    show d ++ "*w^3"
+
+instance Num DOmega where
+  DOmega (a,b,c,d) + DOmega (a',b',c',d') = DOmega (a+a',b+b',c+c',d+d')
+  DOmega (a,b,c,d) * DOmega (a',b',c',d') = DOmega (a'',b'',c'',d'')
+    where a'' = a*a' - b*d' - c*c' - d*b'
+          b'' = a*b' + b*a' - c*d' - d*c'
+          c'' = a*c' + b*b' + c*a' - d*d'
+          d'' = a*d' + b*c' + c*b' + d*a'
+  negate (DOmega (a,b,c,d)) = DOmega (-a,-b,-c,-d)
+  abs    x = x -- N/A
+  signum x = x -- N/A
+  fromInteger i = DOmega (fromInteger i, D (0,0), D (0,0), D (0,0))
+
+-- w^x
+expZ8 :: Z8 -> DOmega
+expZ8 (Z8 x) = case x `mod` 4 of
+  0 -> DOmega (D (y,0), D (0,0), D (0,0), D (0,0))
+  1 -> DOmega (D (0,0), D (y,0), D (0,0), D (0,0))
+  2 -> DOmega (D (0,0), D (0,0), D (y,0), D (0,0))
+  3 -> DOmega (D (0,0), D (0,0), D (0,0), D (y,0))
+  where y = (-1)^(x `div` 4)
+
+scaleD :: DyadicInt -> DOmega -> DOmega
+scaleD x (DOmega (a,b,c,d)) = DOmega (x*a,x*b,x*c,x*d)
+
+-- 1/sqrt(2)^i * w^x
+scaledExp :: Int -> Z8 -> DOmega
+scaledExp i (Z8 x)
+  | i `mod` 2 == 0 = scaleD (D (1,i `div` 2)) (expZ8 $ Z8 x)
+  | otherwise      = scaledExp (i+1) (Z8 $ mod (x-1) 8) + scaledExp (i+1) (Z8 $ mod (x+1) 8)
+
 {- Verification -}
 
 class Num a => Fin a where
