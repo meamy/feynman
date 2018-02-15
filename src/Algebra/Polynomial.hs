@@ -176,10 +176,10 @@ substMany sub p@(Multilinear terms) = simplify $ Map.foldlWithKey' f zero terms
   where f p' m a = p' + (distribute a $ foldl' (*) one (map g $ monomialVars m))
         g v      = Map.findWithDefault (ofVar v) v sub
 
--- Pick a substitution, if possible, for a candidate variable assuming p = 0. Favours higher variables indices
+-- Pick a substitution, if possible, for a candidate variable assuming p = 0.
 -- Note that simplification is crucial here
 solveForX :: (Eq a, Fractional a) => [String] -> Multilinear a -> Maybe (String, Multilinear a)
-solveForX cand p = case (break f . Map.toDescList . terms $ simplify p) of
+solveForX cand p = case (break f . Map.toAscList . terms $ simplify p) of
   (terms, [])            -> Nothing
   (terms, (m, a):terms') -> Just (firstVar m, scale (recip a) $ p { terms = Map.fromDescList $ terms ++ terms' })
   where f (m, a) =

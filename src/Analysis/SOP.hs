@@ -20,7 +20,7 @@ import Data.Ratio
 import Data.Coerce
 
 import Control.Monad
-
+import Data.Function
 
 import Test.QuickCheck
   
@@ -258,8 +258,8 @@ isClosed = all not . Map.elems . inVals
 isKet :: SOP a -> Bool
 isKet = all ((< 1) . degree) . Map.elems . outVals
 
-amplitude :: SOP Z8 -> Maybe DOmega
-amplitude sop
+mapPaths :: (SOP Z8 -> Maybe DOmega) -> SOP Z8 -> Maybe DOmega
+mapPaths f sop
   | not (isClosed sop) = Nothing
   | not (isKet sop)    = Nothing
   | otherwise          = case pathVars sop of
@@ -270,7 +270,30 @@ amplitude sop
             sop1 = sop { pathVars = xs,
                          poly = simplify . subst (pathVar x) (constant True) $ poly sop }
         in
-          (+) <$> amplitude sop0 <*> amplitude sop1
+          (+) <$> f sop0 <*> f sop1
+
+mapPathsUnsafe :: (SOP Z8 -> DOmega) -> SOP Z8 -> DOmega
+mapPathsUnsafe f sop = case pathVars sop of
+      []   -> scaledExp (sde sop) (getConstant $ poly sop)
+      x:xs ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant False) $ poly sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant True) $ poly sop }
+        in
+          f sop0 + f sop1
+
+amplitude0 :: SOP Z8 -> Maybe DOmega
+amplitude0 = fix mapPaths
+
+amplitude :: SOP Z8 -> Maybe DOmega
+amplitude = mapPaths amplitude . reduce
+
+amplitude0Unsafe :: SOP Z8 -> DOmega
+amplitude0Unsafe = fix mapPathsUnsafe
+
+amplitudeUnsafe :: SOP Z8 -> DOmega
+amplitudeUnsafe = mapPathsUnsafe amplitudeUnsafe . reduce
 
 {- Verification -}
 
@@ -303,6 +326,15 @@ axiomHHStrict sop = msum . (map g) . filter f $ pathVars sop
           (j, psub) <- solveForX (map pathVar $ pathVars sop) p''
           return (i, read $ tail j, psub)
 
+axiomHHOutputRestricted :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
+axiomHHOutputRestricted sop = msum . (map g) . filter f $ pathVars sop
+  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+        g i = do
+          p'        <- return $ factorOut (pathVar i) $ poly sop
+          p''       <- toBooleanPoly p'
+          (j, psub) <- solveForX (map pathVar $ filter f $ pathVars sop) p''
+          return (i, read $ tail j, psub)
+
 axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)
 axiomSH3Strict sop = msum . (map g) . filter f $ pathVars sop
   where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
@@ -328,12 +360,34 @@ applyAxiom sop = case sop of
         }
   _ -> Left sop
 
+applyAxiomOutputRestricted :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
+applyAxiomOutputRestricted sop = case sop of
+  (axiomSimplify -> Just rem) -> Right $
+    sop { sde      = sde sop - 2,
+          pathVars = pathVars sop \\ [rem] }
+  (axiomHHOutputRestricted -> Just (rem, sub, eq)) -> Right $
+    sop { sde      = sde sop - 2,
+          pathVars = pathVars sop \\ [rem, sub],
+          poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
+          outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
+  (axiomSH3Strict -> Just (rem, eq)) -> Right $
+    sop { sde      = sde sop - 1,
+          pathVars = pathVars sop \\ [rem],
+          poly     = simplify $ constant 1 + distribute 6 eq + removeVar (pathVar rem) (poly sop)
+        }
+  _ -> Left sop
+
+-- Strategies
 reduce :: (Eq a, Fin a) => SOP a -> SOP a
 reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 
--- Applies reduction axioms to evaluate an SOP form
 evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> SOP a
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
+
+cliffordTCrush :: SOP Z8 -> Map ID Bool -> Map ID Bool -> DOmega
+cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
+  where fromLeft (Left x) = x
+        sop' = fromLeft $ foldM (\sop _ -> applyAxiomOutputRestricted sop) (ofKet ket <> sop) [0..]
 
 -- Main verification functions
 
@@ -357,7 +411,7 @@ validate vars inputs c1 c2 =
   in
     case reduced == blank (Map.keys $ inVals sop) of
       True  -> Nothing
-      False -> trace ("Amplitude: " ++ (show $ fromJust $ amplitude reduced)) Just reduced
+      False -> trace ("Amplitude: " ++ (show $ cliffordTCrush sop ket ket)) Just reduced
 
 {- Tests -}
 
