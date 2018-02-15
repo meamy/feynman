@@ -114,7 +114,7 @@ restrict sop bra = foldl' f sop $ Map.keys bra
               then sop
               else error "Zero amplitude on target state" --SOP 0 Map.empty [] zero Map.empty
             else
-              case solveForX (map pathVar $ pathVars sop) (constant (bra!x) + x') of
+              case find ((`elem` (map pathVar $ pathVars sop)) . fst) $ solveForX (constant (bra!x) + x') of
                 Nothing        -> error $ "Can't reify " ++ (show $ constant (bra!x) + x') ++ " = 0"
                 Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
                                   poly     = simplify . subst y psub $ poly sop,
@@ -130,7 +130,7 @@ tryRestrict sop bra = foldl' f sop $ Map.keys bra
               then sop
               else SOP 0 Map.empty [] zero Map.empty
             else
-              case solveForX (map pathVar $ pathVars sop) (constant (bra!x) + x') of
+              case find ((`elem` (map pathVar $ pathVars sop)) . fst) $ solveForX (constant (bra!x) + x') of
                 Nothing        -> sop
                 Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
                                   poly     = simplify . subst y psub $ poly sop,
@@ -318,21 +318,23 @@ axiomSimplify sop = msum . (map g) . filter f $ pathVars sop
         g i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
 
 axiomHHStrict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHStrict sop = msum . (map g) . filter f $ pathVars sop
-  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g i = do
+axiomHHStrict sop = msum . (map h) . filter f $ pathVars sop
+  where f i      = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+        g (x, p) = x `elem` (map pathVar $ pathVars sop)
+        h i      = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
           p''       <- toBooleanPoly p'
-          (j, psub) <- solveForX (map pathVar $ pathVars sop) p''
+          (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
 axiomHHOutputRestricted :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHOutputRestricted sop = msum . (map g) . filter f $ pathVars sop
+axiomHHOutputRestricted sop = msum . (map h) . filter f $ pathVars sop
   where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g i = do
+        g (x, p) = x `elem` (map pathVar $ pathVars sop) && degree p <= 1
+        h i = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
           p''       <- toBooleanPoly p'
-          (j, psub) <- solveForX (map pathVar $ filter f $ pathVars sop) p''
+          (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
 axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)

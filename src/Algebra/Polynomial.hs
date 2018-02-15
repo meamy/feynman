@@ -176,15 +176,16 @@ substMany sub p@(Multilinear terms) = simplify $ Map.foldlWithKey' f zero terms
   where f p' m a = p' + (distribute a $ foldl' (*) one (map g $ monomialVars m))
         g v      = Map.findWithDefault (ofVar v) v sub
 
--- Pick a substitution, if possible, for a candidate variable assuming p = 0.
--- Note that simplification is crucial here
-solveForX :: (Eq a, Fractional a) => [String] -> Multilinear a -> Maybe (String, Multilinear a)
-solveForX cand p = case (break f . Map.toAscList . terms $ simplify p) of
-  (terms, [])            -> Nothing
-  (terms, (m, a):terms') -> Just (firstVar m, scale (recip a) $ p { terms = Map.fromDescList $ terms ++ terms' })
+-- Get possible variable substitutions giving p = 0
+solveForX :: (Eq a, Fractional a) => Multilinear a -> [(String, Multilinear a)]
+solveForX p = mapMaybe f . Map.toAscList . terms . simplify $ p
   where f (m, a) =
-          let v = firstVar m in
-            monomialDegree m == 1 && elem v cand && not (appearsIn v (simplify $ p - ofTermDirect a m))
+          let v  = firstVar m 
+              p' = simplify $ p - ofTermDirect a m
+          in
+            if monomialDegree m == 1 && not (appearsIn v p')
+            then Just (v, scale (recip a) p')
+            else Nothing
 
 {- Transformations -}
 
