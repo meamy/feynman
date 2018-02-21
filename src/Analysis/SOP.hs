@@ -205,15 +205,21 @@ instance Num DyadicInt where
   (D (a,n)) + (D (b,m))
     | a == 0 = D (b,m)
     | b == 0 = D (a,n)
-    | n == m = D ((a + b) `div` 2, n-1)
+    | n == m = canonicalize $ D ((a + b) `div` 2, n-1)
     | otherwise =
       let n' = max n m in
-        D (a * 2^(n' - n) + b * 2^(n' - m), n')
-  (D (a,n)) * (D (b,m)) = D (a * b, n + m)
+        canonicalize $ D (a * 2^(n' - n) + b * 2^(n' - m), n')
+  (D (a,n)) * (D (b,m)) = canonicalize $ D (a * b, n + m)
   negate (D (a,n)) = D (-a, n)
   abs (D (a,n))    = D (abs a, n)
   signum (D (a,n)) = D (signum a, 0)
   fromInteger i    = D (fromInteger i, 0)
+
+canonicalize :: DyadicInt -> DyadicInt
+canonicalize (D (a,n))
+  | a == 0                  = D (0,0)
+  | a `mod` 2 == 0 && n > 0 = canonicalize $ D (a `div` 2, n-1)
+  | otherwise               = D (a,n)
 
 instance Show DOmega where
   show (DOmega (a,b,c,d)) =
@@ -609,3 +615,12 @@ hiddenShift n alternations = do
   return (hTrans ++ f ++ hTrans ++ f' ++ hTrans, s)
   where n2 = n `div` 2
         vars = ["x" ++ show i | i <- [0..n-1]]
+
+-- More tests
+
+threeT x y z anc =
+  [CNOT x y, CNOT x z] ++
+  toffoli y z anc ++
+  [CNOT x z, CNOT x anc, CNOT y z, T z, S anc, CNOT y z, CNOT x anc, CNOT x z] ++
+  toffoli y z anc ++
+  [CNOT x z, CNOT x y]
