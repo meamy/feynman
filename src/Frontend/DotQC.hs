@@ -19,7 +19,10 @@ type Nat = Word
 
 {- A gate has an identifier, a non-negative number of iterations,
  - and a list of parameters -}
-data Gate = Gate ID Nat [ID] deriving (Eq)
+data Gate =
+    Gate ID Nat [ID]
+  | ParamGate ID Nat Double [ID] deriving (Eq)
+
 data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: [Gate] }
@@ -35,6 +38,9 @@ instance Show Gate where
   show (Gate name 0 params) = ""
   show (Gate name 1 params) = name ++ " " ++ showLst params
   show (Gate name i params) = name ++ "^" ++ show i ++ " " ++ showLst params
+  show (ParamGate name 0 p params) = ""
+  show (ParamGate name 1 p params) = name ++ "(" ++ show p ++ ")" ++ " " ++ showLst params
+  show (ParamGate name i p params) = name ++ "(" ++ show p ++ ")^" ++ show i ++ " " ++ showLst params
 
 instance Show Decl where
   show (Decl name params body) = intercalate "\n" [l1, l2, l3]
@@ -68,20 +74,27 @@ inv gate@(Gate g i p) =
     "T*"   -> Gate "T" i p
     "tof"  -> gate
     "cnot" -> gate
+inv gate@(ParamGate g i f p) =
+  case g of
+    "Rz"   -> ParamGate g i (-f) p
 
 simplify :: [Gate] -> [Gate]
 simplify circ =
   let circ' = zip circ [0..]
       allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
-      f (last, erasures) gate@(Gate g i p, uid) =
-        let last' = foldr (\q -> Map.insert q gate) last p in
-            case mapM (\q -> Map.lookup q last) p >>= allSame of
-              Nothing -> (last', erasures)
-              Just (Gate g' i' p', uid') ->
-                if Gate g i p == (inv $ Gate g' i' p') then
-                  (last', Set.insert uid $ Set.insert uid' erasures)
-                else
-                  (last', erasures)
+      f (last, erasures) (gate, uid) =
+        let p = case gate of
+              Gate _ _ p -> p
+              ParamGate _ _ _ p -> p
+            last' = foldr (\q -> Map.insert q (gate, uid)) last p
+        in
+          case mapM (\q -> Map.lookup q last) p >>= allSame of
+            Nothing -> (last', erasures)
+            Just (gate', uid') ->
+              if gate == (inv gate') then
+                (last', Set.insert uid $ Set.insert uid' erasures)
+              else
+                (last', erasures)
       erasures = snd $ foldl' f (Map.empty, Set.empty) circ'
   in
     fst $ unzip $ filter (\(_, uid) -> not $ Set.member uid erasures) circ'
@@ -96,7 +109,9 @@ simplifyDotQC (DotQC q i o decls) = DotQC q i o $ map f decls
             f $ Decl n p body'
 
 subst :: (ID -> ID) -> [Gate] -> [Gate]
-subst f = map $ \(Gate g i params) -> Gate g i $ map f params
+subst f = map g
+  where g (Gate g i params) = Gate g i $ map f params
+        g (ParamGate g i p params) = ParamGate g i p $ map f params
 
 {-
 inline :: DotQC -> DotQC
@@ -210,11 +225,14 @@ parseParams = sepEndBy (many1 alphaNum) (many1 sep)
 
 parseGate = do
   name <- parseID
+  param <- optionMaybe (char '(' >> floating2 True >>= \f -> char ')' >> return f)
   reps <- option 1 (char '^' >> nat)
   skipSpace
   params <- parseParams
   skipSpace
-  return $ Gate name reps params
+  case param of
+    Nothing -> return $ Gate name reps params
+    Just f  -> return $ ParamGate name reps f params
 
 parseFormals = do
   skipMany $ char '('
