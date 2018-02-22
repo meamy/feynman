@@ -18,7 +18,8 @@ type Nat = Word
 --type ID = String
 
 {- A gate has an identifier, a non-negative number of iterations,
- - and a list of parameters -}
+ - and a list of parameters. Parameterized gates are not pretty
+ - but this is a nice quick solution -}
 data Gate =
     Gate ID Nat [ID]
   | ParamGate ID Nat Double [ID] deriving (Eq)
@@ -145,6 +146,11 @@ gateToCliffordT (Gate g i p) =
                             Tinv x, CNOT y z, CNOT z x, CNOT x y]
   in
     concat $ genericReplicate i circ
+gateToCliffordT (ParamGate g i f p) =
+  let circ = case (g, p) of
+        ("Rz", [x]) -> [Rz f x]
+  in
+    concat $ genericReplicate i circ
 
 
 toCliffordT :: [Gate] -> [Primitive]
@@ -162,6 +168,7 @@ gateFromCliffordT g = case g of
   Tinv x   -> Gate "T*" 1 [x]
   CNOT x y -> Gate "tof" 1 [x, y]
   Swap x y -> Gate "swap" 1 [x, y]
+  Rz f x   -> ParamGate "Rz" 1 f [x]
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
@@ -181,6 +188,7 @@ countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
           T _      -> plus cnt [0,0,0,0,0,0,1,0]
           Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
           Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
+          _        -> cnt
 
 -- This is also totally wrong
 tDepth :: DotQC -> Int

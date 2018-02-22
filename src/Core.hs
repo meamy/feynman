@@ -22,6 +22,7 @@ data Primitive =
   | T    ID
   | Tinv ID
   | Swap ID ID
+  | Rz   Double ID
 
 data Stmt =
     Gate Primitive
