@@ -233,7 +233,7 @@ parseParams = sepEndBy (many1 alphaNum) (many1 sep)
 
 parseGate = do
   name <- parseID
-  param <- optionMaybe (char '(' >> floating2 True >>= \f -> char ')' >> return f)
+  param <- optionMaybe (char '(' >> sign <*> (floating2 True >>= \f -> char ')' >> return f))
   reps <- option 1 (char '^' >> nat)
   skipSpace
   params <- parseParams
