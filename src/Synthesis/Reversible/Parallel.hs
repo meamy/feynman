@@ -26,7 +26,7 @@ instance Matroid ((F2Vec, Int), Int) where
       (all (\i -> i `mod` 2 == 1) exps || all (\i -> i `mod` 2 == 0) exps)
       && width v - rank (fromList vecs) <= n - (length vecs)
 
-tpar :: Synthesizer
+tpar :: Synthesizer Int
 tpar input output [] = linearSynth input output []
 tpar input output xs =
   let partition      = partitionAll (zip xs $ repeat $ length input)

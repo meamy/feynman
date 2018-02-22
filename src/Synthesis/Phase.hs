@@ -24,3 +24,8 @@ globalPhase x i = case i `mod` 8 of
   6 -> [Sinv x, X x, Sinv x, X x]
   7 -> [H x, Sinv x, H x, Sinv x, H x, Sinv x]
 
+arbitraryAngle :: ID -> Double -> [Primitive]
+arbitraryAngle x p = [Rz p x]
+
+arbitraryAngleGlobal :: ID -> Double -> [Primitive]
+arbitraryAngleGlobal x p = [Rz p x, X x, Rz p x, X x]

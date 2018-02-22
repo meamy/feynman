@@ -19,19 +19,19 @@ import Synthesis.Reversible
 import Core
 
 {- Gray code synthesis -}
-data Pt = Pt {
+data Pt a = Pt {
   candidates :: [Int],
   target     :: Maybe Int,
   pending    :: Maybe Int,
-  vectors    :: [(F2Vec, Int)]
+  vectors    :: [(F2Vec, a)]
 } deriving Show
 
-adjust :: Int -> Int -> [Pt] -> [Pt]
+adjust :: Int -> Int -> [Pt a] -> [Pt a]
 adjust t p xs = map f xs
   where f (Pt c t p vecs) = Pt c t p $ map g vecs
         g (bv, i) = (if bv@.t then complementBit bv p else bv, i)
 
-findColumnSplit :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findColumnSplit :: [Int] -> [(F2Vec, a)] -> ([(F2Vec, a)], Int, [Int], [(F2Vec, a)])
 findColumnSplit (c:cs) vecs = foldl' g init cs
   where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
         init = case f c of (l, r) -> (l, c, [], r)
@@ -41,7 +41,7 @@ findColumnSplit (c:cs) vecs = foldl' g init cs
             then (l', c', c:cs, r')
             else (l, c, c':cs, r)
 
-findBestSplit :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findBestSplit :: [Int] -> [(F2Vec, a)] -> ([(F2Vec, a)], Int, [Int], [(F2Vec, a)])
 findBestSplit (c:cs) vecs = foldl' g init cs
   where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
         init = case f c of (l, r) -> (l, c, [], r)
@@ -51,7 +51,7 @@ findBestSplit (c:cs) vecs = foldl' g init cs
             then (l', c', c:cs, r')
             else (l, c, c':cs, r)
 
-graySynthesis :: [ID] -> Map ID F2Vec -> [Pt] -> Writer [Primitive] (Map ID F2Vec)
+graySynthesis :: [ID] -> Map ID F2Vec -> [Pt Double] -> Writer [Primitive] (Map ID F2Vec)
 graySynthesis ids out []     = return out
 graySynthesis ids out (x:xs) = case x of
   Pt _ _ _ [] -> graySynthesis ids out xs
@@ -65,7 +65,8 @@ graySynthesis ids out (x:xs) = case x of
       tell [CNOT idp idt]
       graySynthesis ids out' xs'
   Pt [] (Just t) Nothing [(_, a)] -> do
-    tell $ minimalSequence (ids !! t) a
+    --tell $ minimalSequence (ids !! t) a
+    tell $ arbitraryAngle (ids !! t) a
     graySynthesis ids out xs
   Pt [] Nothing _ _ -> graySynthesis ids out xs
   Pt (c:cs) targ Nothing vecs ->
@@ -77,7 +78,7 @@ graySynthesis ids out (x:xs) = case x of
     in
       graySynthesis ids out $ xzero:xone:xs
 
-cnotMinGray0 :: Synthesizer
+cnotMinGray0 :: Synthesizer Double
 cnotMinGray0 input output [] = linearSynth input output []
 cnotMinGray0 input output xs =
   let ivecs  = Map.toList input
@@ -94,7 +95,7 @@ cnotMinGray0 input output xs =
 
 cnotMinGray input output xs =
   let gates  = cnotMinGray0 input output xs
-      gates' = cnotMinGray0 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
+      gates' = gates -- cnotMinGray0 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False

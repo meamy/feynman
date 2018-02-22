@@ -16,11 +16,11 @@ import Algebra.Linear
 import Synthesis.Phase
 import Core
 
-type AffineSynthesizer = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Int)] -> [Primitive]
-type Synthesizer       = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Int)] -> [Primitive]
+type AffineSynthesizer a = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, a)] -> [Primitive]
+type Synthesizer       a = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, a)] -> [Primitive]
 
 {-- Synthesizers -}
-affineTrans :: Synthesizer -> AffineSynthesizer
+affineTrans :: Synthesizer a -> AffineSynthesizer a
 affineTrans synth = \input output xs ->
   let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
       inX  = f input
@@ -28,10 +28,10 @@ affineTrans synth = \input output xs ->
   in
     inX ++ (synth (Map.map fst input) (Map.map fst output) xs) ++ outX
 
-emptySynth :: Synthesizer
+emptySynth :: Synthesizer a
 emptySynth _ _ _ = []
 
-linearSynth :: Synthesizer
+linearSynth :: Synthesizer a
 linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
@@ -60,7 +60,7 @@ synthVec ids vec =
   in
     foldl' f Nothing lst
 
-cnotMin :: Synthesizer
+cnotMin :: Synthesizer Int
 cnotMin input output [] = linearSynth input output []
 cnotMin input output ((x, i):xs) =
   let ivecs  = Map.toList input
@@ -70,7 +70,7 @@ cnotMin input output ((x, i):xs) =
       Nothing            -> error "Fatal: something bad happened"
       Just ((v, bv), gates) -> gates ++ minimalSequence v i ++ cnotMin (Map.insert v bv input) output xs
   
-cnotMinMore :: Synthesizer
+cnotMinMore :: Synthesizer Int
 cnotMinMore input output [] = linearSynth input output []
 cnotMinMore input output (x:xs) =
   let ivecs  = Map.toList input
@@ -86,7 +86,7 @@ cnotMinMore input output (x:xs) =
       Nothing                       -> error "Fatal: something bad happened"
       Just ((v, bv), i, g, xs') -> g ++ minimalSequence v i ++ cnotMinMore (Map.insert v bv input) output xs'
 
-cnotMinMost :: Synthesizer
+cnotMinMost :: Synthesizer Int
 cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
 

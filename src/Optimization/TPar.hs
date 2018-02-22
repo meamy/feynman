@@ -38,15 +38,15 @@ import Synthesis.Reversible.Gray
        
 {- TODO: Merge with phase folding eventually -}
 
-data AnalysisState = SOP {
+data AnalysisState a = SOP {
   dim     :: Int,
   ivals   :: Map ID (F2Vec, Bool),
   qvals   :: Map ID (F2Vec, Bool),
-  terms   :: Map F2Vec Int,
-  phase   :: Int
+  terms   :: Map F2Vec a,
+  phase   :: a
 } deriving Show
 
-type Analysis = State AnalysisState
+type Analysis = State (AnalysisState Double)
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
 getSt :: ID -> Analysis (F2Vec, Bool)
@@ -65,7 +65,7 @@ getSt v = do
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> Analysis [(F2Vec, Int)]
+exists :: ID -> AnalysisState Double -> Analysis [(F2Vec, Double)]
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
@@ -79,44 +79,44 @@ exists v st@(SOP dim ivals qvals terms phase) =
     put $ SOP dim' vals vals terms'' phase
     return $ Map.toList orp
 
-updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
+updateQval :: ID -> (F2Vec, Bool) -> AnalysisState a -> AnalysisState a
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: (F2Vec, Bool) -> Int -> AnalysisState -> AnalysisState
+addTerm :: Num a => (F2Vec, Bool) -> a -> AnalysisState a -> AnalysisState a
 addTerm (bv, p) i st =
   case p of
     False -> st { terms = Map.alter (f i) bv $ terms st }
     True ->
-      let terms' = Map.alter (f $ (-i) `mod` 8) bv $ terms st
-          phase' = (phase st + i) `mod` 8
+      let terms' = Map.alter (f (-i)) bv $ terms st
+          phase' = phase st + i
       in
         st { terms = terms', phase = phase' }
   where f i oldt = case oldt of
-          Just x  -> Just $ x + i `mod` 8
-          Nothing -> Just $ i `mod` 8
+          Just x  -> Just $ x + i
+          Nothing -> Just $ i
  
 {-- The main analysis -}
-applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
+applyGate :: AffineSynthesizer Double -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGate synth gates g = case g of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm bv 1
+    modify $ addTerm bv (pi/4.0)
     return gates
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv 7
+    modify $ addTerm bv (-pi/4.0)
     return gates
   S v      -> do
     bv <- getSt v
-    modify $ addTerm bv 2
+    modify $ addTerm bv (pi/2.0)
     return gates
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv 6
+    modify $ addTerm bv (-pi/2.0)
     return gates
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm bv 4
+    modify $ addTerm bv pi
     return gates
   CNOT c t -> do
     (bvc, bc) <- getSt c
@@ -138,13 +138,17 @@ applyGate synth gates g = case g of
     modify $ updateQval u bvv
     modify $ updateQval v bvu
     return gates
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm bv p
+    return gates
 
-finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
+finalize :: AffineSynthesizer Double -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
   return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
     
-gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtpar :: Synthesizer Double -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar osynth vars inputs gates =
   let synth = affineTrans osynth
       init = 
@@ -162,8 +166,8 @@ gtpar osynth vars inputs gates =
 
 -- Optimization algorithms
 
-{- t-par: the t-par algorithm from [AMM2014] -}
-tpar = gtpar tparMore
+{- t-par: the t-par algorithm from [AMM2014] (temporarily out of order) -}
+tpar _ _ = id -- gtpar tparMore
 
 {- minCNOT: CNOT minimization algorithm -}
 minCNOT = gtpar cnotMinGray
