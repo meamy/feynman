@@ -142,6 +142,16 @@ applyGate synth gates g = case g of
     bv <- getSt v
     modify $ addTerm bv p
     return gates
+  Rx p v -> do
+    bv <- getSt v
+    st <- get
+    orphans <- exists v st
+    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Rx p v]
+  Ry p v -> do
+    bv <- getSt v
+    st <- get
+    orphans <- exists v st
+    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
 
 finalize :: AffineSynthesizer Double -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do

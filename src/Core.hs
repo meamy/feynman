@@ -23,6 +23,8 @@ data Primitive =
   | Tinv ID
   | Swap ID ID
   | Rz   Double ID
+  | Rx   Double ID
+  | Ry   Double ID
 
 data Stmt =
     Gate Primitive
@@ -62,6 +64,9 @@ countGates (Circuit _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
           T _      -> plus cnt [0,0,0,0,0,0,1,0]
           Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
           Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
+          Rx _ _   -> plus cnt [0,1,0,0,0,0,0,0]
+          Ry _ _   -> plus cnt [0,0,1,0,0,0,0,0]
+          Rz _ _   -> plus cnt [0,0,0,1,0,0,0,0]
 
 -- Transformations
 

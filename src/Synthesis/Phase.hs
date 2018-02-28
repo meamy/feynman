@@ -1,6 +1,16 @@
 module Synthesis.Phase where
 
 import Core
+import Data.Ratio
+
+data Angle = Discrete Dyadic | Continuous Double
+
+synthesizePhase :: ID -> Angle -> [Primitive]
+synthesizePhase x (Continuous theta) = [Rz theta x]
+synthesizePhase x (Discrete theta)
+  | numerator theta == 0 = []
+  | 
+
 
 minimalSequence :: ID -> Int -> [Primitive]
 minimalSequence x i = case i `mod` 8 of

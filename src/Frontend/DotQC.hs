@@ -78,6 +78,8 @@ inv gate@(Gate g i p) =
 inv gate@(ParamGate g i f p) =
   case g of
     "Rz"   -> ParamGate g i (-f) p
+    "Rx"   -> ParamGate g i (-f) p
+    "Ry"   -> ParamGate g i (-f) p
 
 simplify :: [Gate] -> [Gate]
 simplify circ =
@@ -149,6 +151,8 @@ gateToCliffordT (Gate g i p) =
 gateToCliffordT (ParamGate g i f p) =
   let circ = case (g, p) of
         ("Rz", [x]) -> [Rz f x]
+        ("Rx", [x]) -> [Rx f x]
+        ("Ry", [x]) -> [Ry f x]
   in
     concat $ genericReplicate i circ
 
@@ -169,6 +173,8 @@ gateFromCliffordT g = case g of
   CNOT x y -> Gate "tof" 1 [x, y]
   Swap x y -> Gate "swap" 1 [x, y]
   Rz f x   -> ParamGate "Rz" 1 f [x]
+  Rx f x   -> ParamGate "Rx" 1 f [x]
+  Ry f x   -> ParamGate "Ry" 1 f [x]
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
