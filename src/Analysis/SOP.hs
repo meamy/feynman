@@ -135,6 +135,19 @@ tryRestrict sop bra = foldl' f sop $ Map.keys bra
                 Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
                                   poly     = simplify . subst y psub $ poly sop,
                                   outVals  = Map.map (simplify . subst y psub) $ outVals sop }
+
+restrictGeneral :: (Eq a, Num a) => SOP a -> Map ID (Multilinear Bool) -> SOP a
+restrictGeneral sop bra = foldl' f sop $ Map.keys bra
+  where f sop x =
+          let x' = (outVals sop)!x in
+            if (simplify x') == (simplify $ bra!x)
+            then sop
+            else
+              case find ((`elem` (map pathVar $ pathVars sop)) . fst) $ solveForX (bra!x + x') of
+                Nothing        -> error $ "Can't reify " ++ (show $ bra!x + x') ++ " = 0"
+                Just (y, psub) -> sop { pathVars = pathVars sop \\ [read $ tail y],
+                                  poly     = simplify . subst y psub $ poly sop,
+                                  outVals  = Map.map (simplify . subst y psub) $ outVals sop }
       
 instance (Eq a, Num a) => Monoid (SOP a) where
   mempty  = identity0
@@ -263,6 +276,19 @@ isClosed = all not . Map.elems . inVals
 
 isKet :: SOP a -> Bool
 isKet = all ((< 1) . degree) . Map.elems . outVals
+
+expandPaths :: (Eq a, Num a) => SOP a -> [SOP a]
+expandPaths sop = case pathVars sop of
+      []   -> [sop]
+      x:xs ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant False) $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) (constant False)) $ outVals sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) (constant True) $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) (constant True)) $ outVals sop }
+        in
+          expandPaths sop0 ++ expandPaths sop1
 
 mapPaths :: (SOP Z8 -> Maybe DOmega) -> SOP Z8 -> Maybe DOmega
 mapPaths f sop
@@ -410,6 +436,7 @@ verifySpec spec vars inputs gates =
       True  -> Nothing
       False -> Just reduced
 
+{- Error in old version
 validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let hConj   = map H inputs
@@ -420,6 +447,18 @@ validate vars inputs c1 c2 =
     case reduced == blank (Map.keys $ inVals sop) of
       True  -> Nothing
       False -> trace ("Amplitude: " ++ (show $ cliffordTCrush sop ket ket)) Just reduced
+-}
+
+validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validate vars inputs c1 c2 =
+  let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
+      ket     = blank (vars \\ inputs)
+      bra     = Map.mapWithKey (\v b -> if b then ofVar v else constant False) $ inVals (ket <> sop)
+      reduced = reduce $ restrictGeneral (ket <> sop) bra
+  in
+    case reduced == (ket <> (identity vars)) of
+      True  -> Nothing
+      False -> Just reduced
 
 {- Tests -}
 
@@ -440,6 +479,17 @@ cT = [H "z", Sinv "x", CNOT "x" "y", CNOT "y" "z", CNOT "z" "x", T "x", Tinv "z"
       CNOT "y" "x", CNOT "y" "z", T "x", Tinv "z", CNOT "x" "z", H "x", T "x", H "x",
       CNOT "x" "z", Tinv "x", T "z", CNOT "y" "z", CNOT "y" "x", Tinv "x", T "z",
       CNOT "z" "x", CNOT "y" "z", CNOT "x" "y", S "x", H "z"]
+
+cHSpec x y = SOP {
+  sde      = 1,
+  inVals   = Map.fromList [(x, True), (y, True)],
+  pathVars = [0],
+  poly     = ofTerm (Z8 4) [x, y, pathVar 0],
+  outVals  = Map.fromList [(x, ofVar x), (y, ofVar y + ofTerm True [x, y] + ofTerm True [x, pathVar 0])]
+  }
+
+idHard x y = c ++ c
+  where c = [X x, Tinv y, Sinv y, H y, Tinv y, CNOT x y, X x, T y, H y, S y, T y, CNOT x y]
 
 -- toffoli gates
 toffoli :: ID -> ID -> ID -> [Primitive]
