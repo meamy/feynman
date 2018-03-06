@@ -4,7 +4,8 @@
 
 module Algebra.Linear where
 
-import Prelude hiding ((+), (*), (-), negate)
+import Prelude hiding ((+), (*), (-), (/))
+import qualified Prelude as Prelude
 import Algebra.Abstract
 
 import Data.List hiding (transpose)
@@ -61,15 +62,15 @@ instance Show F2Vec where
 
 {- Abelian instance coinciding with the vector space GF(2)^n -}
 instance Abelian F2Vec where
-  zero        = bitVec 32 0 -- Since we don't have type-level nats at the moment
-  (+)         = xor
-  (-)         = xor
-  negate      = id
-  pow i x     = if i `mod` 2 == 0 then bitVec (width x) 0 else x
+  zero    = bitVec 32 0 -- Since we don't have type-level nats at the moment
+  (+)     = xor
+  (-)     = xor
+  neg     = id
+  pow i x = if i `mod` 2 == 0 then bitVec (width x) 0 else x
 
 instance Ring F2Vec where
-  one         = bitVec 32 1
-  (*)         = (.&.)
+  one = bitVec 32 1
+  (*) = (.&.)
   
 instance Matroid F2Vec where
   independent s = (Set.size s) == (rank $ fromList $ Set.toList s)
@@ -393,7 +394,7 @@ toEchelonPMH width mat@(F2Mat m n vals) =
 
 toReducedEchelonPMH :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelonPMH mat =
-  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+  let width = (ceiling . (Prelude./ 2) . logBase 2.0 . fromIntegral) $ n mat in
     censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
 
 rank :: F2Mat -> Int
