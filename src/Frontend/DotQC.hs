@@ -23,7 +23,7 @@ type Nat = Word
  - but this is a nice quick solution -}
 data Gate =
     Gate ID Nat [ID]
-  | ParamGate ID Nat Double [ID] deriving (Eq)
+  | ParamGate ID Nat Angle [ID] deriving (Eq)
 
 data Decl = Decl { name   :: ID,
                    params :: [ID],
@@ -149,11 +149,11 @@ gateToCliffordT (Gate g i p) =
                             Tinv x, CNOT y z, CNOT z x, CNOT x y]
   in
     concat $ genericReplicate i circ
-gateToCliffordT (ParamGate g i f p) =
+gateToCliffordT (ParamGate g i theta p) =
   let circ = case (g, p) of
-        ("Rz", [x]) -> [Rz (Continuous f) x]
-        ("Rx", [x]) -> [Rx (Continuous f) x]
-        ("Ry", [x]) -> [Ry (Continuous f) x]
+        ("Rz", [x]) -> [Rz theta x]
+        ("Rx", [x]) -> [Rx theta x]
+        ("Ry", [x]) -> [Ry theta x]
   in
     concat $ genericReplicate i circ
 
@@ -173,11 +173,9 @@ gateFromCliffordT g = case g of
   Tinv x   -> Gate "T*" 1 [x]
   CNOT x y -> Gate "tof" 1 [x, y]
   Swap x y -> Gate "swap" 1 [x, y]
-  Rz f x   -> ParamGate "Rz" 1 (makeFloat f) [x]
-  Rx f x   -> ParamGate "Rx" 1 (makeFloat f) [x]
-  Ry f x   -> ParamGate "Ry" 1 (makeFloat f) [x]
-  where makeFloat (Continuous theta) = theta
-        makeFloat (Discrete theta)   = toDouble theta
+  Rz f x   -> ParamGate "Rz" 1 f [x]
+  Rx f x   -> ParamGate "Rx" 1 f [x]
+  Ry f x   -> ParamGate "Ry" 1 f [x]
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
@@ -240,9 +238,24 @@ parseID = try $ do
   if (c:cs) == "BEGIN" || (c:cs) == "END" then fail "" else return (c:cs)
 parseParams = sepEndBy (many1 alphaNum) (many1 sep) 
 
+parseDiscrete = do
+  numerator <- option 1 nat
+  string "pi"
+  string "/2^"
+  power <- int
+  return $ Discrete $ dyadic numerator (power+1)
+
+parseContinuous = floating2 True >>= return . Continuous
+
+parseAngle = do
+  char '('
+  theta <- sign <*> (parseDiscrete <|> parseContinuous)
+  char ')'
+  return theta
+
 parseGate = do
   name <- parseID
-  param <- optionMaybe (char '(' >> sign <*> (floating2 True >>= \f -> char ')' >> return f))
+  param <- optionMaybe parseAngle
   reps <- option 1 (char '^' >> nat)
   skipSpace
   params <- parseParams
