@@ -4,10 +4,6 @@
 
 module Algebra.Linear where
 
-import Prelude hiding ((+), (*), (-), (/))
-import qualified Prelude as Prelude
-import Algebra.Abstract
-
 import Data.List hiding (transpose)
 --import Data.Tuple
 import Control.Monad
@@ -60,17 +56,19 @@ instance Show F2Vec where
   show v = map (f . (v @.)) [0..width v - 1]
     where f b = if b then '1' else '0'
 
-{- Abelian instance coinciding with the vector space GF(2)^n -}
-instance Abelian F2Vec where
-  zero    = bitVec 32 0 -- Since we don't have type-level nats at the moment
-  (+)     = xor
-  (-)     = xor
-  neg     = id
-  pow i x = if i `mod` 2 == 0 then bitVec (width x) 0 else x
+{- Num instance coinciding with the vector space GF(2)^n -}
+instance Num F2Vec where
+  (+)         = xor
+  (*)         = (.&.)
+  (-)         = xor
+  negate      = id
+  abs         = id
+  signum      = id
+  fromInteger = bitVec 32 
 
-instance Ring F2Vec where
-  one = bitVec 32 1
-  (*) = (.&.)
+--zero    = bitVec 32 0
+--one = bitVec 32 1
+--pow i x = if i `mod` 2 == 0 then bitVec (width x) 0 else x
   
 instance Matroid F2Vec where
   independent s = (Set.size s) == (rank $ fromList $ Set.toList s)

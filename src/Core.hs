@@ -1,3 +1,4 @@
+{-# LANGUAGE Rank2Types #-}
 module Core where
 
 import Data.List
@@ -8,9 +9,43 @@ import qualified Data.Set as Set
 import Text.ParserCombinators.Parsec hiding (space)
 import Control.Monad
 
+import Algebra.Base
+
 type ID = String
 type Loc = Int
 
+{- Phase angles -}
+data Angle = Discrete Dyadic | Continuous Double deriving (Eq, Ord, Show)
+
+apply :: (forall a. Num a => a -> a) -> Angle -> Angle
+apply f (Discrete a)   = Discrete $ f a
+apply f (Continuous a) = Continuous $ f a
+
+apply2 :: (forall a. Num a => a -> a -> a) -> Angle -> Angle -> Angle
+apply2 f a b = case (a,b) of
+  (Discrete a, Discrete b)     -> Discrete $ f a b
+  (Discrete a, Continuous b)   -> Continuous $ f (toDouble a) b
+  (Continuous a, Discrete b)   -> Continuous $ f a (toDouble b)
+  (Continuous a, Continuous b) -> Continuous $ f a b
+
+instance Num Angle where
+  (+)         = apply2 (+)
+  (-)         = apply2 (-)
+  (*)         = apply2 (*)
+  negate      = apply negate
+  abs         = apply abs
+  signum      = apply signum
+  fromInteger = Discrete . fromInteger
+
+instance Abelian Angle where
+  zero  = Discrete zero
+  pow i = (fromInteger i +)
+
+instance Periodic Angle where
+  order (Discrete a)   = order a
+  order (Continuous _) = 0
+
+{- Circuits -}
 data Primitive =
     H    ID
   | X    ID
@@ -22,9 +57,9 @@ data Primitive =
   | T    ID
   | Tinv ID
   | Swap ID ID
-  | Rz   Double ID
-  | Rx   Double ID
-  | Ry   Double ID
+  | Rz   Angle ID
+  | Rx   Angle ID
+  | Ry   Angle ID
 
 data Stmt =
     Gate Primitive

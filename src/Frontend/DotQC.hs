@@ -12,7 +12,8 @@ import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
 import Control.Monad
 
-import Core (ID, Primitive(..), showLst)
+import Core (ID, Primitive(..), showLst, Angle(..))
+import Algebra.Base
 
 type Nat = Word
 --type ID = String
@@ -150,9 +151,9 @@ gateToCliffordT (Gate g i p) =
     concat $ genericReplicate i circ
 gateToCliffordT (ParamGate g i f p) =
   let circ = case (g, p) of
-        ("Rz", [x]) -> [Rz f x]
-        ("Rx", [x]) -> [Rx f x]
-        ("Ry", [x]) -> [Ry f x]
+        ("Rz", [x]) -> [Rz (Continuous f) x]
+        ("Rx", [x]) -> [Rx (Continuous f) x]
+        ("Ry", [x]) -> [Ry (Continuous f) x]
   in
     concat $ genericReplicate i circ
 
@@ -172,9 +173,11 @@ gateFromCliffordT g = case g of
   Tinv x   -> Gate "T*" 1 [x]
   CNOT x y -> Gate "tof" 1 [x, y]
   Swap x y -> Gate "swap" 1 [x, y]
-  Rz f x   -> ParamGate "Rz" 1 f [x]
-  Rx f x   -> ParamGate "Rx" 1 f [x]
-  Ry f x   -> ParamGate "Ry" 1 f [x]
+  Rz f x   -> ParamGate "Rz" 1 (makeFloat f) [x]
+  Rx f x   -> ParamGate "Rx" 1 (makeFloat f) [x]
+  Ry f x   -> ParamGate "Ry" 1 (makeFloat f) [x]
+  where makeFloat (Continuous theta) = theta
+        makeFloat (Discrete theta)   = toDouble theta
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT

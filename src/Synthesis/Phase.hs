@@ -1,41 +1,34 @@
 module Synthesis.Phase where
 
 import Core
-import Data.Ratio
-
-data Angle = Discrete Dyadic | Continuous Double
+import Algebra.Base
 
 synthesizePhase :: ID -> Angle -> [Primitive]
-synthesizePhase x (Continuous theta) = [Rz theta x]
-synthesizePhase x (Discrete theta)
-  | numerator theta == 0 = []
-  | 
+synthesizePhase x theta@(Continuous _) = [Rz theta x]
+synthesizePhase x theta@(Discrete (Dy (a,n)))
+  | a == 0 || n == 0 = []
+  | n == 1           = [Z x]
+  | n == 2 = case a `mod` 4 of
+      1 -> [S x]
+      3 -> [Sinv x]
+  | n == 3 = case a `mod` 8 of
+      1 -> [T x]
+      3 -> [Tinv x, Z x]
+      5 -> [T x, Z x]
+      7 -> [Tinv x]
+  | otherwise = [Rz theta x]
 
-
-minimalSequence :: ID -> Int -> [Primitive]
-minimalSequence x i = case i `mod` 8 of
-  0 -> []
-  1 -> [T x]
-  2 -> [S x]
-  3 -> [S x, T x]
-  4 -> [Z x]
-  5 -> [Z x, T x]
-  6 -> [Sinv x]
-  7 -> [Tinv x]
-
-globalPhase :: ID -> Int -> [Primitive]
-globalPhase x i = case i `mod` 8 of
-  0 -> []
-  1 -> [H x, S x, H x, S x, H x, S x]
-  2 -> [S x, X x, S x, X x]
-  3 -> [H x, S x, H x, S x, H x, Z x, X x, S x, X x]
-  4 -> [Z x, X x, Z x, X x]
-  5 -> [H x, S x, H x, S x, H x, Sinv x, X x, Z x, X x]
-  6 -> [Sinv x, X x, Sinv x, X x]
-  7 -> [H x, Sinv x, H x, Sinv x, H x, Sinv x]
-
-arbitraryAngle :: ID -> Double -> [Primitive]
-arbitraryAngle x p = [Rz p x]
-
-arbitraryAngleGlobal :: ID -> Double -> [Primitive]
-arbitraryAngleGlobal x p = [Rz p x, X x, Rz p x, X x]
+globalPhase :: ID -> Angle -> [Primitive]
+globalPhase x theta@(Continuous _) = [Rz theta x, X x, Rz theta x, X x]
+globalPhase x theta@(Discrete (Dy (a,n)))
+  | a == 0 || n == 0 = []
+  | n == 1           = [Z x, X x, Z x, X x]
+  | n == 2 = case a `mod` 4 of
+      1 -> [S x, X x, S x, X x]
+      3 -> [Sinv x, X x, Sinv x, X x]
+  | n == 3 = case a `mod` 8 of
+      1 -> [H x, S x, H x, S x, H x, S x]
+      3 -> [H x, S x, H x, S x, H x, Z x, X x, S x, X x]
+      5 -> [H x, S x, H x, S x, H x, Sinv x, X x, Z x, X x]
+      7 -> [H x, Sinv x, H x, Sinv x, H x, Sinv x]
+  | otherwise = [Rz theta x, X x, Rz theta x, X x]

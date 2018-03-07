@@ -20,6 +20,7 @@ import Debug.Trace
 
 
 import Core
+import Algebra.Base
 import Algebra.Linear
 import Algebra.Matroid
 import Synthesis.Phase
@@ -38,15 +39,15 @@ import Synthesis.Reversible.Gray
        
 {- TODO: Merge with phase folding eventually -}
 
-data AnalysisState a = SOP {
+data AnalysisState = SOP {
   dim     :: Int,
   ivals   :: Map ID (F2Vec, Bool),
   qvals   :: Map ID (F2Vec, Bool),
-  terms   :: Map F2Vec a,
-  phase   :: a
+  terms   :: Map F2Vec Angle,
+  phase   :: Angle
 } deriving Show
 
-type Analysis = State (AnalysisState Double)
+type Analysis = State AnalysisState
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
 getSt :: ID -> Analysis (F2Vec, Bool)
@@ -65,7 +66,7 @@ getSt v = do
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState Double -> Analysis [(F2Vec, Double)]
+exists :: ID -> AnalysisState -> Analysis [(F2Vec, Angle)]
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
@@ -79,10 +80,10 @@ exists v st@(SOP dim ivals qvals terms phase) =
     put $ SOP dim' vals vals terms'' phase
     return $ Map.toList orp
 
-updateQval :: ID -> (F2Vec, Bool) -> AnalysisState a -> AnalysisState a
+updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Num a => (F2Vec, Bool) -> a -> AnalysisState a -> AnalysisState a
+addTerm :: (F2Vec, Bool) -> Angle -> AnalysisState -> AnalysisState
 addTerm (bv, p) i st =
   case p of
     False -> st { terms = Map.alter (f i) bv $ terms st }
@@ -96,27 +97,27 @@ addTerm (bv, p) i st =
           Nothing -> Just $ i
  
 {-- The main analysis -}
-applyGate :: AffineSynthesizer Double -> [Primitive] -> Primitive -> Analysis [Primitive]
+applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGate synth gates g = case g of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm bv (pi/4.0)
+    modify $ addTerm bv (Discrete $ dyadic 1 3)
     return gates
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (-pi/4.0)
+    modify $ addTerm bv (Discrete $ dyadic 7 3)
     return gates
   S v      -> do
     bv <- getSt v
-    modify $ addTerm bv (pi/2.0)
+    modify $ addTerm bv (Discrete $ dyadic 1 2)
     return gates
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (-pi/2.0)
+    modify $ addTerm bv (Discrete $ dyadic 3 2)
     return gates
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm bv pi
+    modify $ addTerm bv (Discrete $ dyadic 1 1)
     return gates
   CNOT c t -> do
     (bvc, bc) <- getSt c
@@ -153,12 +154,12 @@ applyGate synth gates g = case g of
     orphans <- exists v st
     return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
 
-finalize :: AffineSynthesizer Double -> [Primitive] -> Analysis [Primitive]
+finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
   return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
     
-gtpar :: Synthesizer Double -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar osynth vars inputs gates =
   let synth = affineTrans osynth
       init = 

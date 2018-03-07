@@ -17,6 +17,7 @@ import Data.Bits
 
 
 import Core
+import Algebra.Base
 import Algebra.Linear
 import Synthesis.Phase
 
@@ -45,9 +46,9 @@ import Synthesis.Phase
 data AnalysisState = SOP {
   dim     :: Int,
   qvals   :: Map ID (F2Vec, Bool),
-  terms   :: Map F2Vec (Set (Loc, Bool), Int),
-  orphans :: [(Set (Loc, Bool), Int)],
-  phase   :: Int
+  terms   :: Map F2Vec (Set (Loc, Bool), Angle),
+  orphans :: [(Set (Loc, Bool), Angle)],
+  phase   :: Angle
 } deriving Show
 
 type Analysis = State AnalysisState
@@ -85,18 +86,18 @@ exists v st@(SOP dim qvals terms orphans phase) =
 updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
-addTerm :: Loc -> (F2Vec, Bool) -> Int -> AnalysisState -> AnalysisState
+addTerm :: Loc -> (F2Vec, Bool) -> Angle -> AnalysisState -> AnalysisState
 addTerm l (bv, p) i st =
   case p of
     False -> st { terms = Map.alter (f i) bv $ terms st }
     True  ->
-      let terms' = Map.alter (f $ (-i) `mod` 8) bv $ terms st
-          phase' = (phase st + i) `mod` 8
+      let terms' = Map.alter (f (-i)) bv $ terms st
+          phase' = phase st + i
       in
         st { terms = terms', phase = phase' }
   where f i oldt = case oldt of
-          Just (s, x) -> Just (Set.insert (l, p) s, x + i `mod` 8)
-          Nothing     -> Just (Set.singleton (l, p), i `mod` 8)
+          Just (s, x) -> Just (Set.insert (l, p) s, x + i)
+          Nothing     -> Just (Set.singleton (l, p), i)
  
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()
@@ -115,23 +116,23 @@ applyGate (X v, l) = do
 
 applyGate (T v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv 1
+  modify $ addTerm l bv (Discrete $ dyadic 1 3)
 
 applyGate (S v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv 2
+  modify $ addTerm l bv (Discrete $ dyadic 1 2)
 
 applyGate (Z v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv 4
+  modify $ addTerm l bv (Discrete $ dyadic 1 1)
 
 applyGate (Tinv v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv 7
+  modify $ addTerm l bv (Discrete $ dyadic 7 3)
 
 applyGate (Sinv v, l) = do
   bv <- getSt v
-  modify $ addTerm l bv 6
+  modify $ addTerm l bv (Discrete $ dyadic 3 2)
 
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
@@ -154,7 +155,7 @@ phaseFold vars inputs gates =
       f (gates, phase) (locs, exp) =
         let (i, phase', exp') = case choose locs of
               (i, False) -> (i, phase, exp)
-              (i, True)  -> (i, (phase + exp) `mod` 8, (-exp) `mod` 8)
+              (i, True)  -> (i, phase + exp, (-exp))
             getTarget gate = case gate of
               T x -> x
               S x -> x
@@ -163,7 +164,7 @@ phaseFold vars inputs gates =
               Sinv x -> x
             inSet j = any (\(l, _) -> j == l) $ Set.toList locs
             g x@(gate, j) xs
-              | j == i    = (zip (minimalSequence (getTarget gate) exp') (repeat i)) ++ xs
+              | j == i    = (zip (synthesizePhase (getTarget gate) exp') (repeat i)) ++ xs
               | inSet j   = xs
               | otherwise = x:xs
         in

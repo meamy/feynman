@@ -10,23 +10,24 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
 import Core
+import Algebra.Base
 import Algebra.Linear
 import Algebra.Matroid
 import Synthesis.Phase
 import Synthesis.Reversible
 
 -- The Matroid from the t-par paper [AMM2014]
-instance Matroid ((F2Vec, Int), Int) where
+instance Matroid ((F2Vec, Angle), Int) where
   independent s
     | Set.null s = True
     | otherwise  =
       let ((v, _), n) = head $ Set.toList s
           (vecs, exps) = unzip $ fst $ unzip $ Set.toList s
       in
-      (all (\i -> i `mod` 2 == 1) exps || all (\i -> i `mod` 2 == 0) exps)
+      (all ((8 <=) . order) exps || all ((8 >) . order) exps)
       && width v - rank (fromList vecs) <= n - (length vecs)
 
-tpar :: Synthesizer Int
+tpar :: Synthesizer
 tpar input output [] = linearSynth input output []
 tpar input output xs =
   let partition      = partitionAll (zip xs $ repeat $ length input)
@@ -46,7 +47,7 @@ synthPartition set (circ, input) =
         Exchange i j ->
           let (v, u) = (ids !! i, ids !! j) in
             [Swap v u]
-      g (n, i) = minimalSequence (ids !! i) n
+      g (n, i) = synthesizePhase (ids !! i) n
       perm = concatMap f rops
       phase = concatMap g (zip exps [0..])
       output = Map.fromList $ zip ids $ vals $ mult mat inp
@@ -54,4 +55,4 @@ synthPartition set (circ, input) =
     (circ++perm++phase, output)
 
 tparMore input output xs = tpar input output xs'
-  where xs' = filter (\(_, i) -> i `mod` 8 /= 0) xs
+  where xs' = filter (\(_, i) -> order i /= 1) xs
