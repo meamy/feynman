@@ -1,0 +1,18 @@
+# temporaries
+*~
+*.swp
+
+# executables
+feyn
+feyn-prof
+
+# folders
+dist/
+.cabal-sandbox/
+benchmarks/opt/
+
+# misc
+TAGS
+cabal.sandbox.config
+Setup*
+!Setup.hs
