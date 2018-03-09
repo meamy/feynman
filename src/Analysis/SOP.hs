@@ -674,3 +674,78 @@ threeT x y z anc =
   [CNOT x z, CNOT x anc, CNOT y z, T z, S anc, CNOT y z, CNOT x anc, CNOT x z] ++
   toffoli y z anc ++
   [CNOT x z, CNOT x y]
+
+minimalProductGate []     t = []
+minimalProductGate (c:[]) t = [CNOT c t]
+minimalProductGate (c:cs) t = tmp ++ minimalProductGate cs t ++ dagger tmp
+  where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+minimalProductGate1 []         t = []
+minimalProductGate1 (c:[])     t = [CNOT c t]
+minimalProductGate1 (c1:c2:[]) t =
+  [H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t]
+minimalProductGate1 (c:cs)     t = tmp ++ minimalProductGate1 cs t ++ dagger tmp
+  where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+minimalProductGate2 []         t = []
+minimalProductGate2 (c:[])     t = [CNOT c t]
+minimalProductGate2 (c1:c2:[]) t =
+  [S t, H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t, Sinv t]
+minimalProductGate2 (c:cs)     t = tmp ++ minimalProductGate2 cs t ++ dagger tmp
+  where tmp = [S t, H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+minimalProductGate3 []         t = []
+minimalProductGate3 (c:[])     t = [CNOT c t]
+minimalProductGate3 (c1:c2:[]) t =
+  [H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t]
+minimalProductGate3 (c:cs)     t = tmp ++ minimalProductGate3 cs t ++ dagger tmp
+  where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+minimalProductGate4 []     t = []
+minimalProductGate4 (c:[]) t = [CNOT c t]
+minimalProductGate4 (c:cs) t = tmp ++ minimalProductGate4 cs t ++ dagger tmp
+  where tmp = [S t, H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+minimalProductGate5 []     t = []
+minimalProductGate5 (c:[]) t = [CNOT c t]
+minimalProductGate5 (c:cs) t = tmp ++ minimalProductGate4 cs t ++ dagger tmp
+  where tmp = [S t, H t, CNOT t c, Tinv c, CNOT t c] 
+
+generalProductGate []     t = []
+generalProductGate (c:[]) t = [CNOT c t]
+generalProductGate (c:cs) t = [H t] ++ tmp ++ generalProductGate cs t ++ dagger tmp ++ dagger (generalProductGate cs t) ++ [H t]
+  where tmp = [CNOT t c, T t, Tinv c, CNOT t c] 
+
+generalProductGateN n []     t = []
+generalProductGateN n (c:[]) t = [CNOT c t]
+generalProductGateN n (c:cs) t
+  | n == 0    = generalProductGate (c:cs) t
+  | otherwise = tmp ++ generalProductGateN (n-1) cs t ++ dagger tmp
+  where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+fun0888 a b c d e anc = temp ++ [CNOT anc e] ++ dagger temp ++ [CNOT anc e]
+  where temp = minimalProductGate1 [d, c, b, a] anc
+
+fun7880 a b c d e anc = temp ++ [CNOT anc e] ++ dagger temp ++ [CNOT anc e] ++ (toffoli c d e)
+  where temp = minimalProductGate2 [d, c, b, a] anc
+
+fun00808080 a b c d e f anc = temp ++ [CNOT anc f] ++ dagger temp ++ [CNOT anc f]
+  where temp = generalProductGateN 2 [e, d, c, b, a] anc
+
+fun88a22a2a a b c d e f anc = temp ++ [CNOT anc f] ++ dagger temp ++ [CNOT anc f]
+  where temp = minimalProductGate [e, d, c, b, a] anc
+
+fun88088080 a b c d e f anc = temp ++ [CNOT anc f] ++ dagger temp ++ [CNOT anc f]
+  where temp = minimalProductGate1 [e, d, c, b, a] anc
+
+class8880 = fun0888
+
+classe880 = fun7880
+
+class80808000 = fun00808080
+fun0a000010   = class80808000
+
+classa8808000 = fun88a22a2a
+fun80088820   = classa8808000
+
+class88808080 = fun88088080
