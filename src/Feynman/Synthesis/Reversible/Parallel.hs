@@ -1,4 +1,11 @@
-module Synthesis.Reversible.Parallel where
+module Feynman.Synthesis.Reversible.Parallel where
+
+import Feynman.Core
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Algebra.Matroid
+import Feynman.Synthesis.Phase
+import Feynman.Synthesis.Reversible
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -8,13 +15,6 @@ import qualified Data.Set as Set
 
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
-
-import Core
-import Algebra.Base
-import Algebra.Linear
-import Algebra.Matroid
-import Synthesis.Phase
-import Synthesis.Reversible
 
 -- The Matroid from the t-par paper [AMM2014]
 instance Matroid ((F2Vec, Angle), Int) where

@@ -1,5 +1,7 @@
 {-# LANGUAGE Rank2Types #-}
-module Core where
+module Feynman.Core where
+
+import Feynman.Algebra.Base
 
 import Data.List
 
@@ -11,8 +13,6 @@ import qualified Data.Map as Map
 
 import Text.ParserCombinators.Parsec hiding (space)
 import Control.Monad
-
-import Algebra.Base
 
 type ID = String
 type Loc = Int

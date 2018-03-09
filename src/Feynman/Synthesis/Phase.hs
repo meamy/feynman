@@ -1,7 +1,7 @@
-module Synthesis.Phase where
+module Feynman.Synthesis.Phase where
 
-import Core
-import Algebra.Base
+import Feynman.Core
+import Feynman.Algebra.Base
 
 synthesizePhase :: ID -> Angle -> [Primitive]
 synthesizePhase x theta@(Continuous _) = [Rz theta x]

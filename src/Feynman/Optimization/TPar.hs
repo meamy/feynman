@@ -1,4 +1,13 @@
-module Optimization.TPar where
+module Feynman.Optimization.TPar where
+
+import Feynman.Core
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Algebra.Matroid
+import Feynman.Synthesis.Phase
+import Feynman.Synthesis.Reversible
+import Feynman.Synthesis.Reversible.Parallel
+import Feynman.Synthesis.Reversible.Gray
 
 import Data.List hiding (transpose)
 import Data.Ord (comparing)
@@ -18,16 +27,6 @@ import Data.Graph.Inductive.Query.DFS
 import Data.Bits
 
 import Debug.Trace
-
-
-import Core
-import Algebra.Base
-import Algebra.Linear
-import Algebra.Matroid
-import Synthesis.Phase
-import Synthesis.Reversible
-import Synthesis.Reversible.Parallel
-import Synthesis.Reversible.Gray
 
 {-- Generalized T-par -}
 {-  The idea is to traverse the circuit, tracking the phases,

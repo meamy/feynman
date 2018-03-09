@@ -1,4 +1,4 @@
-module Algebra.Base where
+module Feynman.Algebra.Base where
 
 import Data.Ratio
 

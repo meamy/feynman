@@ -1,6 +1,12 @@
 {-# LANGUAGE TupleSections #-}
 module Main (main) where
 
+import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
+import Feynman.Frontend.DotQC
+import Feynman.Optimization.PhaseFold
+import Feynman.Optimization.TPar
+import Feynman.Verification.SOP
+
 import System.Environment
 
 import Data.List
@@ -14,12 +20,6 @@ import qualified Data.Map as Map
 import Control.Monad
 import System.Time
 import Control.DeepSeq
-
-import Frontend.DotQC
-import Optimization.PhaseFold
-import Optimization.TPar
-import Verification.SOP
-import Core (Primitive(CNOT, T, Tinv), ID)
 
 import Benchmarks
 

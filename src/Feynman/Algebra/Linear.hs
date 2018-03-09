@@ -2,7 +2,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE BangPatterns #-}
 
-module Algebra.Linear where
+module Feynman.Algebra.Linear where
+
+import Feynman.Algebra.Matroid
 
 import Data.List hiding (transpose)
 --import Data.Tuple
@@ -19,8 +21,6 @@ import Data.Coerce
 
 import Data.Bits
 import qualified Data.BitVector as BitVector
-
-import Algebra.Matroid
 
 import Test.QuickCheck hiding ((.&.))
 

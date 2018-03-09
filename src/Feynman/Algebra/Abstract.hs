@@ -3,7 +3,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Algebra.Abstract where
+module Feynman.Algebra.Abstract where
 
 import Prelude hiding ((+), (*), (-), (/))
 import qualified Prelude as Prelude

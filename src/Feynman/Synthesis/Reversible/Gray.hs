@@ -1,4 +1,10 @@
-module Synthesis.Reversible.Gray where
+module Feynman.Synthesis.Reversible.Gray where
+
+import Feynman.Core
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Synthesis.Phase
+import Feynman.Synthesis.Reversible
 
 import Data.List hiding (transpose)
 
@@ -14,13 +20,6 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
 import Data.Bits
-
-import Algebra.Base
-
-import Algebra.Linear
-import Synthesis.Phase
-import Synthesis.Reversible
-import Core
 
 {- Gray code synthesis -}
 data Pt = Pt {

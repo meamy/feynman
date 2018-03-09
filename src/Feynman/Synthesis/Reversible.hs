@@ -1,4 +1,9 @@
-module Synthesis.Reversible where
+module Feynman.Synthesis.Reversible where
+
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Synthesis.Phase
+import Feynman.Core
 
 import Data.List hiding (transpose)
 import Data.Tuple (swap)
@@ -12,11 +17,6 @@ import qualified Data.Set as Set
 
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
-
-import Algebra.Base
-import Algebra.Linear
-import Synthesis.Phase
-import Core
 
 type AffineSynthesizer     = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
 type Synthesizer           = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]

@@ -1,4 +1,9 @@
-module Optimization.PhaseFold where
+module Feynman.Optimization.PhaseFold where
+
+import Feynman.Core
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Synthesis.Phase
 
 import Data.List hiding (transpose)
 
@@ -14,12 +19,6 @@ import Data.Graph.Inductive as Graph
 import Data.Graph.Inductive.Query.DFS
 
 import Data.Bits
-
-
-import Core
-import Algebra.Base
-import Algebra.Linear
-import Synthesis.Phase
 
 {-- Phase folding optimization -}
 {- We have two options for implementation here:

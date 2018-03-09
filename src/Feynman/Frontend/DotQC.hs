@@ -1,4 +1,7 @@
-module Frontend.DotQC where
+module Feynman.Frontend.DotQC where
+
+import Feynman.Core (ID, Primitive(..), showLst, Angle(..))
+import Feynman.Algebra.Base
 
 import Data.List
 
@@ -11,9 +14,6 @@ import qualified Data.Map.Strict as Map
 import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
 import Control.Monad
-
-import Core (ID, Primitive(..), showLst, Angle(..))
-import Algebra.Base
 
 type Nat = Word
 
