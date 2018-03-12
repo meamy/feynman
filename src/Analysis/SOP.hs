@@ -436,19 +436,6 @@ verifySpec spec vars inputs gates =
       True  -> Nothing
       False -> Just reduced
 
-{- Error in old version
-validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
-validate vars inputs c1 c2 =
-  let hConj   = map H inputs
-      ket     = Map.fromList [(v, False) | v <- Map.keys (inVals sop)]
-      sop     = circuitSOPWithHints vars (hConj ++ c1 ++ dagger c2 ++ hConj)
-      reduced = evaluate sop ket ket
-  in
-    case reduced == blank (Map.keys $ inVals sop) of
-      True  -> Nothing
-      False -> trace ("Amplitude: " ++ (show $ cliffordTCrush sop ket ket)) Just reduced
--}
-
 validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
@@ -749,3 +736,47 @@ classa8808000 = fun88a22a2a
 fun80088820   = classa8808000
 
 class88808080 = fun88088080
+
+{- Clifford identities -}
+
+-- Defined gates
+omega x = [T x, X x, T x, X x]
+
+c1 x = concat $ replicate 8 (omega x)
+  
+c2 x = [H x, H x]
+c3 x = [S x, S x, S x, S x]
+c4 x = [S x, H x, S x, H x, S x] ++ dagger (omega x)
+
+c5  x y = cz x y ++ cz x y
+c6  x y = [S x] ++ cz x y ++ [Sinv x] ++ cz x y
+c7  x y = [S y] ++ cz x y ++ [Sinv y] ++ cz x y
+c8  x y = [H x, S x, S x, H x] ++ cz x y ++ [H x, Sinv x, Sinv x, Sinv y, H x, Sinv y] ++ cz x y
+c9  x y = [H y, S y, S y, H y] ++ cz x y ++ [H y, Sinv y, Sinv y, Sinv x, H y, Sinv x] ++ cz x y
+c10 x y = cz x y ++ [H x] ++ cz x y ++ omega x ++ [Sinv x, H x, Sinv x, Sinv y] ++ cz x y ++ [H x, Sinv x]
+c11 x y = cz x y ++ [H y] ++ cz x y ++ omega x ++ [Sinv y, H y, Sinv y, Sinv x] ++ cz x y ++ [H y, Sinv y]
+
+c12 x y z = cz y z ++ cz x y ++ cz y z ++ cz x y
+c13 x y z =
+  cz x y ++ [H x, H y] ++ cz x y ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y ++ [H x, H y] ++ cz x y ++
+  cz y z ++ [H y, H z] ++ cz y z ++ [H x, H y] ++ cz x y ++ [H x, H y] ++ cz y z ++ [H y, H z] ++ cz y z
+c14 x y z =
+  cz x y ++ [H x, H y] ++ cz x y ++ [H x, H y] ++ cz y z ++
+  cz x y ++ [H x, H y] ++ cz x y ++ [H x, H y] ++ cz y z ++
+  cz x y ++ [H x, H y] ++ cz x y ++ [H x, H y] ++ cz y z
+c15 x y z =
+  cz y z ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y ++
+  cz y z ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y ++
+  cz y z ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y
+
+verifyClifford _ = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
+  where onequbit   = mapSnds ($ "x") [("c1", c1), ("c2", c2), ("c3", c3), ("c4", c4)]
+        twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("c5", c5), ("c6", c6), ("c7", c7), ("c8", c8),
+                                                          ("c9", c9), ("c10", c10), ("c11", c11)]
+        threequbit = mapSnds ($ "z") . mapSnds ($ "y") . mapSnds ($ "x") $ [("c12", c12), ("c13", c13),
+                                                                            ("c14", c14), ("c15", c15)]
+        f (name, c) = case validate ["x", "y", "z"] ["x", "y", "z"] c [] of
+          Nothing -> return ()
+          _       -> putStrLn $ "Error: failed to verify " ++ name
+        mapSnds f xs    = map (mapSnd f) xs
+        mapSnd f (a, b) = (a, f b)
