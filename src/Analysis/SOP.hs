@@ -653,6 +653,19 @@ hiddenShift n alternations = do
   where n2 = n `div` 2
         vars = ["x" ++ show i | i <- [0..n-1]]
 
+hiddenShiftQuantum :: Int -> Int -> Gen [Primitive]
+hiddenShiftQuantum n alternations = do
+  g <- genMaioranaG (take n2 vars) alternations
+  let hTrans = map H vars
+      xTrans = [CNOT ("y" ++ show i) ("x" ++ show i) | i <- [0..n-1]]
+      cTrans = concat [cz (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
+      sub = Map.fromList $ zip (take n2 vars) (drop n2 vars)
+      f' = (Syntax.subst sub g) ++ cTrans
+      f  = xTrans ++ g ++ cTrans ++ xTrans
+  return $ hTrans ++ f ++ hTrans ++ f' ++ hTrans
+  where n2 = n `div` 2
+        vars = ["x" ++ show i | i <- [0..n-1]]
+
 -- More tests
 
 threeT x y z anc =
@@ -746,7 +759,7 @@ c1 x = concat $ replicate 8 (omega x)
   
 c2 x = [H x, H x]
 c3 x = [S x, S x, S x, S x]
-c4 x = [S x, H x, S x, H x, S x] ++ dagger (omega x)
+c4 x = [S x, H x, S x, H x, S x, H x] ++ dagger (omega x)
 
 c5  x y = cz x y ++ cz x y
 c6  x y = [S x] ++ cz x y ++ [Sinv x] ++ cz x y
@@ -776,7 +789,7 @@ verifyClifford _ = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
         threequbit = mapSnds ($ "z") . mapSnds ($ "y") . mapSnds ($ "x") $ [("c12", c12), ("c13", c13),
                                                                             ("c14", c14), ("c15", c15)]
         f (name, c) = case validate ["x", "y", "z"] ["x", "y", "z"] c [] of
-          Nothing -> return ()
-          _       -> putStrLn $ "Error: failed to verify " ++ name
+          Nothing -> putStrLn $ "Verified relation " ++ name
+          _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
         mapSnd f (a, b) = (a, f b)

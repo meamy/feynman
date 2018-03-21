@@ -63,7 +63,10 @@ firstVar = Set.elemAt 0
 {- Multi-linear polynomials -}
 data Multilinear a = Multilinear {
   terms :: !(Map Monomial a)
-  } deriving (Eq)
+  }
+
+instance (Eq a, Num a) => Eq (Multilinear a) where
+  p == q = terms (simplify p) == terms (simplify q)
 
 instance (Eq a, Num a, Show a) => Show (Multilinear a) where
   show p@(Multilinear terms)
