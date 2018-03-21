@@ -62,6 +62,19 @@ identity vars = SOP {
   outVals  = Map.fromList $ zip vars [ofVar v | v <- vars]
   }
 
+identityTrans :: Map ID Bool -> SOP a
+identityTrans inp = SOP {
+  sde      = 0,
+  inVals   = inp,
+  pathVars = [],
+  poly     = zero,
+  outVals  =
+      let f v False = zero
+          f v True  = ofVar v
+      in
+        Map.mapWithKey f inp
+  }
+
 blank :: [ID] -> SOP a
 blank vars = SOP {
   sde      = 0,
@@ -282,8 +295,8 @@ expandPaths sop = case pathVars sop of
       []   -> [sop]
       x:xs ->
         let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant False) $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) (constant False)) $ outVals sop }
+                         poly = simplify . subst (pathVar x) zero $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
             sop1 = sop { pathVars = xs,
                          poly = simplify . subst (pathVar x) (constant True) $ poly sop,
                          outVals = Map.map (simplify . subst (pathVar x) (constant True)) $ outVals sop }
@@ -298,7 +311,7 @@ mapPaths f sop
       []   -> Just $ scaledExp (sde sop) (getConstant $ poly sop)
       x:xs ->
         let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant False) $ poly sop }
+                         poly = simplify . subst (pathVar x) zero $ poly sop }
             sop1 = sop { pathVars = xs,
                          poly = simplify . subst (pathVar x) (constant True) $ poly sop }
         in
@@ -309,7 +322,7 @@ mapPathsUnsafe f sop = case pathVars sop of
       []   -> scaledExp (sde sop) (getConstant $ poly sop)
       x:xs ->
         let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant False) $ poly sop }
+                         poly = simplify . subst (pathVar x) zero $ poly sop }
             sop1 = sop { pathVars = xs,
                          poly = simplify . subst (pathVar x) (constant True) $ poly sop }
         in
@@ -427,12 +440,10 @@ cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
 
 verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
 verifySpec spec vars inputs gates =
-  let hConj   = map H inputs
-      init    = blank vars
-      sop     = circuitSOPWithHints vars (hConj ++ (dagger gates) ++ hConj)
-      reduced = reduce (init <> sop <> spec)
+  let sop     = circuitSOPWithHints vars (dagger gates)
+      reduced = reduce $ (spec <> sop)
   in
-    case reduced == init of
+    case reduced == identityTrans (inVals spec) of
       True  -> Nothing
       False -> Just reduced
 
@@ -440,7 +451,7 @@ validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
 validate vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
       ket     = blank (vars \\ inputs)
-      bra     = Map.mapWithKey (\v b -> if b then ofVar v else constant False) $ inVals (ket <> sop)
+      bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
       reduced = reduce $ restrictGeneral (ket <> sop) bra
   in
     case reduced == (ket <> (identity vars)) of
@@ -475,8 +486,6 @@ cHSpec x y = SOP {
   outVals  = Map.fromList [(x, ofVar x), (y, ofVar y + ofTerm True [x, y] + ofTerm True [x, pathVar 0])]
   }
 
-idHard x y = c ++ c
-  where c = [X x, Tinv y, Sinv y, H y, Tinv y, CNOT x y, X x, T y, H y, S y, T y, CNOT x y]
 
 -- toffoli gates
 toffoli :: ID -> ID -> ID -> [Primitive]
@@ -489,15 +498,6 @@ toffoli x y z =
     Tinv x,
     CNOT y z, CNOT z x, CNOT x y,
     H z ]
-
-toffoliSpec :: ID -> ID -> ID -> SOP Z8
-toffoliSpec x y z = SOP {
-  sde      = 0,
-  inVals   = (Map.fromList [(x, True), (y, True), (z, True)]),
-  pathVars = [],
-  poly     = zero,
-  outVals   = (Map.fromList [(x, ofVar x), (y, ofVar y), (z, ofVar z + ofTerm True [x,y])])
-  }
 
 toffoliN :: [ID] -> [Primitive]
 toffoliN = go 0
@@ -519,99 +519,84 @@ toffoliNSpec xs = SOP {
   poly     = zero,
   outVals  = Map.insert (last xs) product outInit
   }
-  where anc     = ["_anc" ++ show i | i <- [0..length xs - 3]]
+  where anc     = ["_anc" ++ show i | i <- [0..length xs - 4]]
         product = ofVar (last xs) + ofTerm True (init xs)
-        outInit = Map.fromList $ [(x, ofVar x) | x <- xs] ++ [(y, constant False) | y <- anc]
+        outInit = Map.fromList $ [(x, ofVar x) | x <- xs] ++ [(y, zero) | y <- anc]
 
-verifyToffoliN :: Int -> Maybe (SOP Z8)
-verifyToffoliN n = verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs)
+verifyToffoliN n =
+  case verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs) of
+    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit Toffoli"
+    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit Toffoli"
   where inputs = take n $ map (\i -> [i]) ['a'..]
-        vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-3]]
+        vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
 -- General product gates
-lst = [[x] | x <- ['a'..]]
+rToffoli4 w x y z =
+  let conj = [H z, T z, CNOT y z, Tinv z, H z] in
+    conj ++ [CNOT w z, T z, CNOT x z, Tinv z, CNOT w z, T z, CNOT x z, Tinv z] ++ conj
 
-genproduct :: [ID] -> [Primitive]
-genproduct []       = []
-genproduct (x:[])   = []
-genproduct (x:z:[]) = [CNOT x z]
-genproduct (x:xs)   =
-  let z    = last xs
-      conj = [CNOT z x, T z, Tinv x, CNOT z x]
-  in
-    [H z] ++ conj ++ genproduct xs ++ dagger conj ++ [H z]
-
-testprod i = reduce $ circuitSOPWithHints (take i lst) $ genproduct (reverse $ take i lst)
-
-genproduct1 :: [ID] -> [Primitive]
-genproduct1 []         = []
-genproduct1 (x:[])     = []
-genproduct1 (x:z:[])   = [CNOT x z]
-genproduct1 (x:y:z:[]) =
-  let conj = [CNOT z x, T z, Tinv x, CNOT z x] in
-    [H z] ++ conj ++ [CNOT y z] ++ dagger conj ++ [CNOT y z, H z]
-genproduct1 (x:xs)     =
-  let z    = last xs
-      conj = [CNOT z x, T z, Tinv x, CNOT z x]
-  in
-    [H z] ++ conj ++ genproduct1 xs ++ dagger conj ++ [H z]
-
-testprod1 i = reduce $ circuitSOPWithHints (take i lst) $ genproduct1 (reverse $ take i lst)
-
-reltoff :: [ID] -> [Primitive]
-reltoff []       = []
-reltoff (x:[])   = []
-reltoff (x:z:[]) = [CNOT x z]
-reltoff (x:xs)   =
-  let z    = last xs
-      conj = [CNOT z x, T z, Tinv x, CNOT z x]
-      spro = reltoff xs
-      --corr = reltoff $ tail xs
-  in
-    [H z] ++ conj ++ spro ++ dagger conj ++ dagger spro ++ [H z]
-
-testrel i = reduce $ circuitSOPWithHints (take i lst) $ reltoff (reverse $ take i lst)
-
-toffoliNOneAnc :: [ID] -> [Primitive]
-toffoliNOneAnc []         = []
-toffoliNOneAnc (x:[])     = []
-toffoliNOneAnc (x:z:[])   = [CNOT x z]
-toffoliNOneAnc (x:y:z:[]) = toffoli x y z
-toffoliNOneAnc l@(x:y:xs) =
-  let anc = "_anc" ++ show 0
-      pp1 = genproduct $ init l ++ [anc]
-      pp2 = genproduct $ init xs ++ [anc]
-  in
-    pp1 ++ pp2 ++ [CNOT anc (last xs)] ++ (dagger pp2) ++ (dagger pp1)
-
-maslov :: [ID] -> [Primitive]
-maslov = go 0
+maslovToffoli :: [ID] -> [Primitive]
+maslovToffoli = go 0
   where go i []         = []
         go i (w:[])     = []
         go i (w:z:[])   = [CNOT w z]
         go i (w:x:z:[]) = toffoli w x z
         go i (w:x:y:xs) =
           let anc = "_anc" ++ show i
-              sub = genproduct1 [w,x,y,anc]
+              sub = rToffoli4 w x y anc
           in
             sub ++ go (i+1) (anc:xs) ++ (dagger sub)
 
-testmaslov i = reduce $ circuitSOPWithHints (take i lst ++ ["_anc" ++ show j | j <- [0..i-3]]) $ maslov (reverse $ take i lst)
-
-verifyMaslovN :: Int -> Maybe (SOP Z8)
-verifyMaslovN n = verifySpec (toffoliNSpec inputs) vars inputs (maslov inputs)
+verifyMaslovN n =
+  case verifySpec (toffoliNSpec inputs) vars inputs (maslovToffoli inputs) of
+    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit Toffoli (Maslov)"
+    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit Toffoli (Maslov)"
   where inputs = take n $ map (\i -> [i]) ['a'..]
-        vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-3]]
+        vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
-{-
-relToff4 :: ID -> ID -> ID -> ID -> [Primitive]
-relToff4 w x y z =
-  [ H z,
-    CNOT z y,
-    T z,
-    Tinv y,
-    CNOT z y,
--}
+{- Adders -}
+
+carryRipple n a b c =
+  let anc          = ["_anc" ++ show i | i <- [0..n-1]]
+      carry        = ["_carry" ++ show i | i <- [0..n-1]]
+      maj a b c c' = [CNOT b c] ++ toffoli a c c' ++ [CNOT b c] ++ toffoli b c c'
+      plus a b c d = [CNOT a d, CNOT b d, CNOT c d]
+      compute      = [CNOT (a!!0) (anc!!0), CNOT (b!!0) (anc!!0)] ++
+                     concatMap (\i -> maj (a!!i) (b!!i) (carry!!i) (carry!!(i+1)) ++
+                                      plus (a!!(i+1)) (b!!(i+1)) (carry!!(i+1)) (anc!!(i+1))) [0..n-2]
+      copy         = map (\i -> CNOT (anc!!i) (c!!i)) [0..n-1]
+  in
+    compute ++ copy ++ (dagger compute)
+
+adderOOPSpec :: Int -> [ID] -> [ID] -> [ID] -> SOP Z8
+adderOOPSpec n a b c = SOP {
+  sde      = 0,
+  inVals   = Map.fromList $ [(v, True) | v <- a ++ b ++ c] ++ [(v, False) | v <- anc ++ carry],
+  pathVars = [],
+  poly     = zero,
+  outVals  = snd $ foldl' f (zero, constOuts) [0..n-1]
+  }
+  where anc          = ["_anc" ++ show i | i <- [0..n-1]]
+        carry        = ["_carry" ++ show i | i <- [0..n-1]]
+        constOuts    = Map.fromList $ [(v, ofVar v) | v <- a ++ b] ++ [(v, zero) | v <- anc ++ carry]
+        f (carry, map) i =
+          let ai = ofVar $ (a!!i)
+              bi = ofVar $ (b!!i)
+              ci = ofVar $ (c!!i)
+          in
+            (ai*carry + bi*carry + ai*bi, Map.insert (c!!i) (ci + carry + ai + bi) map)
+  
+verifyOOPAdder n =
+  case verifySpec (adderOOPSpec n a b c) (a ++ b ++ c ++ anc ++ carry) (a ++ b ++ c) (carryRipple n a b c) of
+    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit adder"
+    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit adder"
+  where a = ["a" ++ show i | i <- [0..n-1]]
+        b = ["b" ++ show i | i <- [0..n-1]]
+        c = ["c" ++ show i | i <- [0..n-1]]
+        anc   = ["_anc" ++ show i | i <- [0..n-1]]
+        carry = ["_carry" ++ show i | i <- [0..n-1]]
+
+{- Hidden shift algorithm -}
 
 genCCZ :: [String] -> Gen [Primitive]
 genCCZ xs = do
@@ -666,14 +651,44 @@ hiddenShiftQuantum n alternations = do
   where n2 = n `div` 2
         vars = ["x" ++ show i | i <- [0..n-1]]
 
--- More tests
+hiddenShiftSpec :: Int -> [String] -> SOP Z8
+hiddenShiftSpec n string = SOP {
+  sde      = 0,
+  inVals   = Map.fromList [("x" ++ show i, False) | i <- [0..n-1]],
+  pathVars = [],
+  poly     = zero,
+  outVals  =
+     let f v = (v, if v `elem` string then constant True else zero) in
+       Map.fromList $ map f ["x" ++ show i | i <- [0..n-1]]
+  }
 
-threeT x y z anc =
-  [CNOT x y, CNOT x z] ++
-  toffoli y z anc ++
-  [CNOT x z, CNOT x anc, CNOT y z, T z, S anc, CNOT y z, CNOT x anc, CNOT x z] ++
-  toffoli y z anc ++
-  [CNOT x z, CNOT x y]
+hiddenShiftQuantumSpec :: Int -> SOP Z8
+hiddenShiftQuantumSpec n = SOP {
+  sde      = 0,
+  inVals   = Map.fromList $ [("x" ++ show i, False) | i <- [0..n-1]] ++
+                            [("y" ++ show i, True)  | i <- [0..n-1]],
+  pathVars = [],
+  poly     = zero,
+  outVals  = Map.fromList $ [("x" ++ show i, ofVar ("y" ++ show i)) | i <- [0..n-1]] ++
+                            [("y" ++ show i, ofVar ("y" ++ show i)) | i <- [0..n-1]]
+  }
+
+verifyHiddenShift n a = do
+  (circ, string) <- generate $ hiddenShift n a
+  case verifySpec (hiddenShiftSpec n string) vars [] circ of
+    Nothing -> putStrLn $ "Successfully verified hidden shift"
+    Just _  -> putStrLn $ "ERROR: failed to verify hidden shift"
+  where vars   = ["x" ++ show i | i <- [0..n-1]]
+
+verifyHiddenShiftQuantum n a = do
+  circ <- generate $ hiddenShiftQuantum n a
+  case verifySpec (hiddenShiftQuantumSpec n) vars inputs circ of
+    Nothing -> putStrLn $ "Successfully verified full hidden shift"
+    Just _  -> putStrLn $ "ERROR: failed to verify full hidden shift"
+  where vars   = ["x" ++ show i | i <- [0..n-1]] ++ inputs
+        inputs = ["y" ++ show i | i <- [0..n-1]]
+
+{- Circuit designs -}
 
 minimalProductGate []     t = []
 minimalProductGate (c:[]) t = [CNOT c t]
@@ -683,14 +698,16 @@ minimalProductGate (c:cs) t = tmp ++ minimalProductGate cs t ++ dagger tmp
 minimalProductGate1 []         t = []
 minimalProductGate1 (c:[])     t = [CNOT c t]
 minimalProductGate1 (c1:c2:[]) t =
-  [H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t]
+  [H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1,
+   T c1, Tinv t, CNOT t c1, CNOT c2 t, H t]
 minimalProductGate1 (c:cs)     t = tmp ++ minimalProductGate1 cs t ++ dagger tmp
   where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
 
 minimalProductGate2 []         t = []
 minimalProductGate2 (c:[])     t = [CNOT c t]
 minimalProductGate2 (c1:c2:[]) t =
-  [S t, H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t, CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t, Sinv t]
+  [S t, H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t,
+   CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t, Sinv t]
 minimalProductGate2 (c:cs)     t = tmp ++ minimalProductGate2 cs t ++ dagger tmp
   where tmp = [S t, H t, CNOT t c, T t, Tinv c, CNOT t c] 
 
@@ -713,7 +730,8 @@ minimalProductGate5 (c:cs) t = tmp ++ minimalProductGate4 cs t ++ dagger tmp
 
 generalProductGate []     t = []
 generalProductGate (c:[]) t = [CNOT c t]
-generalProductGate (c:cs) t = [H t] ++ tmp ++ generalProductGate cs t ++ dagger tmp ++ dagger (generalProductGate cs t) ++ [H t]
+generalProductGate (c:cs) t =
+  [H t] ++ tmp ++ generalProductGate cs t ++ dagger tmp ++ dagger (generalProductGate cs t) ++ [H t]
   where tmp = [CNOT t c, T t, Tinv c, CNOT t c] 
 
 generalProductGateN n []     t = []
@@ -789,7 +807,47 @@ verifyClifford _ = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
         threequbit = mapSnds ($ "z") . mapSnds ($ "y") . mapSnds ($ "x") $ [("c12", c12), ("c13", c13),
                                                                             ("c14", c14), ("c15", c15)]
         f (name, c) = case validate ["x", "y", "z"] ["x", "y", "z"] c [] of
-          Nothing -> putStrLn $ "Verified relation " ++ name
+          Nothing -> putStrLn $ "Successfully verified relation " ++ name
+          _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
+        mapSnds f xs    = map (mapSnd f) xs
+        mapSnd f (a, b) = (a, f b)
+
+{- Clifford+T identities -}
+
+-- Defined gates
+tx x = [H x, T x, H x]
+ty x = [S x] ++ tx x ++ [Sinv x]
+
+t1 x = concat $ replicate 8 (omega x)
+
+t2 x = [H x, H x]
+t3 x = concat $ replicate 8 [T x]
+t4 x = [H x] ++ tx x ++ [H x, Tinv x]
+t5 x = [H x] ++ ty x ++ [Z x] ++ (dagger $ ty x)
+t6 x = [H x, T x, H x] ++ (dagger $ tx x)
+t7 x = [S x] ++ tx x ++ [Sinv x] ++ (dagger $ ty x)
+t8 x = [S x] ++ ty x ++ [Z x, H x, Sinv x] ++ (dagger $ tx x)
+t9 x = [S x, T x, Sinv x, Tinv x]
+
+t10 x y = [T x] ++ cz x y ++ [Tinv x] ++ cz x y
+t11 x y = [CNOT x y, CNOT y x, T x, CNOT y x, CNOT x y, Tinv y]
+t12 x y = c ++ c
+  where c = [X x, Tinv y, Sinv y, H y, Tinv y, CNOT x y, X x, T y, H y, S y, T y, CNOT x y]
+t13 x y = c ++ c
+  where c = [CNOT x y, X x, T y, H y, T y, H y, Tinv y, CNOT x y, X x, T y, H y, Tinv y, H y, Tinv y]
+t14 x y =
+  [X x, CNOT x y, X x, T y, H y, T y, H y, Tinv y, CNOT x y, Sinv x, T y, H x, H y, Tinv x, S y, Tinv y,
+   X y, CNOT y x, X y, T x, H x, T x, H x, Tinv x, CNOT y x, T x, T y, H x, Sinv y, S x, H y, Tinv x, Tinv y,
+   CNOT x y, T y, H y, Tinv y, H y, Tinv y, X x, CNOT x y, X x, T y, T x, H y, Sinv x, S y, H x, Tinv x,
+   CNOT y x, T x, H x, Tinv x, H x, Tinv x, X y, CNOT y x, X y, T x, H x, Sinv y, S x, H y, Tinv y]
+
+verifyCliffordT _ = sequence_ . map f $ onequbit ++ twoqubit
+  where onequbit   = mapSnds ($ "x") [("t1", t1), ("t2", t2), ("t3", t3), ("t4", t4), ("t5", t5),
+                                      ("t6", t6), ("t7", t7), ("t8", t8), ("t9", t9)]
+        twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("t10", t10), ("t11", t11), ("t12", t12),
+                                                          ("t13", t13), ("t14", t14)]
+        f (name, c) = case validate ["x", "y"] ["x", "y"] c [] of
+          Nothing -> putStrLn $ "Successfully verified relation " ++ name
           _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
         mapSnd f (a, b) = (a, f b)
