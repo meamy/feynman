@@ -1,6 +1,6 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Analysis.SOP where
+module Verification.SOP where
 
 import Text.Printf
 
