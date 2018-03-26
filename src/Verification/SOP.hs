@@ -48,6 +48,10 @@ instance (Show a, Eq a, Num a) => Show (SOP a) where
 pathVar :: Int -> ID
 pathVar i = "p" ++ show i
 
+internalPaths :: SOP a -> [Int]
+internalPaths sop = filter f $ pathVars sop
+  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+
 {- Constructors -}
 
 identity0 :: SOP a
@@ -187,9 +191,9 @@ toSOPWithHints vars gate = case gate of
                      sde = s + 1,
                      poly = p + ofTerm (fromInteger 4) [x, "p0"],
                      outVals = Map.insert x (ofVar "p0") outv }
-  X x      -> init { outVals = Map.adjust (+ (constant True)) x outv }
+  X x      -> init { outVals = Map.adjust (+ one) x outv }
   Y x      -> init { poly = p + (constant $ fromInteger 2) + (ofTerm (fromInteger 4) [x]),
-                     outVals = Map.adjust (+ (constant True)) x outv }
+                     outVals = Map.adjust (+ one) x outv }
   Z x      -> init { poly = p + (ofTerm (fromInteger 4) [x]) }
   CNOT x y -> init { outVals = Map.adjust (+ (ofVar x)) y outv }
   S x      -> init { poly = p + (ofTerm (fromInteger 2) [x]) }
@@ -284,61 +288,41 @@ scaledExp i (Z8 x)
   | i `mod` 2 == 0 = scaleD (D (1,i `div` 2)) (expZ8 $ Z8 x)
   | otherwise      = scaledExp (i+1) (Z8 $ mod (x-1) 8) + scaledExp (i+1) (Z8 $ mod (x+1) 8)
 
-isClosed :: SOP a -> Bool
-isClosed = all not . Map.elems . inVals
+isClosed :: (Eq a, Num a) => SOP a -> Bool
+isClosed = (< 1) . degree . poly
 
-isKet :: SOP a -> Bool
-isKet = all ((< 1) . degree) . Map.elems . outVals
+foldPaths :: (Eq a, Num a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
+foldPaths f g sop = case pathVars sop of
+      []   -> f sop
+      x:xs ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) zero $ poly sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) one $ poly sop }
+        in
+          trace ("  expanding at " ++ (pathVar x)) $ g (foldPaths f g sop0) (foldPaths f g sop1)
+
+foldReduce :: (Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
+foldReduce f g sop = case pathVars sop of
+      []   -> f sop
+      x:xs ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) zero $ poly sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) one $ poly sop }
+        in
+          trace ("  expanding at " ++ (pathVar x)) $ g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
 
 expandPaths :: (Eq a, Num a) => SOP a -> [SOP a]
-expandPaths sop = case pathVars sop of
-      []   -> [sop]
-      x:xs ->
-        let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
-            sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant True) $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) (constant True)) $ outVals sop }
-        in
-          expandPaths sop0 ++ expandPaths sop1
+expandPaths = foldPaths (\x -> [x]) (++)
 
-mapPaths :: (SOP Z8 -> Maybe DOmega) -> SOP Z8 -> Maybe DOmega
-mapPaths f sop
-  | not (isClosed sop) = Nothing
-  | not (isKet sop)    = Nothing
-  | otherwise          = case pathVars sop of
-      []   -> Just $ scaledExp (sde sop) (getConstant $ poly sop)
-      x:xs ->
-        let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop }
-            sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant True) $ poly sop }
-        in
-          (+) <$> f sop0 <*> f sop1
-
-mapPathsUnsafe :: (SOP Z8 -> DOmega) -> SOP Z8 -> DOmega
-mapPathsUnsafe f sop = case pathVars sop of
-      []   -> scaledExp (sde sop) (getConstant $ poly sop)
-      x:xs ->
-        let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop }
-            sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) (constant True) $ poly sop }
-        in
-          f sop0 + f sop1
-
-amplitude0 :: SOP Z8 -> Maybe DOmega
-amplitude0 = fix mapPaths
-
-amplitude :: SOP Z8 -> Maybe DOmega
-amplitude = mapPaths amplitude . reduce
-
-amplitude0Unsafe :: SOP Z8 -> DOmega
-amplitude0Unsafe = fix mapPathsUnsafe
-
-amplitudeUnsafe :: SOP Z8 -> DOmega
-amplitudeUnsafe = mapPathsUnsafe amplitudeUnsafe . reduce
+amplitudes :: SOP Z8 -> Maybe (Map (Map ID (Multilinear Bool)) DOmega)
+amplitudes sop = foldReduce f g sop
+  where f sop = if isClosed sop then
+                    Just $ Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
+                  else
+                    Nothing
+        g = liftM2 (Map.unionWith (+))
 
 {- Verification -}
 
@@ -358,36 +342,49 @@ toBooleanPoly :: (Eq a, Fin a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2 . simplify
 
 axiomSimplify :: (Eq a, Fin a) => SOP a -> Maybe Int
-axiomSimplify sop = msum . (map g) . filter f $ pathVars sop
-  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
+axiomSimplify sop = msum . (map f) $ internalPaths sop
+  where f i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
 
 axiomHHStrict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHStrict sop = msum . (map h) . filter f $ pathVars sop
-  where f i      = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g (x, p) = x `elem` (map pathVar $ pathVars sop)
-        h i      = do
+axiomHHStrict sop = msum . (map f) $ internalPaths sop
+  where g (x, p) = x `elem` (map pathVar $ pathVars sop)
+        f i      = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
           p''       <- toBooleanPoly p'
           (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
 axiomHHOutputRestricted :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHOutputRestricted sop = msum . (map h) . filter f $ pathVars sop
-  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g (x, p) = x `elem` (map pathVar $ pathVars sop) && degree p <= 1
-        h i = do
+axiomHHOutputRestricted sop = msum . (map f) $ internalPaths sop
+  where g (x, p) = x `elem` (map pathVar $ pathVars sop) && degree p <= 1
+        f i      = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
           p''       <- toBooleanPoly p'
           (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
 axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)
-axiomSH3Strict sop = msum . (map g) . filter f $ pathVars sop
-  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
-        g i =
+axiomSH3Strict sop = msum . (map f) $ internalPaths sop
+  where f i =
           let p' = factorOut (pathVar i) $ (poly sop) - (ofTerm 2 [pathVar i]) in
             toBooleanPoly p' >>= \q -> Just (i, q)
+
+axiomUnify :: (Eq a, Fin a) => SOP a -> Maybe (ID, Int, Multilinear Bool, Int, Multilinear Bool)
+axiomUnify sop = msum . (map f) $ internal
+  where internal   = internalPaths sop
+        findSoln i = find (\(x, _) -> x == pathVar i) . solveForX
+        f i        = do
+          p'      <- return $ factorOut (pathVar i) $ poly sop
+          (m, _)  <- find (\(m, a) -> monomialDegree m == 1 && order a == 4) . Map.toList . terms $ p'
+          x       <- find (\v -> not (v == pathVar i)) $ monomialVars m
+          p1      <- toBooleanPoly (p' - (ofTerm 2 [x]))
+          msum . (map $ g p' i x p1) $ internal \\ [i]
+        g p' i x p1 j = do
+          p''       <- return $ factorOut (pathVar j) $ poly sop
+          p2        <- toBooleanPoly (p'' - (constant (fromInteger 2)) - (ofTerm 6 [x]))
+          (_, jsub) <- findSoln j (subst x zero p1)
+          (_, isub) <- findSoln i (subst x one p2)
+          return (x, i, isub, j, jsub)
 
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
@@ -403,7 +400,17 @@ applyAxiom sop = case sop of
   (axiomSH3Strict -> Just (rem, eq)) -> Right $
     sop { sde      = sde sop - 1,
           pathVars = pathVars sop \\ [rem],
-          poly     = simplify $ constant 1 + distribute 6 eq + removeVar (pathVar rem) (poly sop)
+          poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop)
+        }
+  (axiomUnify     -> Just (x, i, isub, j, jsub)) -> Right $
+    sop { sde      = sde sop - 2,
+          pathVars = pathVars sop \\ [i, j],
+          poly     =
+            let xp = ofVar x
+                pi = subst (pathVar j) jsub . subst x zero . removeVar (pathVar i) $ poly sop
+                pj = subst (pathVar i) isub . subst x one  . removeVar (pathVar j) $ poly sop
+            in
+              simplify $ xp*pj + pi - xp*pi
         }
   _ -> Left sop
 
@@ -420,7 +427,7 @@ applyAxiomOutputRestricted sop = case sop of
   (axiomSH3Strict -> Just (rem, eq)) -> Right $
     sop { sde      = sde sop - 1,
           pathVars = pathVars sop \\ [rem],
-          poly     = simplify $ constant 1 + distribute 6 eq + removeVar (pathVar rem) (poly sop)
+          poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop)
         }
   _ -> Left sop
 
@@ -431,10 +438,12 @@ reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> SOP a
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 
+{-
 cliffordTCrush :: SOP Z8 -> Map ID Bool -> Map ID Bool -> DOmega
 cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
   where fromLeft (Left x) = x
         sop' = fromLeft $ foldM (\sop _ -> applyAxiomOutputRestricted sop) (ofKet ket <> sop) [0..]
+-}
 
 -- Main verification functions
 
@@ -456,7 +465,7 @@ validate vars inputs c1 c2 =
   in
     case reduced == (ket <> (identity vars)) of
       True  -> Nothing
-      False -> Just reduced
+      False -> trace "Expanding paths..." $ trace (show $ amplitudes reduced) $ Just reduced
 
 {- Tests -}
 
@@ -477,6 +486,14 @@ cT = [H "z", Sinv "x", CNOT "x" "y", CNOT "y" "z", CNOT "z" "x", T "x", Tinv "z"
       CNOT "y" "x", CNOT "y" "z", T "x", Tinv "z", CNOT "x" "z", H "x", T "x", H "x",
       CNOT "x" "z", Tinv "x", T "z", CNOT "y" "z", CNOT "y" "x", Tinv "x", T "z",
       CNOT "z" "x", CNOT "y" "z", CNOT "x" "y", S "x", H "z"]
+
+cTSpec x y z = SOP {
+  sde      = 0,
+  inVals   = Map.fromList [(x, True), (y, True), (z, False)],
+  pathVars = [],
+  poly     = ofTerm (Z8 1) [x, y],
+  outVals  = Map.fromList [(x, ofVar x), (y, ofVar y), (z, zero)]
+  }
 
 cHSpec x y = SOP {
   sde      = 1,
@@ -658,7 +675,7 @@ hiddenShiftSpec n string = SOP {
   pathVars = [],
   poly     = zero,
   outVals  =
-     let f v = (v, if v `elem` string then constant True else zero) in
+     let f v = (v, if v `elem` string then one else zero) in
        Map.fromList $ map f ["x" ++ show i | i <- [0..n-1]]
   }
 

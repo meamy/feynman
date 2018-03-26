@@ -63,7 +63,7 @@ firstVar = Set.elemAt 0
 {- Multi-linear polynomials -}
 data Multilinear a = Multilinear {
   terms :: !(Map Monomial a)
-  }
+  } deriving (Ord)
 
 instance (Eq a, Num a) => Eq (Multilinear a) where
   p == q = terms (simplify p) == terms (simplify q)
@@ -199,6 +199,10 @@ simplify p = p { terms = Map.filter (fromInteger 0 /=) $ terms p }
 factorOut :: String -> Multilinear a -> Multilinear a
 factorOut v p = p { terms = terms' }
   where terms' = Map.mapKeys (reduceMonomial v) . Map.filterWithKey (\m _ -> v `inMonomial` m) $ terms p
+
+splitBy :: String -> Multilinear a -> (Multilinear a, Multilinear a)
+splitBy v p = (p { terms = posTerms }, p { terms = negTerms })
+  where (posTerms, negTerms) = Map.partitionWithKey (\m _ -> v `inMonomial` m) $ terms p
 
 removeVar :: String -> Multilinear a -> Multilinear a
 removeVar v p = p { terms = terms' }
