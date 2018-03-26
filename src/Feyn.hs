@@ -93,6 +93,7 @@ parseArgs pass (x:xs) = case x of
   "-cnotmin"   -> parseArgs (pass >=> runCnotMin) xs
   "-tpar"      -> parseArgs (pass >=> runTpar) xs
   "-verify"    -> parseArgs (pass >=> runVerification) xs
+  "Vertest"    -> runVertest benchmarksMedium
   "Small"      -> runBenchmarks pass benchmarksSmall
   "Med"        -> runBenchmarks pass benchmarksMedium
   "All"        -> runBenchmarks pass benchmarksAll

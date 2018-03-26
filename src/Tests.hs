@@ -44,7 +44,7 @@ benchmarksMedium = benchmarksSmall ++ [
   "barenco_tof_10",
   "csla_mux_3",
   "csum_mux_9",
-  "cycle_17_3",
+--  "cycle_17_3",
   "gf2^4_mult",
   "gf2^5_mult",
   "gf2^6_mult",
@@ -54,11 +54,11 @@ benchmarksMedium = benchmarksSmall ++ [
   "gf2^10_mult",
   "gf2^16_mult",
   "gf2^32_mult",
-  "gf2^64_mult",
+--  "gf2^64_mult",
   "ham15-high",
   "ham15-low",
   "ham15-med",
-  "hwb8",
+--  "hwb8",
   "mod_adder_1024",
   "mod_red_21",
   "qcla_adder_10",
@@ -139,6 +139,27 @@ runBenchmarks opt xs =
   in
     mapM f xs >>= printResults
 
+runVertest :: [String] -> IO ()
+runVertest xs =
+  let f s = do
+        orig  <- readFile $ benchmarksPath ++ s ++ ".qc"
+        case printErr (parseDotQC orig) >>= (\c -> runCnotMin (c, c)) of
+          Left err      -> return $ (s, Left err)
+          Right (c, c') -> do
+            TOD starts startp <- getClockTime
+            case runVerification (c, c') of
+              Left err -> putStrLn $ "Failed to verify: " ++ s
+              Right _  -> return ()
+            TOD ends endp  <- getClockTime
+            let diff = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+            return $ (s, Right $ (length (qubits c), diff, zip (countGates c) (countGates c') ++
+                                                                               [(tDepth c, tDepth c')]))
+      printErr res = case res of
+        Left err -> Left $ show err
+        Right x  -> Right x
+  in
+    mapM f xs >>= printResults
+
 -- Testing
 triv :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
 triv (_, circ) = Right (circ, circ)
@@ -188,7 +209,6 @@ runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
       case validate q1 (Set.toList i1) gates1 gates2 of
         Nothing  -> Right (qc1, qc2)
         Just sop -> Left $ "Failed to validate: " ++ show sop
-
 
 -- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec
