@@ -121,6 +121,14 @@ printResultsAcc avgs (x:xs) = case x of
       putStrLn $ "\tSwap:\t" ++ (show $ fst sw) ++ "/" ++ (show $ snd sw) ++ showMod sw
       putStrLn $ "\tT-depth:\t" ++ (show $ fst td) ++ "/" ++ (show $ snd td) ++ showMod td
 
+withTiming :: (() -> IO ()) -> IO ()
+withTiming f = do
+  TOD starts startp <- getClockTime
+  f ()
+  TOD ends endp <- getClockTime
+  let t = (fromIntegral $ ends - starts)*1000 + (fromIntegral $ endp - startp)/10^9
+  putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
+
 runBenchmarks :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] -> IO ()
 runBenchmarks opt xs =
   let f s = do
