@@ -26,6 +26,9 @@ import Test.QuickCheck
   
 import Debug.Trace
 
+import Data.Set (Set)
+import qualified Data.Set as Set
+
 {- Invariants:
    sort . Map.elems == Map.elems -}
 data SOP a = SOP {
@@ -296,33 +299,66 @@ foldPaths f g sop = case pathVars sop of
       []   -> f sop
       x:xs ->
         let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop }
+                         poly = simplify . subst (pathVar x) zero $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
             sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) one $ poly sop }
+                         poly = simplify . subst (pathVar x) one $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
         in
-          trace ("  expanding at " ++ (pathVar x)) $ g (foldPaths f g sop0) (foldPaths f g sop1)
+          trace ("  expanding at " ++ (pathVar x)) $
+          g (foldPaths f g sop0) (foldPaths f g sop1)
 
 foldReduce :: (Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
 foldReduce f g sop = case pathVars sop of
       []   -> f sop
       x:xs ->
         let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop }
+                         poly = simplify . subst (pathVar x) zero $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
             sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) one $ poly sop }
+                         poly = simplify . subst (pathVar x) one $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
         in
-          trace ("  expanding at " ++ (pathVar x)) $ g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
+          trace ("  expanding at " ++ (pathVar x)) $
+          g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
+
+foldReduceFull :: (Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
+foldReduceFull f g sop = case (pathVars sop, vars $ poly sop) of
+      ([], []) -> f sop
+      ([], x:xs) ->
+        let sop0 = sop { poly = simplify . subst x zero $ poly sop,
+                         outVals = Map.map (simplify . subst x zero) $ outVals sop }
+            sop1 = sop { poly = simplify . subst x one $ poly sop,
+                         outVals = Map.map (simplify . subst x one) $ outVals sop }
+        in
+          trace ("  expanding basis value at " ++ x) $
+          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
+      (x:xs, _) ->
+        let sop0 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) zero $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
+            sop1 = sop { pathVars = xs,
+                         poly = simplify . subst (pathVar x) one $ poly sop,
+                         outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
+        in
+          trace ("  expanding at " ++ (pathVar x)) $
+          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
 
 expandPaths :: (Eq a, Num a) => SOP a -> [SOP a]
 expandPaths = foldPaths (\x -> [x]) (++)
 
-amplitudes :: SOP Z8 -> Maybe (Map (Map ID (Multilinear Bool)) DOmega)
-amplitudes sop = foldReduce f g sop
+amplitudesMaybe :: SOP Z8 -> Maybe (Map (Map ID (Multilinear Bool)) DOmega)
+amplitudesMaybe sop = foldReduce f g sop
   where f sop = if isClosed sop then
                     Just $ Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
                   else
                     Nothing
         g = liftM2 (Map.unionWith (+))
+
+amplitudes :: SOP Z8 -> Map (Map ID (Multilinear Bool)) DOmega
+amplitudes sop = foldReduceFull f g sop
+  where f sop = Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
+        g = Map.unionWith (+)
 
 {- Verification -}
 
@@ -385,6 +421,15 @@ axiomUnify sop = msum . (map f) $ internal
           (_, jsub) <- findSoln j (subst x zero p1)
           (_, isub) <- findSoln i (subst x one p2)
           return (x, i, isub, j, jsub)
+
+axiomKill :: (Eq a, Fin a) => SOP a -> Maybe ()
+axiomKill sop = msum . (map f) $ internalPaths sop
+  where f i      = do
+          p'        <- return $ factorOut (pathVar i) $ poly sop
+          p''       <- toBooleanPoly p'
+          if intersect (vars p'') (map pathVar $ pathVars sop) == []
+            then Just ()
+            else Nothing
 
 -- Main axiom reduction function
 applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
@@ -463,9 +508,10 @@ validate vars inputs c1 c2 =
       bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
       reduced = reduce $ restrictGeneral (ket <> sop) bra
   in
-    case reduced == (ket <> (identity vars)) of
-      True  -> Nothing
-      False -> trace "Expanding paths..." $ trace (show $ amplitudes reduced) $ Just reduced
+    case (axiomKill reduced, all (== (fromInteger 1)) . Map.elems $ amplitudes reduced) of
+      (Just _, _) -> Just reduced
+      (_, False)  -> Just reduced
+      (_, _)      -> Nothing
 
 {- Tests -}
 
@@ -540,10 +586,12 @@ toffoliNSpec xs = SOP {
         product = ofVar (last xs) + ofTerm True (init xs)
         outInit = Map.fromList $ [(x, ofVar x) | x <- xs] ++ [(y, zero) | y <- anc]
 
-verifyToffoliN n =
+verifyToffoliN n () = do
+  putStrLn $ "Verifying Toffoli, N=" ++ show n
+  printVerStats (toffoliN inputs)
   case verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs) of
-    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit Toffoli"
-    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit Toffoli"
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
   where inputs = take n $ map (\i -> [i]) ['a'..]
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
@@ -564,10 +612,12 @@ maslovToffoli = go 0
           in
             sub ++ go (i+1) (anc:xs) ++ (dagger sub)
 
-verifyMaslovN n =
+verifyMaslovN n () = do
+  putStrLn $ "Verifying Maslov, N=" ++ show n
+  printVerStats (maslovToffoli inputs)
   case verifySpec (toffoliNSpec inputs) vars inputs (maslovToffoli inputs) of
-    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit Toffoli (Maslov)"
-    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit Toffoli (Maslov)"
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
   where inputs = take n $ map (\i -> [i]) ['a'..]
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
@@ -603,10 +653,12 @@ adderOOPSpec n a b c = SOP {
           in
             (ai*carry + bi*carry + ai*bi, Map.insert (c!!i) (ci + carry + ai + bi) map)
   
-verifyOOPAdder n =
+verifyOOPAdder n () = do
+  putStrLn $ "Verifying Adder, N=" ++ show n
+  printVerStats (carryRipple n a b c)
   case verifySpec (adderOOPSpec n a b c) (a ++ b ++ c ++ anc ++ carry) (a ++ b ++ c) (carryRipple n a b c) of
-    Nothing -> putStrLn $ "Successfully verified " ++ show n ++ " qubit adder"
-    Just _  -> putStrLn $ "ERROR: failed to verify " ++ show n ++ " qubit adder"
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
   where a = ["a" ++ show i | i <- [0..n-1]]
         b = ["b" ++ show i | i <- [0..n-1]]
         c = ["c" ++ show i | i <- [0..n-1]]
@@ -690,18 +742,22 @@ hiddenShiftQuantumSpec n = SOP {
                             [("y" ++ show i, ofVar ("y" ++ show i)) | i <- [0..n-1]]
   }
 
-verifyHiddenShift n a = do
+verifyHiddenShift n a () = do
+  putStrLn $ "Verifying Hidden Shift, N=" ++ show n ++ ", A=" ++ show a
   (circ, string) <- generate $ hiddenShift n a
+  printVerStats (circ)
   case verifySpec (hiddenShiftSpec n string) vars [] circ of
-    Nothing -> putStrLn $ "Successfully verified hidden shift"
-    Just _  -> putStrLn $ "ERROR: failed to verify hidden shift"
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]]
 
-verifyHiddenShiftQuantum n a = do
+verifyHiddenShiftQuantum n a () = do
+  putStrLn $ "Verifying Symbolic Shift, N=" ++ show n ++ ", A=" ++ show a
   circ <- generate $ hiddenShiftQuantum n a
+  printVerStats (circ)
   case verifySpec (hiddenShiftQuantumSpec n) vars inputs circ of
-    Nothing -> putStrLn $ "Successfully verified full hidden shift"
-    Just _  -> putStrLn $ "ERROR: failed to verify full hidden shift"
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]] ++ inputs
         inputs = ["y" ++ show i | i <- [0..n-1]]
 
@@ -817,7 +873,7 @@ c15 x y z =
   cz y z ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y ++
   cz y z ++ [H y, H z] ++ cz y z ++ [H y, H z] ++ cz x y
 
-verifyClifford _ = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
+verifyClifford () = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
   where onequbit   = mapSnds ($ "x") [("c1", c1), ("c2", c2), ("c3", c3), ("c4", c4)]
         twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("c5", c5), ("c6", c6), ("c7", c7), ("c8", c8),
                                                           ("c9", c9), ("c10", c10), ("c11", c11)]
@@ -858,7 +914,7 @@ t14 x y =
    CNOT x y, T y, H y, Tinv y, H y, Tinv y, X x, CNOT x y, X x, T y, T x, H y, Sinv x, S y, H x, Tinv x,
    CNOT y x, T x, H x, Tinv x, H x, Tinv x, X y, CNOT y x, X y, T x, H x, Sinv y, S x, H y, Tinv y]
 
-verifyCliffordT _ = sequence_ . map f $ onequbit ++ twoqubit
+verifyCliffordT () = sequence_ . map f $ onequbit ++ twoqubit
   where onequbit   = mapSnds ($ "x") [("t1", t1), ("t2", t2), ("t3", t3), ("t4", t4), ("t5", t5),
                                       ("t6", t6), ("t7", t7), ("t8", t8), ("t9", t9)]
         twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("t10", t10), ("t11", t11), ("t12", t12),
@@ -868,3 +924,25 @@ verifyCliffordT _ = sequence_ . map f $ onequbit ++ twoqubit
           _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
         mapSnd f (a, b) = (a, f b)
+
+-- Temp for writing experimental results
+printVerStats circ =
+  let (uids, m, c, t) = foldl' g (Set.empty,0,0,0) (map f circ) in do
+    putStrLn $ "  n: " ++ show (Set.size uids)
+    putStrLn $ "  m: " ++ show m
+    putStrLn $ "  Clifford: " ++ show c
+    putStrLn $ "  T/T*: " ++ show t
+  where
+    f gate = case gate of
+      H x      -> (Set.singleton x, 1, 1, 0)
+      X x      -> (Set.singleton x, 0, 1, 0)
+      Y x      -> (Set.singleton x, 0, 1, 0)
+      Z x      -> (Set.singleton x, 0, 1, 0)
+      S x      -> (Set.singleton x, 0, 1, 0)
+      Sinv x   -> (Set.singleton x, 0, 1, 0)
+      T x      -> (Set.singleton x, 0, 0, 1)
+      Tinv x   -> (Set.singleton x, 0, 0, 1)
+      CNOT x y -> (Set.fromList [x,y], 0, 1, 0)
+      Swap x y -> (Set.fromList [x,y], 0, 0, 0)
+    g (uids1, m1, c1, t1) (uids2, m2, c2, t2) =
+      (Set.union uids1 uids2, m1+m2, c1+c2, t1+t2)

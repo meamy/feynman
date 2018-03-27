@@ -88,6 +88,11 @@ degree p
 coefficients :: Multilinear a -> [a]
 coefficients = Map.elems . terms
 
+-- This should really be tracked by the polynomial itself,
+-- but it's not used often so screw it for now
+vars :: Multilinear a -> [String]
+vars = Set.toList . Map.foldlWithKey (\a k _ -> Set.union a k) Set.empty . terms
+
 {- Tests -}
 
 isZero :: Multilinear a -> Bool
