@@ -82,6 +82,10 @@ instance (Eq a, Ring a) => Abelian (Multilinear a) where
 instance (Eq a, Ring a) => Ring (Multilinear a) where
   one = constant one
 
+instance (Eq a, Ring a) => Monoid (Multilinear a) where
+  mempty  = zero
+  mappend = (+)
+
 degree :: (Eq a, Ring a) => Multilinear a -> Int
 degree p
   | isZero p    = -1

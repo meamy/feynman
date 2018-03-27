@@ -205,6 +205,7 @@ toSOPWithHints vars gate = case gate of
   T x      -> init { poly = p + (ofTerm (dyadic 1 3) [x]) }
   Tinv x   -> init { poly = p + (ofTerm (dyadic 7 3) [x]) }
   Swap x y -> init { outVals = Map.insert x (outv!y) $ Map.insert y (outv!x) outv }
+  Rz (Discrete d) x -> init { poly = p + (ofTerm d [x]) }
   where init@(SOP s inv pathv p outv) = identity vars
 
 toSOP :: Primitive -> SOP Dyadic 
@@ -219,6 +220,7 @@ toSOP gate = case gate of
   T x      -> toSOPWithHints [x] gate
   Tinv x   -> toSOPWithHints [x] gate
   Swap x y -> toSOPWithHints [x,y] gate
+  Rz _ x   -> toSOPWithHints [x] gate
 
 
 circuitSOPWithHints :: [ID] -> [Primitive] -> SOP Dyadic
@@ -692,6 +694,37 @@ simulateHiddenShift n a () = do
   print $ reduce (blank vars <> sop)
   where vars = ["x" ++ show i | i <- [0..n-1]]
   
+{- Quantum Fourier Transform -}
+
+controlledRm m x y = [Rz (Discrete (dyadic 1 (m+1))) x,
+                      Rz (Discrete (dyadic 1 (m+1))) y,
+                      CNOT x y,
+                      Rz (Discrete (dyadic (-1) (m+1))) y,
+                      CNOT x y]
+
+qft []     = []
+qft (x:xs) = [H x] ++ concatMap f (zip [2..] xs) ++ qft xs
+  where f (m, y) = controlledRm m x y
+
+qftSpec :: [ID] -> SOP Dyadic
+qftSpec xs = SOP {
+  sde      = length xs,
+  inVals   = Map.fromList $ [(x, True) | x <- xs],
+  pathVars = [0..length xs - 1],
+  poly     = constant (Dy (2^(length xs), 0)) * (p*p'),
+  outVals  = Map.fromList $ [(xs!!i, ofVar (pathVar i)) | i <- [0..length xs - 1]]
+  }
+  where toFrac xs = foldMap (\(i, x) -> ofTerm (dyadic 1 i) [x]) (zip [1..] xs)
+        p         = toFrac xs
+        p'        = toFrac $ map pathVar [length xs-1,length xs-2..0]
+
+verifyQFTN n () = do
+  putStrLn $ "Verifying QFT, N=" ++ show n
+  printVerStats (qft inputs)
+  case verifySpec (qftSpec inputs) inputs inputs (qft inputs) of
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
+  where inputs = take n $ map (\i -> [i]) ['a'..]
 
 {- Circuit designs -}
 
@@ -876,5 +909,6 @@ printVerStats circ =
       Tinv x   -> (Set.singleton x, 0, 0, 1)
       CNOT x y -> (Set.fromList [x,y], 0, 1, 0)
       Swap x y -> (Set.fromList [x,y], 0, 0, 0)
+      Rz m x   -> (Set.singleton x, 0, 0, 0)
     g (uids1, m1, c1, t1) (uids2, m2, c2, t2) =
       (Set.union uids1 uids2, m1+m2, c1+c2, t1+t2)
