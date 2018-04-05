@@ -760,7 +760,6 @@ verifyHiddenShiftQuantum n a () = do
     Just _  -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]] ++ inputs
         inputs = ["y" ++ show i | i <- [0..n-1]]
-
 {- Circuit designs -}
 
 minimalProductGate []     t = []

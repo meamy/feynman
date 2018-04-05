@@ -259,6 +259,21 @@ runExperiments n repeats = do
   putStrLn $ "Running experiments for n=" ++ (show n) ++ ", " ++ (show repeats) ++ " repetitions"
   sequence_ $ map (\m -> runExperiment n m repeats) [1..2^n-1]
 
+runVerSuite :: IO ()
+runVerSuite = do
+  withTiming (verifyToffoliN 50)
+  withTiming (verifyToffoliN 100)
+  withTiming (verifyMaslovN 50)
+  withTiming (verifyMaslovN 100)
+  withTiming (verifyOOPAdder 8)
+  withTiming (verifyOOPAdder 16)
+  withTiming (verifyHiddenShift 20 4)
+  withTiming (verifyHiddenShift 40 5)
+  withTiming (verifyHiddenShift 60 10)
+  withTiming (verifyHiddenShiftQuantum 20 4)
+  withTiming (verifyHiddenShiftQuantum 40 5)
+  withTiming (verifyHiddenShiftQuantum 60 10)
+
 -- Utilities for interactive debugging and testing
 
 gatelistOfFile :: String -> IO [Primitive]
