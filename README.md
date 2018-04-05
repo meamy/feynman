@@ -1,4 +1,4 @@
-# Feyman
+# Feynman
 
 ## What is Feynman?
 
