@@ -55,7 +55,7 @@ findBestSplit (c:cs) vecs = foldl' g init cs
             then (l', c', c:cs, r')
             else (l, c, c':cs, r)
 
-findBestSplitMono :: [Int] -> [(F2Vec, Int)] -> ([(F2Vec, Int)], Int, [Int], [(F2Vec, Int)])
+findBestSplitMono :: [Int] -> [(F2Vec, Angle)] -> ([(F2Vec, Angle)], Int, [Int], [(F2Vec, Angle)])
 findBestSplitMono xs vecs = (l, c, delete c xs, r)
   where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
         countCol c =
@@ -104,7 +104,7 @@ graySynthesisDirectional ids out (x:xs) = case x of
       tell [CNOT idp idt]
       graySynthesisDirectional ids out' xs'
   Pt [] (Just t) Nothing [(_, a)] -> do
-    tell $ minimalSequence (ids !! t) a
+    tell $ synthesizePhase (ids !! t) a
     graySynthesisDirectional ids out xs
   Pt [] Nothing _ _ -> graySynthesisDirectional ids out xs
   Pt (c:cs) targ Nothing vecs ->
@@ -146,8 +146,8 @@ cnotMinGray1 input output xs =
           gates ++ linearSynth outin output []
 
 cnotMinGray input output xs =
-  let gates    = cnotMinGray0 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
-      gates'   = cnotMinGray0 input output $ filter (\(s, i) -> i `mod` 8 /= 0 && wt s > 1) xs
+  let gates    = cnotMinGray0 input output $ filter (\(_, i) -> order i /= 1) xs
+      gates'   = cnotMinGray0 input output $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
       --gates''  = cnotMinGray1 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
       gates''  = cnotMinGray0 input output xs
       isct g = case g of
@@ -171,8 +171,8 @@ cnotMinGrayOpen0 input xs =
 
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs
-      gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> i `mod` 8 /= 0) xs
-      gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> i `mod` 8 /= 0 && wt s > 1) xs
+      gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> order i /= 1) xs
+      gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False

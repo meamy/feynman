@@ -162,23 +162,23 @@ applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [
 applyGateOpen synth gates g = case g of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm bv 1
+    modify $ addTerm bv (Discrete $ dyadic 1 3)
     return gates
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv 7
+    modify $ addTerm bv (Discrete $ dyadic 7 3)
     return gates
   S v      -> do
     bv <- getSt v
-    modify $ addTerm bv 2
+    modify $ addTerm bv (Discrete $ dyadic 1 2)
     return gates
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv 6
+    modify $ addTerm bv (Discrete $ dyadic 3 2)
     return gates
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm bv 4
+    modify $ addTerm bv (Discrete $ dyadic 1 1)
     return gates
   CNOT c t -> do
     (bvc, bc) <- getSt c

@@ -54,7 +54,7 @@ benchmarksMedium = benchmarksSmall ++ [
   "barenco_tof_10",
   "csla_mux_3",
   "csum_mux_9",
---  "cycle_17_3",
+  "cycle_17_3",
   "gf2^4_mult",
   "gf2^5_mult",
   "gf2^6_mult",
@@ -64,11 +64,11 @@ benchmarksMedium = benchmarksSmall ++ [
   "gf2^10_mult",
   "gf2^16_mult",
   "gf2^32_mult",
---  "gf2^64_mult",
+  "gf2^64_mult",
   "ham15-high",
   "ham15-low",
   "ham15-med",
---  "hwb8",
+  "hwb8",
   "mod_adder_1024",
   "mod_red_21",
   "qcla_adder_10",
@@ -236,6 +236,19 @@ runCnotMinU (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main"
         ret    = simplifyDotQC $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
     in
       Right (c, ret)
+
+runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
+runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
+  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
+  (Nothing, _) -> Left "Failed (no main function)"
+  (_, Nothing) -> Left "Failed (no main function)"
+  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
+    let gates1 = toCliffordT body1
+        gates2 = toCliffordT body2
+    in
+      case validate q1 (Set.toList i1) gates1 gates2 of
+        Nothing  -> Right (qc1, qc2)
+        Just sop -> Left $ "Failed to validate: " ++ show sop
 
 -- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec
