@@ -7,7 +7,8 @@ import Text.Printf
 import Data.Bits
 import Data.Maybe
 import Data.List
-import Data.Monoid ((<>))
+import Data.Monoid hiding ((<>))
+import Data.Semigroup
 
 import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
@@ -169,6 +170,9 @@ restrictGeneral sop bra = foldl' f sop $ Map.keys bra
                                   poly     = simplify . subst y psub $ poly sop,
                                   outVals  = Map.map (simplify . subst y psub) $ outVals sop }
       
+instance (Eq a, Num a) => Semigroup (SOP a) where
+  a <> b = compose a b
+
 instance (Eq a, Num a) => Monoid (SOP a) where
   mempty  = identity0
   mappend = compose

@@ -26,7 +26,7 @@ executable feyn
   -- other-modules:       
   build-depends:       QuickCheck >= 2.8.2, 
                        array >= 0.5.1.0, 
-                       base, 
+                       base >= 4.9, 
                        bv, 
                        containers >= 0.5.8.1,
                        mtl, 
@@ -52,7 +52,7 @@ executable feyn-prof
   -- other-modules:       
   build-depends:       QuickCheck >= 2.8.2, 
                        array >= 0.5.1.0, 
-                       base, 
+                       base >= 4.9, 
                        bv, 
                        containers, 
                        mtl, 
