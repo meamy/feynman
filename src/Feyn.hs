@@ -104,9 +104,9 @@ parseArgs pass (x:xs) = case x of
       Left err      -> putStrLn err
       Right (c, c') -> do
         putStrLn $ "# Original circuit statistics:"
-        putStrLn $ "#   " ++ show (countGates c)
+        mapM_ putStrLn $ map ("#   " ++) (showCliffordTStats c)
         putStrLn $ "# Optimized circuit statistics:"
-        putStrLn $ "#   " ++ show (countGates c')
+        mapM_ putStrLn $ map ("#   " ++) (showCliffordTStats c')
         print c'
   where printErr res = case res of
           Left err -> Left $ show err
@@ -114,6 +114,7 @@ parseArgs pass (x:xs) = case x of
 
 main :: IO ()
 main = do
-  putStrLn "# Feyn -- copyright 2016 Matthew Amy"
+  putStrLn "# Feynman -- quantum circuit toolkit"
+  putStrLn "# Written by Matthew Amy"
   --putStrLn $ show $ coverItOpen 4
   getArgs >>= parseArgs return

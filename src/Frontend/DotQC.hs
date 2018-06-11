@@ -262,6 +262,15 @@ showStats circ =
   in
     counts ++ totaldepth ++ tdepth
 
+showCliffordTStats :: DotQC -> [String]
+showCliffordTStats circ =
+  let gatelist   = fromCliffordT . toCliffordT . toGatelist $ circ
+      counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
+      totaldepth = ["Depth: " ++ (show $ depth gatelist)]
+      tdepth     = ["T depth: " ++ (show $ gateDepth ["T", "T*"] gatelist)]
+  in
+    counts ++ totaldepth ++ tdepth
+
 -- Deprecated
 countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
   where plus                   = zipWith (+)
