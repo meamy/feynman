@@ -34,7 +34,12 @@ data DotQC = DotQC { qubits  :: [ID],
                      outputs :: Set ID,
                      decls   :: [Decl] }
 
--- Printing
+primitive = ["H", "X", "Y", "Z",
+             "S", "S*", "P", "P*", "T", "T*",
+             "tof", "cnot", "swap",
+             "Rz", "Rx", "Ry"]
+
+{- Printing & information -}
 
 instance Show Gate where
   show (Gate name 0 params) = ""
@@ -59,7 +64,51 @@ instance Show DotQC where
           o'  = ".o " ++ showLst (filter (`Set.member` o) q)
           bod = map show decls
 
--- Transformations
+repeats :: Num a => Gate -> a
+repeats (Gate _ i _)        = fromIntegral i
+repeats (ParamGate _ i _ _) = fromIntegral i
+
+arguments :: Gate -> [ID]
+arguments (Gate _ _ xs)        = xs
+arguments (ParamGate _ _ _ xs) = xs
+
+gateName :: Gate -> ID
+gateName (Gate g _ _)        = g
+gateName (ParamGate g _ a _) = g ++ "(" ++ show a ++ ")"
+
+{- Transformations -}
+
+subst :: (ID -> ID) -> [Gate] -> [Gate]
+subst f = map g
+  where g (Gate g i params) = Gate g i $ map f params
+        g (ParamGate g i p params) = ParamGate g i p $ map f params
+
+-- Expands gate declarations and repeated applications. Doesn't check for cycles or uninterpreted gates
+toGatelist :: DotQC -> [Gate]
+toGatelist circ =
+  let accGatelist ctx []     = (ctx, [])
+      accGatelist ctx (x:xs) =
+        let (ctx', xpand)   = gateToList ctx x
+            (ctx'', xspand) = accGatelist ctx' xs
+        in
+          (ctx'', (concat . replicate (repeats x) $ xpand) ++ xspand)
+      gateToList ctx x@(ParamGate _ _ _ _) = (ctx, [x])
+      gateToList ctx x@(Gate g _ args)     = case find (\decl -> name decl == g) (decls circ) of
+        Nothing   -> (ctx, [x])
+        Just decl ->
+          let (ctx', gatelist) = expandSubdec ctx decl
+              f id             = Map.findWithDefault id id $ Map.fromList $ zip (params decl) args
+          in
+            (ctx', subst f gatelist)
+      expandSubdec ctx decl = case Map.lookup (name decl) ctx of
+        Nothing ->
+          let (ctx', gatelist) = accGatelist ctx (body decl) in
+            (Map.insert (name decl) gatelist ctx', gatelist)
+        Just gatelist -> (ctx, gatelist)
+  in
+    case find (\decl -> name decl == "main") (decls circ) of
+      Nothing   -> []
+      Just decl -> snd $ accGatelist Map.empty (body decl)
 
 inv :: Gate -> Gate
 inv gate@(Gate g i p) =
@@ -111,11 +160,6 @@ simplifyDotQC (DotQC q i o decls) = DotQC q i o $ map f decls
             Decl n p body
           else
             f $ Decl n p body'
-
-subst :: (ID -> ID) -> [Gate] -> [Gate]
-subst f = map g
-  where g (Gate g i params) = Gate g i $ map f params
-        g (ParamGate g i p params) = ParamGate g i p $ map f params
 
 {-
 inline :: DotQC -> DotQC
@@ -180,7 +224,45 @@ gateFromCliffordT g = case g of
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
 
--- This is totally wrong, but no benchmarks have function calls yet
+{- Statistics -}
+
+gateCounts :: [Gate] -> Map ID Int
+gateCounts = foldl f Map.empty
+  where f counts gate = addToCount (repeats gate) (gateName gate) counts
+        addToCount i g counts =
+          let alterf val = case val of
+                Nothing -> Just 1
+                Just c  -> Just $ c+1
+          in
+            Map.alter alterf g counts
+
+depth :: [Gate] -> Int
+depth = maximum . Map.elems . foldl f Map.empty
+  where f depths gate =
+          let maxIn = maximum $ map (\id -> Map.findWithDefault 0 id depths) args
+              args  = arguments gate
+          in
+            foldr (\id -> Map.insert id (maxIn + 1)) depths args
+
+gateDepth :: [ID] -> [Gate] -> Int
+gateDepth gates = maximum . Map.elems . foldl f Map.empty
+  where f depths gate =
+          let maxIn = maximum $ map (\id -> Map.findWithDefault 0 id depths) args
+              args  = arguments gate
+              tot   = if (gateName gate) `elem` gates then maxIn + 1 else maxIn
+          in
+            foldr (\id -> Map.insert id tot) depths args
+
+showStats :: DotQC -> [String]
+showStats circ =
+  let gatelist   = toGatelist circ
+      counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
+      totaldepth = ["Depth: " ++ (show $ depth gatelist)]
+      tdepth     = ["T depth: " ++ (show $ gateDepth ["T", "T*"] gatelist)]
+  in
+    counts ++ totaldepth ++ tdepth
+
+-- Deprecated
 countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
   where plus                   = zipWith (+)
         f cnt (Decl _ _ gates) = foldl' g cnt $ toCliffordT gates
@@ -197,7 +279,7 @@ countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
           Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
           _        -> cnt
 
--- This is also totally wrong
+-- Deprecated
 tDepth :: DotQC -> Int
 tDepth (DotQC _ _ _ decls)    = maximum $ 0:(Map.elems $ foldl' f Map.empty decls)
   where addOne val            = case val of
@@ -311,8 +393,8 @@ parseDotQC = (liftM simplifyDotQC) . (parse parseFile ".qc parser")
 toffoli = DotQC { qubits  = ["x", "y", "z"],
                   inputs  = Set.fromList ["x", "y", "z"],
                   outputs = Set.fromList ["x", "y", "z"],
-                   decls  = [tof] }
-    where tof = Decl { name = "main",
+                  decls  = [main] }
+    where main = Decl { name = "main",
                        params = [],
                        body = [ Gate "H" 1 ["z"],
                                 Gate "T" 1 ["x"],
@@ -331,13 +413,12 @@ toffoli = DotQC { qubits  = ["x", "y", "z"],
                                 Gate "tof" 1 ["x", "y"],
                                 Gate "H" 1 ["z"] ] }
 
-
-toffoli2 = DotQC { qubits  = ["x", "y", "z"],
-                  inputs  = Set.fromList ["x", "y", "z"],
-                  outputs = Set.fromList ["x", "y", "z"],
-                   decls  = [tof] }
-    where tof = Decl { name = "main",
-                       params = [],
+toffoliDecl = DotQC { qubits  = ["a", "b", "c"],
+                      inputs  = Set.fromList ["a", "b", "c"],
+                      outputs = Set.fromList ["a", "b", "c"],
+                      decls  = [main, tof] }
+    where tof = Decl { name = "toffoli",
+                       params = ["x", "y", "z"],
                        body = [ Gate "H" 1 ["z"],
                                 Gate "T" 1 ["x"],
                                 Gate "T" 1 ["y"],
@@ -353,20 +434,7 @@ toffoli2 = DotQC { qubits  = ["x", "y", "z"],
                                 Gate "tof" 1 ["y", "z"],
                                 Gate "tof" 1 ["z", "x"],
                                 Gate "tof" 1 ["x", "y"],
-                                Gate "H" 1 ["z"],
-                                Gate "H" 1 ["z"],
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "T" 1 ["x"],
-                                Gate "tof" 1 ["y", "x"],
-                                Gate "T*" 1 ["z"],
-                                Gate "T" 1 ["y"],
-                                Gate "T" 1 ["x"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "T*" 1 ["z"], 
-                                Gate "T*" 1 ["y"],
-                                Gate "T*" 1 ["x"],
                                 Gate "H" 1 ["z"] ] }
+          main = Decl { name = "main",
+                        params = [],
+                        body = [Gate "toffoli" 1 ["a", "b", "c"]] }
