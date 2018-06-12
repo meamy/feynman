@@ -177,8 +177,8 @@ gtpar osynth vars inputs gates =
 
 -- Optimization algorithms
 
-{- t-par: the t-par algorithm from [AMM2014] (temporarily out of order) -}
-tpar _ _ = id -- gtpar tparMore
+{- t-par: the t-par algorithm from [AMM2014] -}
+tpar = gtpar tparMore
 
 {- minCNOT: CNOT minimization algorithm -}
 minCNOT = gtpar cnotMinGray

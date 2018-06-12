@@ -147,6 +147,7 @@ runBenchmarks opt xs =
   in
     mapM f xs >>= printResults
 
+{-
 runVertest :: [String] -> IO ()
 runVertest xs =
   let f s = do
@@ -155,7 +156,7 @@ runVertest xs =
           Left err      -> return $ (s, Left err)
           Right (c, c') -> do
             TOD starts startp <- getClockTime
-            case runVerification (c, c') of
+            case checkEquivalence c c' of
               Left err -> putStrLn $ "Failed to verify: " ++ s
               Right _  -> return ()
             TOD ends endp  <- getClockTime
@@ -167,56 +168,7 @@ runVertest xs =
         Right x  -> Right x
   in
     mapM f xs >>= printResults
-
--- Testing
-triv :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-triv (_, circ) = Right (circ, circ)
-
-runPhaseFold :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runPhaseFold (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> Left "Failed (no main function)"
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = phaseFold q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in 
-      Right (c, ret)
-      
-runTpar :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runTpar (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> Left "Failed (no main function)"
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = tpar q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in
-      Right (c, ret)
-
-runCnotMin :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runCnotMin (c, qc@(DotQC q i o decs)) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> Left "Failed (no main function)"
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = minCNOT q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in
-      Right (c, ret)
-
-runVerification :: (DotQC, DotQC) -> Either String (DotQC, DotQC)
-runVerification (qc1@(DotQC q1 i1 o1 decs1), qc2@(DotQC q2 i2 o2 decs2)) =
-  case (\f -> (f decs1, f decs2)) $ find (\(Decl n _ _) -> n == "main") of
-  (Nothing, _) -> Left "Failed (no main function)"
-  (_, Nothing) -> Left "Failed (no main function)"
-  (Just (Decl n1 p1 body1), Just (Decl n2 p2 body2)) ->
-    let gates1 = toCliffordT body1
-        gates2 = toCliffordT body2
-    in
-      case validate q1 (Set.toList i1) gates1 gates2 of
-        Nothing  -> Right (qc1, qc2)
-        Just sop -> Left $ "Failed to validate: " ++ show sop
+-}
 
 -- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec

@@ -13,108 +13,85 @@ import Frontend.DotQC
 import Optimization.PhaseFold
 import Optimization.TPar
 import Verification.SOP
-import Core (Primitive(CNOT, T, Tinv))
+import Core (Primitive(CNOT, T, Tinv), ID)
 
 import Tests
 
-printJust Nothing  = print ""
-printJust (Just x) = print x
+{- Toolkit passes -}
 
-printStats xs =
-  let cnots = length $ filter (\x -> case x of CNOT _ _ -> True; _ -> False) xs
-      ts    = length $ filter (\x -> case x of T _ -> True; Tinv _ -> True; _ -> False) xs
-  in do
-    putStrLn $ "# CNOT-count: " ++ show cnots
-    putStrLn $ "# T-count:    " ++ show ts
+type DotQCPass = DotQC -> Either String DotQC
 
+trivPass :: DotQCPass
+trivPass = Right
 
-testPhaseFold qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> return Nothing
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = phaseFold q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in do
-      putStrLn "# Original circuit statistics:"
-      printStats gates
-      putStrLn "# Optimized circuit statistics:"
-      printStats gates'
-      putStrLn "# Validation result:"
-      print $ validate q (Set.toList i) gates gates'
-      print ret
-      return $ Just ret
-      
-{-testCnotMin qc@(DotQC q i o decs) = do
-  (Decl n p body) <- find (\(Decl n _ _) -> n == "main") decs
-  let gates  = toCliffordT body
-  let gates' = gtpar cnotMinMore q (Set.toList i) gates
-  let main   = Decl n p $ fromCliffordT gates'
-  Just $ qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }-}
+inlinePass :: DotQCPass
+inlinePass = Right . inlineDotQC
 
-testCnotMin qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> return Nothing
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = minCNOT q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in do
-      putStrLn "# Original circuit statistics:"
-      printStats gates
-      putStrLn "# Optimized circuit statistics:"
-      printStats gates'
-      putStrLn "# Validation result:"
-      print $ validate q (Set.toList i) gates gates'
-      print ret
-      return $ Just ret
+optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQCPass
+optimizationPass f qc = Right $ qc { decls = map applyOpt $ decls qc }
+  where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
+        wrap g        = fromCliffordT . g . toCliffordT
+        inp           = Set.toList $ inputs qc
 
-testTpar qc@(DotQC q i o decs) = case find (\(Decl n _ _) -> n == "main") decs of
-  Nothing -> return Nothing
-  Just (Decl n p body) ->
-    let gates  = toCliffordT body
-        gates' = tpar q (Set.toList i) gates
-        main   = Decl n p $ fromCliffordT gates'
-        ret    = qc { decls = map (\dec@(Decl n _ _) -> if n == "main" then main else dec) decs }
-    in do
-      putStrLn "# Original circuit statistics:"
-      printStats gates
-      putStrLn "# Optimized circuit statistics:"
-      printStats gates'
-      putStrLn "# Validation result:"
-      print $ validate q (Set.toList i) gates gates'
-      print ret
-      return $ Just ret
+phasefoldPass :: DotQCPass
+phasefoldPass = optimizationPass phaseFold
 
-parseArgs :: ((DotQC, DotQC) -> Either String (DotQC, DotQC)) -> [String] -> IO ()
-parseArgs pass []     = return ()
-parseArgs pass (x:xs) = case x of
-  "-phasefold" -> parseArgs (pass >=> runPhaseFold) xs
-  "-cnotmin"   -> parseArgs (pass >=> runCnotMin) xs
-  "-tpar"      -> parseArgs (pass >=> runTpar) xs
-  "-verify"    -> parseArgs (pass >=> runVerification) xs
-  "VerBench"   -> runVertest benchmarksMedium
+tparPass :: DotQCPass
+tparPass = optimizationPass tpar
+
+cnotminPass :: DotQCPass
+cnotminPass = optimizationPass minCNOT
+
+equivalenceCheck :: DotQC -> DotQC -> Either String DotQC
+equivalenceCheck qc qc' =
+  let gatelist      = toCliffordT . toGatelist $ qc
+      gatelist'     = toCliffordT . toGatelist $ qc'
+      primaryInputs = Set.toList $ inputs qc
+      result        = validate (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
+  in
+    case (inputs qc == inputs qc', result) of
+      (False, _)    -> Left $ "Failed to verify: different inputs"
+      (_, Just sop) -> Left $ "Failed to verify: " ++ show sop
+      _             -> Right qc'
+
+{- Main program -}
+
+run :: DotQCPass -> Bool -> String -> Either String [String]
+run pass verify src = do
+  qc  <- printErr $ parseDotQC src
+  qc' <- pass qc
+  if verify
+    then equivalenceCheck qc qc'
+    else Right qc'
+  return $ ["# Original:"] ++
+           map ("#   " ++) (showCliffordTStats qc) ++
+           ["# Result:"] ++
+           map ("#   " ++) (showCliffordTStats qc') ++
+           [show qc']
+  where printErr (Left l)  = Left $ show l
+        printErr (Right r) = Right r
+
+parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
+parseArgs pass verify []     = return ()
+parseArgs pass verify (x:xs) = case x of
+  "-inline"    -> parseArgs (pass >=> inlinePass) verify xs
+  "-phasefold" -> parseArgs (pass >=> phasefoldPass) verify xs
+  "-cnotmin"   -> parseArgs (pass >=> cnotminPass) verify xs
+  "-tpar"      -> parseArgs (pass >=> tparPass) verify xs
+  "-verify"    -> parseArgs pass True xs
+--  "VerBench"   -> runVertest benchmarksMedium
   "VerAlg"     -> runVerSuite
-  "Small"      -> runBenchmarks pass benchmarksSmall
-  "Med"        -> runBenchmarks pass benchmarksMedium
-  "All"        -> runBenchmarks pass benchmarksAll
+--  "Small"      -> runBenchmarks pass benchmarksSmall
+--  "Med"        -> runBenchmarks pass benchmarksMedium
+--  "All"        -> runBenchmarks pass benchmarksAll
   f            -> do
-    s <- readFile f
-    case printErr (parseDotQC s) >>= (\c -> pass (c, c)) of
-      Left err      -> putStrLn err
-      Right (c, c') -> do
-        putStrLn $ "# Original circuit statistics:"
-        mapM_ putStrLn $ map ("#   " ++) (showCliffordTStats c)
-        putStrLn $ "# Optimized circuit statistics:"
-        mapM_ putStrLn $ map ("#   " ++) (showCliffordTStats c')
-        print c'
-  where printErr res = case res of
-          Left err -> Left $ show err
-          Right x  -> Right x
+    src <- readFile f
+    case run pass verify src of
+      Left err  -> putStrLn $ "ERROR: " ++ err
+      Right res -> mapM_ putStrLn res
 
 main :: IO ()
 main = do
   putStrLn "# Feynman -- quantum circuit toolkit"
   putStrLn "# Written by Matthew Amy"
-  --putStrLn $ show $ coverItOpen 4
-  getArgs >>= parseArgs return
+  getArgs >>= parseArgs trivPass False
