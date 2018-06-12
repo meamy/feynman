@@ -112,12 +112,12 @@ printResult (num, totals) (benchmark, result) = case result of
                         ++ formatFloatN (time result) 3 ++ "ms"
     avgs      <- mapM printStat (Map.toList $ counts result)
     avgdepth  <- printStat ("Depth", depths result)
-    avgtdepth <- printStat ("T-depth", tdepths result)
+    avgtdepth <- printStat ("Tdepth", tdepths result)
     return (num+1, Map.unionsWith (+) (avgs ++ [avgdepth, avgtdepth, totals]))
   where printStat (stat, (orig, opt)) = do
           let diff = 100.0 * ((fromIntegral (orig-opt)) / (fromIntegral orig))
           putStrLn $ "\t" ++ stat ++ ":\t\t" ++ show orig ++ "/"
-                          ++ show opt ++ "\t" ++ (if orig == 0 then "N/A" else show diff)
+                          ++ show opt ++ "\t\t" ++ (if orig == 0 then "N/A" else show diff ++ "%")
           if orig == 0
             then return Map.empty
             else return $ Map.fromList [(stat, diff)]
