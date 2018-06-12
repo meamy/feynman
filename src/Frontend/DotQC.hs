@@ -5,7 +5,7 @@ import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Data.Map.Strict (Map)
+import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
 import Text.ParserCombinators.Parsec hiding (space)
@@ -16,11 +16,9 @@ import Core (ID, Primitive(..), showLst, Angle(..))
 import Algebra.Base
 
 type Nat = Word
---type ID = String
 
-{- A gate has an identifier, a non-negative number of iterations,
- - and a list of parameters. Parameterized gates are not pretty
- - but this is a nice quick solution -}
+{- Data structures -}
+
 data Gate =
     Gate ID Nat [ID]
   | ParamGate ID Nat Angle [ID] deriving (Eq)
@@ -34,12 +32,7 @@ data DotQC = DotQC { qubits  :: [ID],
                      outputs :: Set ID,
                      decls   :: [Decl] }
 
-primitive = ["H", "X", "Y", "Z",
-             "S", "S*", "P", "P*", "T", "T*",
-             "tof", "cnot", "swap",
-             "Rz", "Rx", "Ry"]
-
-{- Printing & information -}
+{- Printing -}
 
 instance Show Gate where
   show (Gate name 0 params) = ""
@@ -62,7 +55,9 @@ instance Show DotQC where
     where q'  = ".v " ++ showLst q
           i'  = ".i " ++ showLst (filter (`Set.member` i) q)
           o'  = ".o " ++ showLst (filter (`Set.member` o) q)
-          bod = map show decls
+          bod = map show . uncurry (++) . partition (\decl -> name decl /= "main") $ decls
+
+{- Accessors -}
 
 repeats :: Num a => Gate -> a
 repeats (Gate _ i _)        = fromIntegral i
@@ -83,9 +78,9 @@ subst f = map g
   where g (Gate g i params) = Gate g i $ map f params
         g (ParamGate g i p params) = ParamGate g i p $ map f params
 
--- Expands gate declarations and repeated applications. Doesn't check for cycles or uninterpreted gates
-toGatelist :: DotQC -> [Gate]
-toGatelist circ =
+-- Inlines all declarations. Doesn't check for cycles, all gates without definitions are uninterpreted
+inlineAll :: DotQC -> DotQC
+inlineAll circ =
   let accGatelist ctx []     = (ctx, [])
       accGatelist ctx (x:xs) =
         let (ctx', xpand)   = gateToList ctx x
@@ -105,31 +100,42 @@ toGatelist circ =
           let (ctx', gatelist) = accGatelist ctx (body decl) in
             (Map.insert (name decl) gatelist ctx', gatelist)
         Just gatelist -> (ctx, gatelist)
+      inlined = foldl (\ctx decl -> fst $ expandSubdec ctx decl) Map.empty $ decls circ
   in
-    case find (\decl -> name decl == "main") (decls circ) of
-      Nothing   -> []
-      Just decl -> snd $ accGatelist Map.empty (body decl)
+    circ { decls = map (\decl -> decl { body = inlined!(name decl) }) (decls circ) }
 
-inv :: Gate -> Gate
+-- Strips all other functions out of the inlined one
+inlineDotQC :: DotQC -> DotQC
+inlineDotQC circ = circ' { decls = filter (\decl -> name decl == "main") $ decls circ' }
+  where circ' = inlineAll circ
+
+-- Returns the inlined main function
+toGatelist :: DotQC -> [Gate]
+toGatelist circ = case find (\decl -> name decl == "main") (decls $ inlineAll circ) of
+  Nothing   -> []
+  Just decl -> body decl
+
+inv :: Gate -> Maybe Gate
 inv gate@(Gate g i p) =
   case g of
-    "H"    -> gate
-    "X"    -> gate
-    "Y"    -> gate
-    "Z"    -> gate
-    "S"    -> Gate "S*" i p
-    "S*"   -> Gate "S" i p
-    "P"    -> Gate "P*" i p
-    "P*"   -> Gate "P" i p
-    "T"    -> Gate "T*" i p
-    "T*"   -> Gate "T" i p
-    "tof"  -> gate
-    "cnot" -> gate
+    "H"    -> Just gate
+    "X"    -> Just gate
+    "Y"    -> Just gate
+    "Z"    -> Just gate
+    "S"    -> Just $ Gate "S*" i p
+    "S*"   -> Just $ Gate "S" i p
+    "P"    -> Just $ Gate "P*" i p
+    "P*"   -> Just $ Gate "P" i p
+    "T"    -> Just $ Gate "T*" i p
+    "T*"   -> Just $ Gate "T" i p
+    "tof"  -> Just gate
+    "cnot" -> Just gate
+    _      -> Nothing
 inv gate@(ParamGate g i f p) =
   case g of
-    "Rz"   -> ParamGate g i (-f) p
-    "Rx"   -> ParamGate g i (-f) p
-    "Ry"   -> ParamGate g i (-f) p
+    "Rz"   -> Just $ ParamGate g i (-f) p
+    "Rx"   -> Just $ ParamGate g i (-f) p
+    "Ry"   -> Just $ ParamGate g i (-f) p
 
 simplify :: [Gate] -> [Gate]
 simplify circ =
@@ -144,7 +150,7 @@ simplify circ =
           case mapM (\q -> Map.lookup q last) p >>= allSame of
             Nothing -> (last', erasures)
             Just (gate', uid') ->
-              if gate == (inv gate') then
+              if Just gate == (inv gate') then
                 (last', Set.insert uid $ Set.insert uid' erasures)
               else
                 (last', erasures)
@@ -153,20 +159,13 @@ simplify circ =
     fst $ unzip $ filter (\(_, uid) -> not $ Set.member uid erasures) circ'
 
 simplifyDotQC :: DotQC -> DotQC
-simplifyDotQC (DotQC q i o decls) = DotQC q i o $ map f decls
-  where f (Decl n p body) =
-          let body' = simplify body in
-          if body' == body then
-            Decl n p body
+simplifyDotQC circ = circ { decls = map f $ decls circ }
+  where f decl =
+          let body' = simplify $ body decl in
+          if body' == body decl then
+            decl
           else
-            f $ Decl n p body'
-
-{-
-inline :: DotQC -> DotQC
-inline circ@(DotQC _ _ _ decls) =
-  let f decls def@(Decl _ _ body) = def':decls 
-  circ { decls = reverse $ foldl' f [] decls }
--}
+            f $ decl { body = body' }
 
 gateToCliffordT :: Gate -> [Primitive]
 gateToCliffordT (Gate g i p) =
@@ -200,7 +199,6 @@ gateToCliffordT (ParamGate g i theta p) =
         ("Ry", [x]) -> [Ry theta x]
   in
     concat $ genericReplicate i circ
-
 
 toCliffordT :: [Gate] -> [Primitive]
 toCliffordT = concatMap gateToCliffordT
@@ -312,7 +310,7 @@ tDepth (DotQC _ _ _ decls)    = maximum $ 0:(Map.elems $ foldl' f Map.empty decl
           _        -> mp
           
 
--- Parsing
+{- Parser -}
 
 space = char ' '
 semicolon = char ';'
@@ -425,7 +423,7 @@ toffoli = DotQC { qubits  = ["x", "y", "z"],
 toffoliDecl = DotQC { qubits  = ["a", "b", "c"],
                       inputs  = Set.fromList ["a", "b", "c"],
                       outputs = Set.fromList ["a", "b", "c"],
-                      decls  = [main, tof] }
+                      decls  = [tof, main] }
     where tof = Decl { name = "toffoli",
                        params = ["x", "y", "z"],
                        body = [ Gate "H" 1 ["z"],
@@ -443,6 +441,35 @@ toffoliDecl = DotQC { qubits  = ["a", "b", "c"],
                                 Gate "tof" 1 ["y", "z"],
                                 Gate "tof" 1 ["z", "x"],
                                 Gate "tof" 1 ["x", "y"],
+                                Gate "H" 1 ["z"] ] }
+          main = Decl { name = "main",
+                        params = [],
+                        body = [Gate "toffoli" 1 ["a", "b", "c"]] }
+
+toffoliZDecl = DotQC { qubits  = ["a", "b", "c"],
+                       inputs  = Set.fromList ["a", "b", "c"],
+                       outputs = Set.fromList ["a", "b", "c"],
+                       decls  = [ccz, tof, main] }
+    where ccz = Decl { name = "CCZ",
+                       params = ["x", "y", "z"],
+                       body = [ Gate "T" 1 ["x"],
+                                Gate "T" 1 ["y"],
+                                Gate "T" 1 ["z"], 
+                                Gate "tof" 1 ["x", "y"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "T*" 1 ["x"],
+                                Gate "T*" 1 ["y"],
+                                Gate "T" 1 ["z"],
+                                Gate "tof" 1 ["y", "x"],
+                                Gate "T*" 1 ["x"],
+                                Gate "tof" 1 ["y", "z"],
+                                Gate "tof" 1 ["z", "x"],
+                                Gate "tof" 1 ["x", "y"] ] }
+          tof = Decl { name = "toffoli",
+                       params = ["x", "y", "z"],
+                       body = [ Gate "H" 1 ["z"],
+                                Gate "CCZ" 1 ["x", "y", "z"],
                                 Gate "H" 1 ["z"] ] }
           main = Decl { name = "main",
                         params = [],
