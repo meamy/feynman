@@ -213,7 +213,7 @@ gateFromCliffordT g = case g of
   Sinv x   -> Gate "S*" 1 [x]
   T x      -> Gate "T" 1 [x]
   Tinv x   -> Gate "T*" 1 [x]
-  CNOT x y -> Gate "tof" 1 [x, y]
+  CNOT x y -> Gate "cnot" 1 [x, y]
   Swap x y -> Gate "swap" 1 [x, y]
   Rz f x   -> ParamGate "Rz" 1 f [x]
   Rx f x   -> ParamGate "Rx" 1 f [x]
@@ -224,9 +224,12 @@ fromCliffordT = map gateFromCliffordT
 
 {- Statistics -}
 
+stripAdjoint :: String -> String
+stripAdjoint = filter (\c -> c /= '*')
+
 gateCounts :: [Gate] -> Map ID Int
 gateCounts = foldl f Map.empty
-  where f counts gate = addToCount (repeats gate) (gateName gate) counts
+  where f counts gate = addToCount (repeats gate) (stripAdjoint $ gateName gate) counts
         addToCount i g counts =
           let alterf val = case val of
                 Nothing -> Just 1
@@ -251,6 +254,9 @@ gateDepth gates = maximum . Map.elems . foldl f Map.empty
           in
             foldr (\id -> Map.insert id tot) depths args
 
+tDepth :: [Gate] -> Int
+tDepth = gateDepth ["T", "T*"]
+
 showStats :: DotQC -> [String]
 showStats circ =
   let gatelist   = toGatelist circ
@@ -265,50 +271,9 @@ showCliffordTStats circ =
   let gatelist   = fromCliffordT . toCliffordT . toGatelist $ circ
       counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
       totaldepth = ["Depth: " ++ (show $ depth gatelist)]
-      tdepth     = ["T depth: " ++ (show $ gateDepth ["T", "T*"] gatelist)]
+      tdepth     = ["T depth: " ++ (show $ tDepth gatelist)]
   in
     counts ++ totaldepth ++ tdepth
-
--- Deprecated
-countGates (DotQC _ _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
-  where plus                   = zipWith (+)
-        f cnt (Decl _ _ gates) = foldl' g cnt $ toCliffordT gates
-        g cnt gate             = case gate of
-          H _      -> plus cnt [1,0,0,0,0,0,0,0]
-          X _      -> plus cnt [0,1,0,0,0,0,0,0]
-          Y _      -> plus cnt [0,0,1,0,0,0,0,0]
-          Z _      -> plus cnt [0,0,0,1,0,0,0,0]
-          CNOT _ _ -> plus cnt [0,0,0,0,1,0,0,0]
-          S _      -> plus cnt [0,0,0,0,0,1,0,0]
-          Sinv _   -> plus cnt [0,0,0,0,0,1,0,0]
-          T _      -> plus cnt [0,0,0,0,0,0,1,0]
-          Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
-          Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
-          _        -> cnt
-
--- Deprecated
-tDepth :: DotQC -> Int
-tDepth (DotQC _ _ _ decls)    = maximum $ 0:(Map.elems $ foldl' f Map.empty decls)
-  where addOne val            = case val of
-          Nothing -> Just 1
-          Just v  -> Just $ v + 1
-        f mp (Decl _ _ gates) = foldl' g mp $ toCliffordT gates
-        g mp gate             = case gate of
-          T x      -> Map.alter addOne x mp
-          Tinv x   -> Map.alter addOne x mp
-          CNOT x y ->
-            let xval = Map.findWithDefault 0 x mp
-                yval = Map.findWithDefault 0 y mp
-                maxv = max xval yval
-            in
-              Map.insert x maxv $ Map.insert y maxv mp
-          Swap x y ->
-            let xval = Map.findWithDefault 0 x mp
-                yval = Map.findWithDefault 0 y mp
-            in
-              Map.insert x yval $ Map.insert y xval mp
-          _        -> mp
-          
 
 {- Parser -}
 

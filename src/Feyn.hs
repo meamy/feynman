@@ -15,7 +15,7 @@ import Optimization.TPar
 import Verification.SOP
 import Core (Primitive(CNOT, T, Tinv), ID)
 
-import Tests
+import Benchmarks
 
 {- Toolkit passes -}
 
@@ -79,11 +79,11 @@ parseArgs pass verify (x:xs) = case x of
   "-cnotmin"   -> parseArgs (pass >=> cnotminPass) verify xs
   "-tpar"      -> parseArgs (pass >=> tparPass) verify xs
   "-verify"    -> parseArgs pass True xs
---  "VerBench"   -> runVertest benchmarksMedium
+  "VerBench"   -> runVertest cnotminPass equivalenceCheck benchmarksMedium
   "VerAlg"     -> runVerSuite
---  "Small"      -> runBenchmarks pass benchmarksSmall
---  "Med"        -> runBenchmarks pass benchmarksMedium
---  "All"        -> runBenchmarks pass benchmarksAll
+  "Small"      -> runBenchmarks pass benchmarksSmall
+  "Med"        -> runBenchmarks pass benchmarksMedium
+  "All"        -> runBenchmarks pass benchmarksAll
   f            -> do
     src <- readFile f
     case run pass verify src of
