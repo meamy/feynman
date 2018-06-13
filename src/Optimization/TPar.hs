@@ -252,13 +252,13 @@ gtparopen osynth vars inputs gates =
 {- t-par: the t-par algorithm from [AMM2014] -}
 tpar = gtpar tparMore
 
-{- minCNOT: CNOT minimization algorithm -}
-minCNOT = gtpar cnotMinGray
+{- minCNOT: the CNOT minimization algorithm from [AAM17] -}
+minCNOT = gtpar cnotMinGrayPointed
 
 minCNOTOpen = gtparopen cnotMinGrayOpen
 
 minCNOTMaster vars inputs gates =
-  let option1 = gtpar cnotMinGray vars inputs gates
+  let option1 = gtpar cnotMinGrayPointed vars inputs gates
       option2 = gtparopen cnotMinGrayOpen vars inputs gates
       isct g = case g of
         CNOT _ _  -> True

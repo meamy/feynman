@@ -35,16 +35,6 @@ adjust t p xs = map f xs
   where f (Pt c t p vecs) = Pt c t p $ map g vecs
         g (bv, i) = (if bv@.t then complementBit bv p else bv, i)
 
-findColumnSplit :: [Int] -> [(F2Vec, Angle)] -> ([(F2Vec, Angle)], Int, [Int], [(F2Vec, Angle)])
-findColumnSplit (c:cs) vecs = foldl' g init cs
-  where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
-        init = case f c of (l, r) -> (l, c, [], r)
-        g (l, c, cs, r) c' =
-          let (l', r') = f c' in
-            if length r' > length r
-            then (l', c', c:cs, r')
-            else (l, c, c':cs, r)
-
 findBestSplit :: [Int] -> [(F2Vec, Angle)] -> ([(F2Vec, Angle)], Int, [Int], [(F2Vec, Angle)])
 findBestSplit (c:cs) vecs = foldl' g init cs
   where f c  = partition (\(bv, _) -> not $ bv@.c) vecs
@@ -90,40 +80,15 @@ graySynthesis ids out (x:xs) = case x of
     in
       graySynthesis ids out (xzero:xone:xs)
 
-graySynthesisDirectional :: [ID] -> Map ID F2Vec -> [Pt] -> Writer [Primitive] (Map ID F2Vec)
-graySynthesisDirectional ids out []     = return out
-graySynthesisDirectional ids out (x:xs) = case x of
-  Pt _ _ _ [] -> graySynthesisDirectional ids out xs
-  Pt c (Just t) (Just p) v ->
-    let idp  = ids !! p
-        idt  = ids !! t
-        xs'  = (Pt c (Just t) Nothing v):(adjust t p xs)
-        out' = case (out!idp, out!idt) of
-          (bvp, bvt) -> Map.insert idt (bvp + bvt) out
-    in do
-      tell [CNOT idp idt]
-      graySynthesisDirectional ids out' xs'
-  Pt [] (Just t) Nothing [(_, a)] -> do
-    tell $ synthesizePhase (ids !! t) a
-    graySynthesisDirectional ids out xs
-  Pt [] Nothing _ _ -> graySynthesisDirectional ids out xs
-  Pt (c:cs) targ Nothing vecs ->
-    let (vl, c', cs', vr) = findBestSplitMono (c:cs) vecs
-        xzero = Pt cs' targ Nothing vl
-        xone  = case targ of
-          Just t  -> Pt cs' targ (Just c') vr
-          Nothing -> Pt cs' (Just c') Nothing vr
-        partitions = if length vl >= length vr then xzero:xone:xs else xone:xzero:xs
-    in
-      graySynthesisDirectional ids out partitions
-
-cnotMinGray0 :: Synthesizer
-cnotMinGray0 input output [] = linearSynth input output []
-cnotMinGray0 input output xs =
-  let ivecs  = Map.toList input
-      solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+-- Pointed
+cnotMinGrayPointed :: Synthesizer
+cnotMinGrayPointed input output [] = linearSynth input output []
+cnotMinGrayPointed input output xs =
+  let ivecs    = Map.toList input
+      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+      f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
+    case mapM f . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
         let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
@@ -131,24 +96,28 @@ cnotMinGray0 input output xs =
         in
           gates ++ linearSynth outin output []
 
-cnotMinGray1 :: Synthesizer
-cnotMinGray1 input output [] = linearSynth input output []
-cnotMinGray1 input output xs =
-  let ivecs  = Map.toList input
-      solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+-- non-pointed synthesis
+cnotMinGrayOpen :: OpenSynthesizer
+cnotMinGrayOpen input [] = (input, [])
+cnotMinGrayOpen input xs =
+  let ivecs    = Map.toList input
+      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+      f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
+    case mapM f . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
-        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
-            (outin, gates) = runWriter $ graySynthesisDirectional (fst $ unzip ivecs) input initPt
-        in
-          gates ++ linearSynth outin output []
+        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs'] in
+          runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
 
+{- Master method -}
+
+cnotMinGray = cnotMinGrayPointed
+
+{-
 cnotMinGray input output xs =
   let gates    = cnotMinGray0 input output $ filter (\(_, i) -> order i /= 1) xs
       gates'   = cnotMinGray0 input output $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
-      --gates''  = cnotMinGray1 input output $ filter (\(_, i) -> i `mod` 8 /= 0) xs
       gates''  = cnotMinGray0 input output xs
       isct g = case g of
         CNOT _ _  -> True
@@ -156,18 +125,6 @@ cnotMinGray input output xs =
       countc = length . filter isct
   in
     minimumBy (comparing countc) [gates, gates', gates'']
-
--- Open-ended
-cnotMinGrayOpen0 input [] = (input, [])
-cnotMinGrayOpen0 input xs =
-  let ivecs  = Map.toList input
-      solver = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
-  in
-    case mapM (\(vec, i) -> solver vec >>= \vec' -> Just (vec', i)) xs of
-      Nothing  -> error "Fatal: something bad happened"
-      Just xs' ->
-        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs'] in
-          runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
 
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs
@@ -179,18 +136,9 @@ cnotMinGrayOpen input xs =
       countc = length . filter isct . snd
   in
     minimumBy (comparing countc) [gates, gates', gates'']
-
-{- Temp for testing
-ids  = ["a", "b", "c", "d"]
-vecs = Set.fromList [bitVec 4 6, bitVec 4 1, bitVec 4 9, bitVec 4 7, bitVec 4 11, bitVec 4 3]
-outs = Map.fromList [("a", bitVec 4 1), ("b", bitVec 4 2), ("c", bitVec 4 4), ("d", bitVec 4 8)]
-
-idsz  = ["a", "b", "c"]
-vecsz = Set.delete (bitVec 3 0) $ Set.fromList $ allVecs 3
-outsz = Map.fromList [("a", bitVec 3 1), ("b", bitVec 3 2), ("c", bitVec 3 4)]
 -}
 
--- Verification & brute force for skeletons
+{- Brute force synthesis -}
 
 maximalSkeleton :: [ID] -> Map ID F2Vec -> [Primitive] -> Set F2Vec
 maximalSkeleton ids st gates = snd $ Data.List.foldl f (st, Set.fromList $ Map.elems st) gates

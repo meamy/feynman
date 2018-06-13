@@ -60,8 +60,8 @@ linearSynth input output _ =
         Exchange i j -> [Swap (ids !! i) (ids !! j)]
   in
     if ids /= idt
-    then error "Fatal: map keys not equal"
-    else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
+      then error "Fatal: map keys not equal"
+      else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
 synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
 synthVec ids vec =
@@ -88,10 +88,9 @@ cnotMinMore input output [] = linearSynth input output []
 cnotMinMore input output (x:xs) =
   let ivecs  = Map.toList input
       solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
-      takeMin (bv, x, acc) x' bv' =
-        if wt bv <= wt bv'
-        then Just (bv, x, x':acc)
-        else Just (bv', x', x:acc)
+      takeMin (bv, x, acc) x' bv'
+        | wt bv <= wt bv' = Just (bv, x, x':acc)
+        | otherwise       = Just (bv', x', x:acc)
       f (bv, x, acc) x' = solver (fst x') >>= takeMin (bv, x, acc) x'
       synthIt (bv, (_, i), acc) = synthVec ivecs bv >>= \(res, gates) -> Just (res, i, gates, acc)
   in
@@ -118,16 +117,14 @@ synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x
         gates  = linearSynth input input' []
     in
       if v == u
-      then (input', gates)
-      else
-        (Map.insert v x (Map.insert u (input!v) input), gates ++ [Swap u v])
+        then (input', gates)
+        else (Map.insert v x (Map.insert u (input!v) input), gates ++ [Swap u v])
     
 
 addToSpan :: ID -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
-addToSpan v input =
-  if inLinearSpan (Map.elems . Map.delete v $ input) (input!v)
-  then (input, [])
-  else
+addToSpan v input
+  | inLinearSpan (Map.elems . Map.delete v $ input) (input!v) = (input, [])
+  | otherwise =
     let (ids, vecs) = unzip $ Map.toList input in
       case findDependent vecs of
         Nothing -> error "Fatal: Adding to span of independent set"
@@ -136,10 +133,9 @@ addToSpan v input =
 subsetize :: ID -> Map ID F2Vec -> (F2Vec -> Bool) -> (Map ID F2Vec, [Primitive])
 subsetize v input solver =
   let x = input!v 
-      f accum u vec =
-        if u == v || solver vec
-        then (accum, vec)
-        else (accum ++ [CNOT v u], vec + x)
+      f accum u vec
+        | u == v || solver vec = (accum, vec)
+        | otherwise            = (accum ++ [CNOT v u], vec + x)
   in
     swap $ Map.mapAccumWithKey f [] input
 
@@ -147,16 +143,13 @@ unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
 unify v input output =
   let (input', gates) = synthV v (output!v) input
       vSolve = inLinearSpan (Map.elems . Map.delete v $ output)
-      (output', gates') =
-        if vSolve $ output!v
-        then addToSpan v input'
-        else subsetize v input' vSolve
+      (output', gates')
+        | vSolve $ output!v = addToSpan v input'
+        | otherwise         = subsetize v input' vSolve
   in
-    --(output', gates ++ gates')
     if sameSpace (Map.elems . Map.delete v $ output') (Map.elems . Map.delete v $ output)
-    then (output', gates ++ gates')
-    else --trace ("unification failed: " ++ (show v) ++ " " ++ (show input) ++ (show output') ++ (show output)) $
-      (output, gates ++ (linearSynth input' output []))
+      then (output', gates ++ gates')
+      else (output, gates ++ (linearSynth input' output []))
 
 unifyAffine v input output =
   let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
