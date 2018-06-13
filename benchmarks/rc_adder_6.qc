@@ -52,29 +52,29 @@ tof a3 b4
 tof a4 b5
 
 H a4
-Z a3 b4 a4
+Zd a3 b4 a4
 H a4
 
 H a3
-Z a2 b3 a3
+Zd a2 b3 a3
 H a3
 X b4
 tof a5 a4
 
 H a2
-Z a1 b2 a2
+Zd a1 b2 a2
 H a2
 X b3
 tof a4 a3
 
 H a1
-Z e b1 a1
+Zd e b1 a1
 H a1
 X b2
 tof a3 a2
 
 H e
-Z b0 a0 e
+Zd b0 a0 e
 H e
 X b1
 tof a2 a1

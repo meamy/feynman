@@ -1,6 +1,7 @@
 module Optimization.TPar where
 
 import Data.List hiding (transpose)
+import Data.Ord (comparing)
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -80,6 +81,9 @@ exists v st@(SOP dim ivals qvals terms phase) =
     put $ SOP dim' vals vals terms'' phase
     return $ Map.toList orp
 
+replaceIval :: Map ID (F2Vec, Bool) -> AnalysisState -> AnalysisState
+replaceIval ivals' st = st { ivals = ivals' }
+
 updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
@@ -132,7 +136,7 @@ applyGate synth gates g = case g of
     bv <- getSt v
     st <- get
     orphans <- exists v st
-    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [H v]
+    return $ gates ++ (synth (ivals st) (qvals st) orphans) ++ [H v]
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
@@ -154,10 +158,64 @@ applyGate synth gates g = case g of
     orphans <- exists v st
     return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
 
+applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
+applyGateOpen synth gates g = case g of
+  T v      -> do
+    bv <- getSt v
+    modify $ addTerm bv (Discrete $ dyadic 1 3)
+    return gates
+  Tinv v   -> do
+    bv <- getSt v
+    modify $ addTerm bv (Discrete $ dyadic 7 3)
+    return gates
+  S v      -> do
+    bv <- getSt v
+    modify $ addTerm bv (Discrete $ dyadic 1 2)
+    return gates
+  Sinv v   -> do
+    bv <- getSt v
+    modify $ addTerm bv (Discrete $ dyadic 3 2)
+    return gates
+  Z v      -> do
+    bv <- getSt v
+    modify $ addTerm bv (Discrete $ dyadic 1 1)
+    return gates
+  CNOT c t -> do
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+    return gates
+  X v      -> do
+    (bv, b) <- getSt v
+    modify $ updateQval v (bv, Prelude.not b)
+    return gates
+  H v      -> do
+    bv <- getSt v
+    st <- get
+    orphans <- exists v st
+    let (out, parities)    = synth (ivals st) orphans
+        (out', correction) = unifyAffine v out (qvals st)
+    st' <- get
+    let out'' = if (dim st') > (dim st) then Map.map (\(bv, b) -> (zeroExtend 1 bv, b)) out' else out'
+    modify $ replaceIval (Map.insert v ((qvals st')!v) out'')
+    return $ gates ++ parities ++ correction ++ [H v]
+  Swap u v -> do
+    bvu <- getSt u
+    bvv <- getSt v
+    modify $ updateQval u bvv
+    modify $ updateQval v bvu
+    return gates
+
 finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
   return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
+
+finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
+finalizeOpen synth gates = do
+  st <- get
+  let (out', parities) = synth (ivals st) $ Map.toList (terms st)
+  return $ gates ++ parities ++ ((affineTrans linearSynth) out' (qvals st) [])
     
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar osynth vars inputs gates =
@@ -174,6 +232,20 @@ gtpar osynth vars inputs gates =
         bitvecs = [(bitI dim' x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
+gtparopen :: OpenSynthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtparopen osynth vars inputs gates =
+  let synth = affineTransOpen osynth
+      init = 
+        SOP { dim = dim', 
+              ivals = Map.fromList ivals, 
+              qvals = Map.fromList ivals, 
+              terms = Map.empty,
+              phase = 0 }
+  in
+    evalState (foldM (applyGateOpen synth) [] gates >>= finalizeOpen synth) init
+  where dim'    = length inputs
+        bitvecs = [(bitI dim' x, False) | x <- [0..]] 
+        ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
 -- Optimization algorithms
 
@@ -182,3 +254,15 @@ tpar = gtpar tparMore
 
 {- minCNOT: CNOT minimization algorithm -}
 minCNOT = gtpar cnotMinGray
+
+minCNOTOpen = gtparopen cnotMinGrayOpen
+
+minCNOTMaster vars inputs gates =
+  let option1 = gtpar cnotMinGray vars inputs gates
+      option2 = gtparopen cnotMinGrayOpen vars inputs gates
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct
+  in
+    minimumBy (comparing countc) [option1, option2]

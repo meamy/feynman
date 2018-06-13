@@ -63,23 +63,24 @@ H c7
 H e5
 
 Z d5 c7 e5
-Z c5 c7 z
-Z c1 d3 c3
+
+Zd c5 c7 z
+Zd c1 d3 c3
 
 H e5
 H c3
 
 H c5
 
-Z c3 e5 z
-Z c3 d5 c5
+Zd c3 e5 z
+Zd c3 d5 c5
 
 H c5
 H z
 
 H e5
 
-Z d5 c7 e5
+Zd d5 c7 e5
 
 H e5
 
@@ -87,9 +88,9 @@ H d3
 H d5
 H c7
 
-Z b3 a3 d3
-Z b5 a5 d5
-Z b7 a7 c7
+Zd b3 a3 d3
+Zd b5 a5 d5
+Zd b7 a7 c7
 
 tof b2 a3
 tof b4 a5
@@ -98,9 +99,9 @@ tof a2 b2
 tof a4 b4
 tof a6 b6
 
-Z b3 a3 d3
-Z b5 a5 d5
-Z b7 a7 c7
+Zd b3 a3 d3
+Zd b5 a5 d5
+Zd b7 a7 c7
 
 H c7
 
@@ -109,10 +110,10 @@ H a3
 H a5
 H a7
 
-Z b0 a0 a1
-Z b2 a2 a3
-Z b4 a4 a5
-Z b6 a6 a7
+Zd b0 a0 a1
+Zd b2 a2 a3
+Zd b4 a4 a5
+Zd b6 a6 a7
 
 H a1
 H a3
@@ -158,10 +159,10 @@ H a3
 H a5
 H a7
 
-Z b0 a0 a1
-Z b2 a2 a3
-Z b4 a4 a5
-Z b6 a6 a7
+Zd b0 a0 a1
+Zd b2 a2 a3
+Zd b4 a4 a5
+Zd b6 a6 a7
 
 H a1
 H a3
@@ -229,17 +230,17 @@ H c1
 H d3
 H d5
 
-Z b3 a3 d3
-Z b5 a5 d5
+Zd b3 a3 d3
+Zd b5 a5 d5
 tof b2 a3
 tof b4 a5
-Z b3 a3 d3
-Z b5 a5 d5
+Zd b3 a3 d3
+Zd b5 a5 d5
 tof a2 b2
 tof a4 b4
-Z b3 a3 c3
-Z b5 a5 c5
-Z b1 a1 c1
+Zd b3 a3 c3
+Zd b5 a5 c5
+Zd b1 a1 c1
 
 H c1
 H c3
@@ -251,9 +252,9 @@ H a1
 H a3
 H a5
 
-Z b0 a0 a1
-Z b2 a2 a3
-Z b4 a4 a5
+Zd b0 a0 a1
+Zd b2 a2 a3
+Zd b4 a4 a5
 
 H a1
 H a3

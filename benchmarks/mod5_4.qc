@@ -7,7 +7,7 @@ X a
 H a
 
 Z b e a
-Z d e a
+Zd d e a
 
 H a
 
@@ -23,7 +23,7 @@ tof d a
 
 H a
 
-Z b c a
+Zd b c a
 
 H a
 

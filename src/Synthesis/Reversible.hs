@@ -1,6 +1,8 @@
 module Synthesis.Reversible where
 
 import Data.List hiding (transpose)
+import Data.Tuple (swap)
+import Data.Maybe (fromJust)
 
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
@@ -11,14 +13,16 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
-
 import Algebra.Base
 import Algebra.Linear
 import Synthesis.Phase
 import Core
 
-type AffineSynthesizer = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
-type Synthesizer       = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
+type AffineSynthesizer     = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
+type Synthesizer           = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
+type AffineOpenSynthesizer = Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> (Map ID (F2Vec, Bool), [Primitive])
+type OpenSynthesizer       = Map ID F2Vec -> [(F2Vec, Angle)] -> (Map ID F2Vec, [Primitive])
+
 
 {-- Synthesizers -}
 affineTrans :: Synthesizer -> AffineSynthesizer
@@ -29,6 +33,14 @@ affineTrans synth = \input output xs ->
   in
     inX ++ (synth (Map.map fst input) (Map.map fst output) xs) ++ outX
 
+affineTransOpen :: OpenSynthesizer -> AffineOpenSynthesizer
+affineTransOpen synth = \input xs ->
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      (out, circ) = synth (Map.map fst input) xs
+  in
+    (Map.map (\bv -> (bv, False)) out, inX ++ circ)
+
 emptySynth :: Synthesizer
 emptySynth _ _ _ = []
 
@@ -37,8 +49,8 @@ linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMat (fromList ivecs) (fromList ovecs)
-      rops = snd $ runWriter $ toReducedEchelonPMH mat
-      rops' = snd $ runWriter $ toReducedEchelonSqr mat
+      rops = snd $ runWriter $ toReducedEchelonPMHA mat
+      rops' = snd $ runWriter $ toReducedEchelonA mat
       isadd g = case g of
         Add _ _   -> True
         otherwise -> False
@@ -91,3 +103,65 @@ cnotMinMost :: Synthesizer
 cnotMinMost input output xs = cnotMinMore input output xs'
   where xs' = filter (\(_, i) -> order i /= 1) xs
 
+-- Given x, U and V, apply a linear transformation L to U such that
+--   1) LU(x) = V(x), and
+--   2) span(LU - x) = span(V - x)
+
+synthV :: ID -> F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x of
+  Nothing -> error "Fatal: vector not in linear span"
+  Just y  ->
+    let u      = case find (y@.) [0..width y-1] of
+          Nothing -> v
+          Just i  -> (Map.keys input)!!i
+        input' = Map.insert u x input
+        gates  = linearSynth input input' []
+    in
+      if v == u
+      then (input', gates)
+      else
+        (Map.insert v x (Map.insert u (input!v) input), gates ++ [Swap u v])
+    
+
+addToSpan :: ID -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+addToSpan v input =
+  if inLinearSpan (Map.elems . Map.delete v $ input) (input!v)
+  then (input, [])
+  else
+    let (ids, vecs) = unzip $ Map.toList input in
+      case findDependent vecs of
+        Nothing -> error "Fatal: Adding to span of independent set"
+        Just i  -> (Map.insert (ids!!i) (vecs!!i + input!v) input, [CNOT v (ids!!i)])
+
+subsetize :: ID -> Map ID F2Vec -> (F2Vec -> Bool) -> (Map ID F2Vec, [Primitive])
+subsetize v input solver =
+  let x = input!v 
+      f accum u vec =
+        if u == v || solver vec
+        then (accum, vec)
+        else (accum ++ [CNOT v u], vec + x)
+  in
+    swap $ Map.mapAccumWithKey f [] input
+
+unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+unify v input output =
+  let (input', gates) = synthV v (output!v) input
+      vSolve = inLinearSpan (Map.elems . Map.delete v $ output)
+      (output', gates') =
+        if vSolve $ output!v
+        then addToSpan v input'
+        else subsetize v input' vSolve
+  in
+    --(output', gates ++ gates')
+    if sameSpace (Map.elems . Map.delete v $ output') (Map.elems . Map.delete v $ output)
+    then (output', gates ++ gates')
+    else --trace ("unification failed: " ++ (show v) ++ " " ++ (show input) ++ (show output') ++ (show output)) $
+      (output, gates ++ (linearSynth input' output []))
+
+unifyAffine v input output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      (out, gates) = unify v (Map.map fst input) (Map.map fst output)
+  in
+    (Map.map (\bv -> (bv, False)) out, inX ++ gates)
+  
