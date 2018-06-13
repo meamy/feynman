@@ -6,6 +6,7 @@ import Data.Maybe (fromJust)
 import Control.Monad (when)
 import Numeric
 import System.Time
+import System.Console.ANSI
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -96,6 +97,7 @@ benchmarksAll = benchmarksMedium ++ [
 
 data BenchResult = BenchResult {
   size    :: Int,
+  verRes  :: Maybe Bool,
   time    :: Double,
   counts  :: Map String (Int, Int),
   depths  :: (Int, Int),
@@ -117,6 +119,16 @@ printResult (num, totals) (benchmark, result) = case result of
   Right result -> do
     putStrLn $ benchmark ++ ": " ++ show (size result) ++ " qubits, "
                         ++ formatFloatN (time result) 3 ++ "ms"
+    case verRes result of
+      Nothing -> return ()
+      Just False -> do
+        setSGR [SetColor Foreground Vivid Red]
+        putStrLn "Fail"
+        setSGR [Reset]
+      Just True -> do
+        setSGR [SetColor Foreground Vivid Green]
+        putStrLn "Pass"
+        setSGR [Reset]
     avgs      <- mapM printStat (Map.toList $ counts result)
     avgdepth  <- printStat ("Depth", depths result)
     avgtdepth <- printStat ("Tdepth", tdepths result)
@@ -138,72 +150,8 @@ withTiming f = do
   let t = (fromIntegral $ ends - starts)*1000 + (fromIntegral $ endp - startp)/10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
 
-runBenchmarks :: (DotQC -> Either String DotQC) -> [String] -> IO ()
-runBenchmarks pass xs =
-  let f s = do
-        src <- readFile $ benchmarksPath ++ s ++ ".qc"
-        TOD starts startp <- getClockTime
-        case printErr (parseDotQC src) of
-          Left err -> return $ (s, Left err)
-          Right c  -> case pass c of
-            Left err -> return $ (s, Left err)
-            Right c' -> do
-              writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
-              TOD ends endp  <- getClockTime
-              let (glist, glist') = (fromCliffordT . toCliffordT . toGatelist $ c, toGatelist c')
-              let result = BenchResult {
-                    size    = length (qubits c),
-                    time    = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9,
-                    counts  = mergeCounts (gateCounts $ glist) (gateCounts glist'),
-                    depths  = (depth glist, depth glist'),
-                    tdepths = (tDepth glist, tDepth glist') }
-              return $ (s, Right result)
-      printErr res = case res of
-        Left err -> Left $ show err
-        Right x  -> Right x
-  in
-    mapM f xs >>= printBenchmarks
-  where mergeCounts left right =
-          let left'  = Map.map (,0) left
-              right' = Map.map (0,) right
-          in
-            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
+{- Benchmarking for [AAM17] -}
 
-runVertest :: (DotQC -> Either String DotQC) -> (DotQC -> DotQC -> Either String DotQC) -> [String] -> IO ()
-runVertest pass verify xs =
-  let f s = do
-        src <- readFile $ benchmarksPath ++ s ++ ".qc"
-        case printErr (parseDotQC src) of
-          Left err -> return $ (s, Left err)
-          Right c  -> case pass c of
-            Left err -> return $ (s, Left err)
-            Right c' -> do
-              TOD starts startp <- getClockTime
-              case verify c c' of
-                Left err -> putStrLn $ "Failed to verify: " ++ s
-                Right _  -> return ()
-              TOD ends endp  <- getClockTime
-              let (glist, glist') = (fromCliffordT . toCliffordT . toGatelist $ c, toGatelist c')
-              let result = BenchResult {
-                    size    = length (qubits c),
-                    time    = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9,
-                    counts  = mergeCounts (gateCounts $ glist) (gateCounts glist'),
-                    depths  = (depth glist, depth glist'),
-                    tdepths = (tDepth glist, tDepth glist') }
-              return $ (s, Right result)
-      printErr res = case res of
-        Left err -> Left $ show err
-        Right x  -> Right x
-  in
-    mapM f xs >>= printBenchmarks
-  where mergeCounts left right =
-          let left'  = Map.map (,0) left
-              right' = Map.map (0,) right
-          in
-            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
-
-
--- Random benchmarks
 generateVecNonzero :: Int -> Gen F2Vec
 generateVecNonzero n = do
   bits <- vector n
@@ -299,7 +247,7 @@ computeAvg :: Map Int [[Primitive]] -> Map Int Double
 computeAvg  = Map.map (\circs -> fromIntegral (sumLengths circs) / fromIntegral (length circs))
   where sumLengths = foldr (\c -> (countCNOTs c +)) 0
 
--- Trying to get all 4-qubit minimal circuits
+-- Finds all n-qubit minimal skeletons
 coverIt n =
   let cnots = [(i, j) | i <- [0..n-1], j <- [0..n-1], i /= j]
       extendByCnot (skel, st) (i, j) =
@@ -323,6 +271,7 @@ coverIt n =
   in
     Map.mapWithKey (\k v -> fromIntegral (foldr (+) 0 v) / fromIntegral (length v)). Map.mapKeysWith (++) (Set.size) . Map.map (\m -> [m]) $ minMap
 
+-- Finds all n-qubit minimal skeletons
 coverItOpen n =
   let cnots = [(i, j) | i <- [0..n-1], j <- [0..n-1], i /= j]
       extendByCnot (skel, st) (i, j) =
@@ -369,16 +318,7 @@ bruteForceEfficient n s =
   in
     foldM iterate (Set.singleton (iskel, iarr), imap, [(iskel, iarr, [])]) [1..2^n-1]
 
--- Temporary test
-x1 = bitI 4 0
-x2 = bitI 4 1
-x3 = bitI 4 2
-x4 = bitI 4 3
-
-ids = ["a", "b", "c", "d"]
-ist = genInitSt ids
-set = Set.fromList [x1, x1+x2, x3, x1+x2+x3, x4, x1+x4, x3+x4, x1+x3+x4, x2+x3+x4]
-prep s = zip (Set.toList s) (repeat 1)
+{- Functional verification suite from [A18] -}
 
 runVerSuite :: IO ()
 runVerSuite = do
