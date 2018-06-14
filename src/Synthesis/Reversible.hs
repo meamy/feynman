@@ -44,11 +44,12 @@ affineTransOpen synth = \input xs ->
 emptySynth :: Synthesizer
 emptySynth _ _ _ = []
 
+-- Assumes input and output spaces are identical
 linearSynth :: Synthesizer
 linearSynth input output _ =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
-      mat  = transformMat (fromList ivecs) (fromList ovecs)
+      mat  = transformMatStrict (fromList ivecs) (fromList ovecs)
       rops = snd $ runWriter $ toReducedEchelonPMHA mat
       rops' = snd $ runWriter $ toReducedEchelonA mat
       isadd g = case g of

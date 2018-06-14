@@ -655,11 +655,23 @@ increaseRankInd mat@(F2Mat m n vals) =
   in
     toUpper 0 vals []
 
-{- Transformation matrix from one set of vectors to another -}
-transformMat :: F2Mat -> F2Mat -> F2Mat
-transformMat a b = mult b $ pseudoinverse a
+{- Transformation matrices -}
 
-{- Solving linear systems, optimized for partial evaluation on a matrix -}
+-- General form, but seems to fail sometimes when b is linearly dependent
+transformMat :: F2Mat -> F2Mat -> F2Mat
+transformMat a b = mult b $ pseudoinverse a 
+
+-- Works when a and b span the same space
+transformMatStrict :: F2Mat -> F2Mat -> F2Mat
+transformMatStrict a b =
+  let (_, aops) = runWriter $ toReducedEchelon a
+      (_, bops) = runWriter $ toReducedEchelon b
+  in
+    applyROps (identity $ m a) $ aops ++ reverse bops
+
+{- Solving linear systems -}
+
+-- Note: Solvers are optimized for partial evaluation
 solver, solverT, solverReduced :: F2Mat -> F2Mat
 solver         = pseudoinverse
 solverT        = pseudoinverseT
