@@ -168,7 +168,7 @@ phaseFold vars inputs gates =
               | inSet j   = xs
               | otherwise = x:xs
         in
-          (foldr g [] gates, phase)
+          (foldr g [] gates, phase')
       (gates', phase') = foldl' f (zip gates [2..], phase) ((snd $ unzip $ Map.toList terms) ++ orphans)
   in
     (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
