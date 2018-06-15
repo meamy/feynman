@@ -48,6 +48,9 @@ tparPass = optimizationPass tpar
 cnotminPass :: DotQCPass
 cnotminPass = optimizationPass minCNOT
 
+simplifyPass :: DotQCPass
+simplifyPass = Right . simplifyDotQC
+
 equivalenceCheck :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheck qc qc' =
   let gatelist      = toCliffordT . toGatelist $ qc
@@ -122,6 +125,7 @@ parseArgs pass verify (x:xs) = case x of
   "-phasefold" -> parseArgs (pass >=> phasefoldPass) verify xs
   "-cnotmin"   -> parseArgs (pass >=> cnotminPass) verify xs
   "-tpar"      -> parseArgs (pass >=> tparPass) verify xs
+  "-simplify"  -> parseArgs (pass >=> simplifyPass) verify xs
   "-verify"    -> parseArgs pass True xs
   "VerBench"   -> runBenchmarks cnotminPass True benchmarksMedium
   "VerAlg"     -> runVerSuite
