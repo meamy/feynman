@@ -593,9 +593,7 @@ increaseRank mat@(F2Mat m n vals) =
           in
             mat' { vals = vals' ++ [vec] }
         | otherwise = case break (isOne j) xs of
-            (_, [])      ->
-              let vec = shift (bitVec n 1) j in
-                mat { vals = vals ++ [vec] }
+            (_, [])      -> mat { vals = vals ++ [shift (bitVec n 1) j] }
             ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs)
             (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys))
   in
@@ -613,12 +611,12 @@ increaseRankN mat@(F2Mat m n vals) r =
           else x:xs'
 
       toUpper j xs r vecs
-        | r == 0    = mat { vals = vals ++ vecs }
+        | r == 0    = mat { vals = vals ++ reverse vecs }
         | j >= n    =
           let mat'@(F2Mat _ _ vals') = resizeMat m (n+r) mat
-              vecs = [shift (bitVec (n+r) 1) i | i <- [n..n+r-1]]
+              vecs' = [shift (bitVec (n+r) 1) i | i <- [n..n+r-1]]
           in
-            mat' { vals = vals' ++ vecs }
+            mat' { vals = vals' ++ reverse vecs ++ vecs' }
         | otherwise = case break (isOne j) xs of
             (_, [])      -> toUpper (j+1) xs (r-1) $ (shift (bitVec n 1) j):vecs
             ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) r vecs
@@ -652,6 +650,57 @@ increaseRankInd mat@(F2Mat m n vals) =
                   mat { vals = vals ++ [vec] }
             ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) (x:sx)
             (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys)) (y:sx)
+  in
+    toUpper 0 vals []
+
+fillColumnRank :: F2Mat -> F2Mat
+fillColumnRank mat@(F2Mat m n vals) = 
+  let isOne j v = v @. j
+
+      zeroAll j y []     = []
+      zeroAll j y (x:xs) =
+        let xs' = zeroAll j y xs in
+          if x @. j
+          then (y + x):xs'
+          else x:xs'
+
+      toUpper j xs vecs
+        | j >= n    = mat { vals = vals ++ reverse vecs }
+        | otherwise = case break (isOne j) xs of
+            (_, [])      -> toUpper (j+1) xs $ (shift (bitVec n 1) j):vecs
+            ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) vecs
+            (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys)) vecs
+  in
+    toUpper 0 vals []
+
+-- Fills the first matrix with as many linearly independent rows of the second as possible
+fillFrom :: F2Mat -> F2Mat -> F2Mat
+fillFrom mat@(F2Mat m n vals) fill = 
+  let (F2Mat _ _ fillVals) = fst . runWriter . toEchelon $ fill
+      isOne j v = v @. j
+
+      findVec j j' xs
+        | j < j'    = Nothing
+        | otherwise = case break (isOne j') xs of
+            (_, [])    -> findVec j (j'+1) xs
+            ([], x:xs) -> if j == j' then Just x else findVec j (j'+1) xs
+            _          -> error "Fill matrix wasn't in echelon form"
+
+      zeroAll j y []     = []
+      zeroAll j y (x:xs) =
+        let xs' = zeroAll j y xs in
+          if x @. j
+          then (y + x):xs'
+          else x:xs'
+
+      toUpper j xs vecs
+        | j >= n    = mat { vals = vals ++ reverse vecs }
+        | otherwise = case break (isOne j) xs of
+            (_, [])      -> case findVec j 0 fillVals of
+              Nothing -> toUpper (j+1) xs vecs
+              Just v  -> toUpper (j+1) xs $ v:vecs
+            ([], x:xs)   -> toUpper (j+1) (zeroAll j x xs) vecs
+            (x:xs, y:ys) -> toUpper (j+1) (zeroAll j y (xs ++ x:ys)) vecs
   in
     toUpper 0 vals []
 
