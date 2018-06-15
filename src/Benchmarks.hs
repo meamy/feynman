@@ -7,6 +7,7 @@ import Control.Monad (when)
 import Numeric
 import System.Time
 import System.Console.ANSI
+import Control.DeepSeq
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -18,6 +19,7 @@ import Data.Array ((!), (//))
 import qualified Data.Array as Array
 
 import Control.Monad
+import Data.Maybe
 
 import Frontend.DotQC
 import Optimization.PhaseFold
@@ -149,6 +151,62 @@ withTiming f = do
   TOD ends endp <- getClockTime
   let t = (fromIntegral $ ends - starts)*1000 + (fromIntegral $ endp - startp)/10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
+
+--runBenchmarks :: DotQCPass -> Maybe (DotQC -> DotQC -> Either String DotQC) -> [String] -> IO ()
+runBenchmarks pass verify xs =
+  let runBench s = do
+        src <- readFile $ benchmarksPath ++ s ++ ".qc"
+        TOD starts startp <- getClockTime
+        case printErr (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c') of
+          Left err      -> do
+            putStrLn $ s ++ ": ERROR"
+            return Nothing
+          Right (c, c') ->
+            let verResult = case verify of
+                  Nothing -> ""
+                  Just f  -> case f c c' of
+                    Left  _ -> setSGRCode [SetColor Foreground Vivid Red] ++
+                               " FAIL" ++
+                               setSGRCode [Reset]
+                    Right _ -> setSGRCode [SetColor Foreground Vivid Green] ++
+                               " PASS" ++
+                               setSGRCode [Reset]
+                (glist, glist') = (fromCliffordT . toCliffordT . toGatelist $ c, toGatelist c')
+                counts          = mergeCounts (gateCounts $ glist) (gateCounts glist')
+                depths          = (depth glist, depth glist')
+                tdepths         = (tDepth glist, tDepth glist')
+            in do
+              TOD ends endp  <- verResult `deepseq` getClockTime
+              let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+              putStrLn $ s ++ ":" ++ verResult
+              putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
+              putStrLn $ "\tQubits:\t\t" ++ show (length $ qubits c)
+              gateRed   <- mapM printStat (Map.toList $ counts)
+              depthRed  <- printStat ("Depth", depths)
+              tdepthRed <- printStat ("Tdepth", tdepths)
+              writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
+              return . Just $ Map.unionsWith (+) (gateRed ++ [depthRed, tdepthRed])
+  in do
+    results <- liftM catMaybes $ mapM runBench xs
+    putStrLn "Averages:"
+    mapM_ printAvg (Map.toList . Map.map (/ fromIntegral (length results)) . Map.unionsWith (+) $ results)
+  where printErr res = case res of
+          Left err -> Left $ show err
+          Right x  -> Right x
+        mergeCounts left right =
+          let left'  = Map.map (,0) left
+              right' = Map.map (0,) right
+          in
+            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
+        printStat (stat, (orig, opt)) = do
+            let diff = 100.0 * ((fromIntegral (orig-opt)) / (fromIntegral orig))
+            putStrLn $ "\t" ++ stat ++ ":\t\t" ++ show orig ++ "/"
+                            ++ show opt ++ "\t\t" ++ (if orig == 0 then "N/A" else formatFloatN diff 3 ++ "%")
+            if orig == 0
+            then return Map.empty
+            else return $ Map.fromList [(stat, diff)]
+        printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
+
 
 {- Benchmarking for [AAM17] -}
 

@@ -80,44 +80,6 @@ run pass verify src = do
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
 
-runBenchmarks :: DotQCPass -> Bool -> [String] -> IO ()
-runBenchmarks pass verify xs =
-  let f s = do
-        src <- readFile $ benchmarksPath ++ s ++ ".qc"
-        TOD starts startp <- getClockTime
-        case printErr (parseDotQC src) of
-          Left err -> return $ (s, Left err)
-          Right c  -> case pass c of
-            Left err -> return $ (s, Left err)
-            Right c' -> do
-              let verResult =
-                    if verify
-                       then case equivalenceCheck c c' of
-                              Left  _ -> Just False
-                              Right _ -> Just True
-                       else Nothing
-              writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
-              TOD ends endp  <- verResult `deepseq` getClockTime
-              let (glist, glist') = (fromCliffordT . toCliffordT . toGatelist $ c, toGatelist c')
-              let result = BenchResult {
-                    size    = length (qubits c),
-                    verRes  = verResult,
-                    time    = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9,
-                    counts  = mergeCounts (gateCounts $ glist) (gateCounts glist'),
-                    depths  = (depth glist, depth glist'),
-                    tdepths = (tDepth glist, tDepth glist') }
-              return $ (s, Right result)
-      printErr res = case res of
-        Left err -> Left $ show err
-        Right x  -> Right x
-  in
-    mapM f xs >>= printBenchmarks
-  where mergeCounts left right =
-          let left'  = Map.map (,0) left
-              right' = Map.map (0,) right
-          in
-            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
-
 parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
 parseArgs pass verify []     = return ()
 parseArgs pass verify (x:xs) = case x of
@@ -127,11 +89,11 @@ parseArgs pass verify (x:xs) = case x of
   "-tpar"      -> parseArgs (pass >=> tparPass) verify xs
   "-simplify"  -> parseArgs (pass >=> simplifyPass) verify xs
   "-verify"    -> parseArgs pass True xs
-  "VerBench"   -> runBenchmarks cnotminPass True benchmarksMedium
+  "VerBench"   -> runBenchmarks cnotminPass (Just equivalenceCheck) benchmarksMedium
   "VerAlg"     -> runVerSuite
-  "Small"      -> runBenchmarks pass verify benchmarksSmall
-  "Med"        -> runBenchmarks pass verify benchmarksMedium
-  "All"        -> runBenchmarks pass verify benchmarksAll
+  "Small"      -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
+  "Med"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
+  "All"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
   f            -> do
     src <- readFile f
     case run pass verify src of
