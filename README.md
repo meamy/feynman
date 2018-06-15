@@ -19,7 +19,7 @@ cabal sandbox init
 cabal install --dependencies-only
 ```
 
-If global packages are installed or otherwise desried (not recommended!), the
+If global packages are installed or otherwise desired (not recommended!), the
 user may omit the `cabal sandbox init` command.
 
 ## Building from source
