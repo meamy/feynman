@@ -38,20 +38,12 @@ tpar input output xs =
 synthPartition set (circ, input) =
   let (ids, ivecs) = unzip $ Map.toList input
       (vecs, exps) = unzip $ fst $ unzip $ Set.toList set
-      inp  = fromList ivecs
-      targ = fromList vecs
-      mat  = transformMatStrict inp $ resizeMat (m inp) (n inp) $ fillFrom targ inp
-      --mat = increaseRankN (transformMat inp targ) (length input - length vecs)
-      rops = snd $ runWriter $ toReducedEchelon mat
-      f op = case op of
-        Add i j  -> [CNOT (ids !! i) (ids !! j)]
-        Exchange i j ->
-          let (v, u) = (ids !! i, ids !! j) in
-            [Swap v u]
-      g (n, i) = synthesizePhase (ids !! i) n
-      perm = concatMap f $ reverse rops
-      phase = concatMap g (zip exps [0..])
-      output = Map.fromList $ zip ids $ vals $ applyROps inp $ reverse rops --mult mat inp
+      inp     = fromList ivecs
+      targ    = resizeMat (m inp) (n inp) . (flip fillFrom $ inp) . fromList $ vecs
+      output  = Map.fromList (zip ids $ toList targ)
+      g (n,i) = synthesizePhase (ids!!i) n
+      perm    = linearSynth input output []
+      phase   = concatMap g (zip exps [0..])
   in
     (circ++perm++phase, output)
 
