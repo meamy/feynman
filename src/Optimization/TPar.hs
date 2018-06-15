@@ -210,12 +210,15 @@ finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
   return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
+                 ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
 
 finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalizeOpen synth gates = do
   st <- get
   let (out', parities) = synth (ivals st) $ Map.toList (terms st)
-  return $ gates ++ parities ++ ((affineTrans linearSynth) out' (qvals st) [])
+  return $ gates ++ parities
+                 ++ ((affineTrans linearSynth) out' (qvals st) [])
+                 ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
     
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar osynth vars inputs gates =
