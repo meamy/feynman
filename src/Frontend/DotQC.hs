@@ -265,19 +265,21 @@ showStats :: DotQC -> [String]
 showStats circ =
   let gatelist   = toGatelist circ
       counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
-      totaldepth = ["Depth: " ++ (show $ depth gatelist)]
+      qubitCount = ["Qubits: " ++ (show . length . qubits $ circ)]
+      totaldepth = ["Depth: " ++ (show . depth $ gatelist)]
       tdepth     = ["T depth: " ++ (show $ gateDepth ["T", "T*"] gatelist)]
   in
-    counts ++ totaldepth ++ tdepth
+    qubitCount ++ counts ++ totaldepth ++ tdepth
 
 showCliffordTStats :: DotQC -> [String]
 showCliffordTStats circ =
   let gatelist   = fromCliffordT . toCliffordT . toGatelist $ circ
       counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
-      totaldepth = ["Depth: " ++ (show $ depth gatelist)]
+      qubitCount = ["Qubits: " ++ (show . length . qubits $ circ)]
+      totaldepth = ["Depth: " ++ (show . depth $ gatelist)]
       tdepth     = ["T depth: " ++ (show $ tDepth gatelist)]
   in
-    counts ++ totaldepth ++ tdepth
+    qubitCount ++ counts ++ totaldepth ++ tdepth
 
 {- Parser -}
 

@@ -65,24 +65,56 @@ equivalenceCheck qc qc' =
 
 {- Main program -}
 
-run :: DotQCPass -> Bool -> String -> Either String [String]
-run pass verify src = do
-  qc  <- printErr $ parseDotQC src
-  qc' <- pass qc
-  if verify
-    then equivalenceCheck qc qc'
-    else Right qc'
-  return $ ["# Original:"] ++
-           map ("#   " ++) (showCliffordTStats qc) ++
-           ["# Result:"] ++
-           map ("#   " ++) (showCliffordTStats qc') ++
-           [show qc']
+run :: DotQCPass -> Bool -> String -> String -> IO ()
+run pass verify fname src = do
+  TOD starts startp <- getClockTime
+  TOD ends endp  <- parseAndPass `seq` getClockTime
+  case parseAndPass of
+    Left err        -> putStrLn $ "ERROR: " ++ err
+    Right (qc, qc') -> do
+      let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+      putStrLn $ "# Feynman -- quantum circuit toolkit"
+      putStrLn $ "# Original (" ++ fname ++ "):"
+      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc
+      putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
+      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc'
+      putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
+        parseAndPass = do
+          qc  <- printErr $ parseDotQC src
+          qc' <- pass qc
+          when verify $ equivalenceCheck qc qc' >> return ()
+          return (qc, qc')
+
+printHelp :: IO ()
+printHelp = mapM_ putStrLn lines
+  where lines = [
+          "Feynman -- quantum circuit toolkit",
+          "Written by Matthew Amy",
+          "",
+          "Run with feyn [passes] (<circuit>.qc | Small | Med | All)",
+          "",
+          "Passes:",
+          "  -inline\tInline all sub-circuits",
+          "  -simplify\tBasic gate-cancellation pass",
+          "  -phasefold\tPhase folding pass, merges phase gates. Non-increasing in all metrics",
+          "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
+          "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
+          "  -verify\tPerform verification algorithm of [A18] after optimization passes",
+          "",
+          "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
+          "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
+          "",
+          "WARNING: Using \"-verify\" with \"All\" will likely crash your computer without first setting",
+          "         user-level memory limits. Use with caution"
+          ]
+          
 
 parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
-parseArgs pass verify []     = return ()
+parseArgs pass verify []     = printHelp
 parseArgs pass verify (x:xs) = case x of
+  "-h"         -> printHelp
   "-inline"    -> parseArgs (pass >=> inlinePass) verify xs
   "-phasefold" -> parseArgs (pass >=> phasefoldPass) verify xs
   "-cnotmin"   -> parseArgs (pass >=> cnotminPass) verify xs
@@ -94,14 +126,8 @@ parseArgs pass verify (x:xs) = case x of
   "Small"      -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
   "Med"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
   "All"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
-  f            -> do
-    src <- readFile f
-    case run pass verify src of
-      Left err  -> putStrLn $ "ERROR: " ++ err
-      Right res -> mapM_ putStrLn res
+  f | (drop (length f - 3) f) == ".qc" -> readFile f >>= run pass verify f
+  f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
-main = do
-  putStrLn "# Feynman -- quantum circuit toolkit"
-  putStrLn "# Written by Matthew Amy"
-  getArgs >>= parseArgs trivPass False
+main = getArgs >>= parseArgs trivPass False
