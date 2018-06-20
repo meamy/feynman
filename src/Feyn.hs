@@ -68,7 +68,7 @@ equivalenceCheck qc qc' =
 run :: DotQCPass -> Bool -> String -> String -> IO ()
 run pass verify fname src = do
   TOD starts startp <- getClockTime
-  TOD ends endp  <- parseAndPass `seq` getClockTime
+  TOD ends endp     <- parseAndPass `seq` getClockTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
     Right (qc, qc') -> do
@@ -84,7 +84,8 @@ run pass verify fname src = do
         parseAndPass = do
           qc  <- printErr $ parseDotQC src
           qc' <- pass qc
-          when verify $ equivalenceCheck qc qc' >> return ()
+          seq (depth $ toGatelist qc') (return ()) -- Nasty solution to strictifying
+          when verify . void $ equivalenceCheck qc qc'
           return (qc, qc')
 
 printHelp :: IO ()
