@@ -87,11 +87,11 @@ benchmarksMedium = benchmarksSmall ++ [
 benchmarksAll = benchmarksMedium ++ [
   "cycle_17_3",
   "gf2^64_mult",
-  "gf2^128_mult",
-  "gf2^256_mult",
+  --"gf2^128_mult",
+  --"gf2^256_mult",
   "hwb8",
-  "hwb10",
-  "hwb12",
+  --"hwb10",
+  --"hwb12",
   "mod_adder_1048576"
   ]
 

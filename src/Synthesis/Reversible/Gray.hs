@@ -81,14 +81,14 @@ graySynthesis ids out (x:xs) = case x of
       graySynthesis ids out (xzero:xone:xs)
 
 -- Pointed
-cnotMinGrayPointed :: Synthesizer
-cnotMinGrayPointed input output [] = linearSynth input output []
-cnotMinGrayPointed input output xs =
+cnotMinGrayPointed0 :: Synthesizer
+cnotMinGrayPointed0 input output [] = linearSynth input output []
+cnotMinGrayPointed0 input output xs =
   let ivecs    = Map.toList input
       solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
       f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM f . filter ((/= 1) . order . snd) $ xs of
+    case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
         let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
@@ -97,14 +97,14 @@ cnotMinGrayPointed input output xs =
           gates ++ linearSynth outin output []
 
 -- non-pointed synthesis
-cnotMinGrayOpen :: OpenSynthesizer
-cnotMinGrayOpen input [] = (input, [])
-cnotMinGrayOpen input xs =
+cnotMinGrayOpen0 :: OpenSynthesizer
+cnotMinGrayOpen0 input [] = (input, [])
+cnotMinGrayOpen0 input xs =
   let ivecs    = Map.toList input
       solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
       f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM f . filter ((/= 1) . order . snd) $ xs of
+    case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
         let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs'] in
@@ -112,31 +112,29 @@ cnotMinGrayOpen input xs =
 
 {- Master method -}
 
-cnotMinGray = cnotMinGrayPointed
+cnotMinGray = cnotMinGrayPointed0
 
-{-
-cnotMinGray input output xs =
-  let gates    = cnotMinGray0 input output $ filter (\(_, i) -> order i /= 1) xs
-      gates'   = cnotMinGray0 input output $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
-      gates''  = cnotMinGray0 input output xs
+cnotMinGrayPointed input output xs =
+  let gates  = cnotMinGrayPointed0 input output xs
+      gates' = cnotMinGrayPointed0 input output $ filter (\(_, i) -> order i /= 1) xs
+      --gates'   = cnotMinGray0 input output $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False
       countc = length . filter isct
   in
-    minimumBy (comparing countc) [gates, gates', gates'']
+    minimumBy (comparing countc) [gates, gates']
 
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs
       gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> order i /= 1) xs
-      gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
+      --gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False
       countc = length . filter isct . snd
   in
-    minimumBy (comparing countc) [gates, gates', gates'']
--}
+    minimumBy (comparing countc) [gates, gates']
 
 {- Brute force synthesis -}
 
