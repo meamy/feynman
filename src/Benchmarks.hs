@@ -176,7 +176,7 @@ runBenchmarks pass verify xs =
                 depths          = (depth glist, depth glist')
                 tdepths         = (tDepth glist, tDepth glist')
             in do
-              TOD ends endp  <- verResult `deepseq` getClockTime
+              TOD ends endp  <- verResult `deepseq` counts `deepseq` getClockTime
               let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
               putStrLn $ s ++ ":" ++ verResult
               putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
