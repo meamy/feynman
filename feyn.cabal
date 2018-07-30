@@ -65,15 +65,12 @@ executable feyn
                        FlexibleInstances
   hs-source-dirs:      feynman
   build-depends:       feynman,
-                       QuickCheck >= 2.8.2, 
-                       array >= 0.5.1.0, 
                        base, 
+                       containers >= 0.5.8.1,
+                       array >= 0.5.1.0, 
                        bv, 
-                       containers, 
-                       mtl, 
-                       parsec, parsec-numbers,
+                       QuickCheck >= 2.8.2, 
                        deepseq,
-                       fgl,
                        ansi-terminal,
                        old-time
   default-language:    Haskell2010
