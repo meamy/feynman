@@ -1,4 +1,4 @@
 .PHONY: feynman
 feynman:
-	cabal build exe:feynman
-	cp dist/build/feynman/feynman ./feynman
+	cabal build exe:feyn
+	cp dist/build/feyn/feyn ./feyn

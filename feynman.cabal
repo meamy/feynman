@@ -55,7 +55,7 @@ library
   default-language:    Haskell2010
   
 
-executable feynman
+executable feyn
   main-is:             Main.hs
   buildable:           True
   ghc-options:         -O2
