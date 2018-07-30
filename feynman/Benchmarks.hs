@@ -21,13 +21,13 @@ import qualified Data.Array as Array
 import Control.Monad
 import Data.Maybe
 
-import Frontend.DotQC
-import Optimization.PhaseFold
-import Optimization.TPar
-import Algebra.Linear
-import Synthesis.Reversible.Gray
-import Verification.SOP
-import Core (Primitive(CNOT, T, Tinv))
+import Feynman.Frontend.DotQC
+import Feynman.Optimization.PhaseFold
+import Feynman.Optimization.TPar
+import Feynman.Algebra.Linear
+import Feynman.Synthesis.Reversible.Gray
+import Feynman.Verification.SOP
+import Feynman.Core (Primitive(CNOT, T, Tinv))
 
 import qualified Data.BitVector as BitVector
 import Test.QuickCheck
@@ -401,6 +401,6 @@ gatelistOfFile fname = do
   case parseDotQC s of
     Left err -> putStrLn (show err) >> return []
     Right c  ->
-      case find (\(Frontend.DotQC.Decl n _ _) -> n == "main") (Frontend.DotQC.decls c) of
+      case find (\(Feynman.Frontend.DotQC.Decl n _ _) -> n == "main") (Feynman.Frontend.DotQC.decls c) of
         Nothing -> putStrLn "No main function!" >> return []
-        Just (Frontend.DotQC.Decl _ _ body) -> return $ toCliffordT body
+        Just (Feynman.Frontend.DotQC.Decl _ _ body) -> return $ toCliffordT body

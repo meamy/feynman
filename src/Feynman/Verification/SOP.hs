@@ -1,6 +1,6 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Verification.SOP where
+module Feynman.Verification.SOP where
 
 import Text.Printf
 
@@ -13,9 +13,9 @@ import Data.Semigroup
 import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 
-import Algebra.Polynomial
-import Core hiding (toffoli, subst)
-import qualified Core as Core
+import Feynman.Algebra.Polynomial
+import Feynman.Core hiding (toffoli, subst)
+import qualified Feynman.Core as Core
 
 import Data.Ratio
 import Data.Coerce

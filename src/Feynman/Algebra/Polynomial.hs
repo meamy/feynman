@@ -1,4 +1,4 @@
-module Algebra.Polynomial where
+module Feynman.Algebra.Polynomial where
 
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
