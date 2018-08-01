@@ -40,9 +40,11 @@ library
                        Feynman.Verification.SOP,
 
                        Feynman.Frontend.DotQC
+                       Feynman.Frontend.OpenQASM.Syntax
                        Feynman.Frontend.OpenQASM.Lexer
+                       Feynman.Frontend.OpenQASM.Parser
 
-  build-tools:         Alex
+  build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2, 
                        array >= 0.5.1.0, 
                        base >= 4.9, 
