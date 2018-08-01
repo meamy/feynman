@@ -3,6 +3,8 @@ module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
 import Feynman.Frontend.DotQC
+import Feynman.Frontend.OpenQASM.Lexer (lexer)
+import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.SOP
@@ -150,4 +152,5 @@ parseArgs pass verify (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
-main = getArgs >>= parseArgs trivPass False
+main = getContents >>= print . parse . lexer
+--main = getArgs >>= parseArgs trivPass False

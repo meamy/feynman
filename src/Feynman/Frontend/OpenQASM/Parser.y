@@ -58,27 +58,27 @@ statement : declaration                   { DecStmt $1 }
           | if '(' id '=' nat ')' qop ';' { IfStmt $3 $5 $7 }
           | barrier args ';'              { BarrierStmt $2 }
 
-declaration : qreg id '[' nat ']'                    { VarDec $2 (Qreg $4) }
-            | creg id '[' nat ']'                    { VarDec $2 (Creg $4) }
+declaration : qreg id '[' nat ']' ';'                { VarDec $2 (Qreg $4) }
+            | creg id '[' nat ']' ';'                { VarDec $2 (Creg $4) }
             | gate id ids '{' uops0 '}'              { GateDec $2 [] $3 $5 }
             | gate id '(' ids0 ')' ids '{' uops0 '}' { GateDec $2 $4 $6 $8 }
             | opaque id ids                          { UIntDec $2 [] $3 }
             | opaque id '(' ids0 ')' ids             { UIntDec $2 $4 $6 }
 
-qop : uop                     { GateExp $1 }
-    | measure arg '>' arg ';' { MeasureExp $2 $4 }
-    | reset arg ';'           { ResetExp $2 }
+qop : uop                 { GateExp $1 }
+    | measure arg '>' arg { MeasureExp $2 $4 }
+    | reset arg           { ResetExp $2 }
 
 uops0 : {- empty -} { [] }
       | uops        { $1 }
 
-uops : uop         { [$1] }
-     | uops uop    { $1 ++ [$2] }
+uops : uop ';'      { [$1] }
+     | uops uop ';' { $1 ++ [$2] }
 
-uop : U '(' exp ',' exp ',' exp ')' arg ';' { UGate $3 $5 $7 $9 }
-    | CX arg ',' arg ';'                    { CXGate $2 $4 }
-    | id args ';'                           { CallGate $1 [] $2 }
-    | id '(' exps ')' args ';'              { CallGate $1 $3 $5 }
+uop : U '(' exp ',' exp ',' exp ')' arg { UGate $3 $5 $7 $9 }
+    | CX arg ',' arg                    { CXGate $2 $4 }
+    | id args                           { CallGate $1 [] $2 }
+    | id '(' exps ')' args              { CallGate $1 $3 $5 }
 
 args0 : {- empty -} { [] }
       | args        { $1 }
@@ -128,7 +128,7 @@ unary : sin  { SinOp }
 {
 
 parseError :: [Token] -> a
-parseError _ = error "Parse error"
+parseError xs = error $ "Parse error: " ++ concatMap show xs
 
 -- vim: ft=haskell
 }
