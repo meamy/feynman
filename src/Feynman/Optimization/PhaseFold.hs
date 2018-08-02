@@ -100,39 +100,50 @@ addTerm l (bv, p) i st =
  
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()
-applyGate (H v, l) = do
-  bv <- getSt v
-  modify $ exists v
-
-applyGate (CNOT c t, l) = do
-  (bvc, bc) <- getSt c
-  (bvt, bt) <- getSt t
-  modify $ updateQval t (bvc + bvt, bc `xor` bt)
-
-applyGate (X v, l) = do
-  (bv, b) <- getSt v
-  modify $ updateQval v (bv, Prelude.not b)
-
-applyGate (T v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv (Discrete $ dyadic 1 3)
-
-applyGate (S v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv (Discrete $ dyadic 1 2)
-
-applyGate (Z v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv (Discrete $ dyadic 1 1)
-
-applyGate (Tinv v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv (Discrete $ dyadic 7 3)
-
-applyGate (Sinv v, l) = do
-  bv <- getSt v
-  modify $ addTerm l bv (Discrete $ dyadic 3 2)
-
+applyGate (gate, l) = case gate of
+  T v      -> do
+    bv <- getSt v
+    modify $ addTerm l bv (Discrete $ dyadic 1 3)
+  Tinv v   -> do
+    bv <- getSt v
+    modify $ addTerm l bv (Discrete $ dyadic 7 3)
+  S v      -> do
+    bv <- getSt v
+    modify $ addTerm l bv (Discrete $ dyadic 1 2)
+  Sinv v   -> do
+    bv <- getSt v
+    modify $ addTerm l bv (Discrete $ dyadic 3 2)
+  Z v      -> do
+    bv <- getSt v
+    modify $ addTerm l bv (Discrete $ dyadic 1 1)
+  CNOT c t -> do
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+  X v      -> do
+    (bv, b) <- getSt v
+    modify $ updateQval v (bv, Prelude.not b)
+  H v      -> do
+    bv <- getSt v
+    modify $ exists v
+  Swap u v -> do
+    bvu <- getSt u
+    bvv <- getSt v
+    modify $ updateQval u bvv
+    modify $ updateQval v bvu
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm l bv p
+  Rx p v -> do
+    bv <- getSt v
+    modify $ exists v
+  Ry p v -> do
+    bv <- getSt v
+    modify $ exists v
+  Uninterp s vs -> do
+    bvs <- mapM getSt vs
+    mapM_ (\v -> modify $ exists v) vs
+  
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
   let init = 

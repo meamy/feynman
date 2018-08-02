@@ -202,9 +202,10 @@ gateToCliffordT (Gate g i p) =
         ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
                             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
                             Tinv x, CNOT y z, CNOT z x, CNOT x y]
-        ("Zd", [x,y,z])  -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
+        ("Zd", [x,y,z]) -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
                              CNOT z x, T x, T y, Tinv z, CNOT y x,
                              T x, CNOT y z, CNOT z x, CNOT x y]
+        otherwise       -> [Uninterp g p]
   in
     concat $ genericReplicate i circ
 gateToCliffordT (ParamGate g i theta p) =
@@ -212,6 +213,7 @@ gateToCliffordT (ParamGate g i theta p) =
         ("Rz", [x]) -> [Rz theta x]
         ("Rx", [x]) -> [Rx theta x]
         ("Ry", [x]) -> [Ry theta x]
+        otherwise   -> [Uninterp (g ++ "(" ++ show theta ++ ")") p]
   in
     concat $ genericReplicate i circ
 
@@ -220,19 +222,20 @@ toCliffordT = concatMap gateToCliffordT
 
 gateFromCliffordT :: Primitive -> Gate
 gateFromCliffordT g = case g of
-  H x      -> Gate "H" 1 [x]
-  X x      -> Gate "X" 1 [x]
-  Y x      -> Gate "Y" 1 [x]
-  Z x      -> Gate "Z" 1 [x]
-  S x      -> Gate "S" 1 [x]
-  Sinv x   -> Gate "S*" 1 [x]
-  T x      -> Gate "T" 1 [x]
-  Tinv x   -> Gate "T*" 1 [x]
-  CNOT x y -> Gate "cnot" 1 [x, y]
-  Swap x y -> Gate "swap" 1 [x, y]
-  Rz f x   -> ParamGate "Rz" 1 f [x]
-  Rx f x   -> ParamGate "Rx" 1 f [x]
-  Ry f x   -> ParamGate "Ry" 1 f [x]
+  H x           -> Gate "H" 1 [x]
+  X x           -> Gate "X" 1 [x]
+  Y x           -> Gate "Y" 1 [x]
+  Z x           -> Gate "Z" 1 [x]
+  S x           -> Gate "S" 1 [x]
+  Sinv x        -> Gate "S*" 1 [x]
+  T x           -> Gate "T" 1 [x]
+  Tinv x        -> Gate "T*" 1 [x]
+  CNOT x y      -> Gate "cnot" 1 [x, y]
+  Swap x y      -> Gate "swap" 1 [x, y]
+  Rz f x        -> ParamGate "Rz" 1 f [x]
+  Rx f x        -> ParamGate "Rx" 1 f [x]
+  Ry f x        -> ParamGate "Ry" 1 f [x]
+  Uninterp s xs -> Gate s 1 xs
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT

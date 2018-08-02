@@ -156,6 +156,11 @@ applyGate synth gates g = case g of
     st <- get
     orphans <- exists v st
     return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
+  Uninterp s vs -> do
+    bvs <- mapM getSt vs
+    st  <- get
+    orphanLists <- mapM (\v -> exists v st) vs
+    return $ gates ++ synth (ivals st) (qvals st) (concat orphanLists) ++ [Uninterp s vs]
 
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of
@@ -203,6 +208,10 @@ applyGateOpen synth gates g = case g of
     bvv <- getSt v
     modify $ updateQval u bvv
     modify $ updateQval v bvu
+    return gates
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm bv p
     return gates
 
 finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]

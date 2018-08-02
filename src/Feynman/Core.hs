@@ -54,19 +54,20 @@ instance Periodic Angle where
 
 {- Circuits -}
 data Primitive =
-    H    ID
-  | X    ID
-  | Y    ID
-  | Z    ID
-  | CNOT ID ID
-  | S    ID
-  | Sinv ID
-  | T    ID
-  | Tinv ID
-  | Swap ID ID
-  | Rz   Angle ID
-  | Rx   Angle ID
-  | Ry   Angle ID
+    H        ID
+  | X        ID
+  | Y        ID
+  | Z        ID
+  | CNOT     ID ID
+  | S        ID
+  | Sinv     ID
+  | T        ID
+  | Tinv     ID
+  | Swap     ID ID
+  | Rz       Angle ID
+  | Rx       Angle ID
+  | Ry       Angle ID
+  | Uninterp ID [ID]
 
 data Stmt =
     Gate Primitive
@@ -88,58 +89,44 @@ foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
 foldStmt f (Repeat i st) b = f (Repeat i st) (foldStmt f st b)
 foldStmt f s             b = f s b
 
-countGates (Circuit _ _ decls) = foldl' f [0,0,0,0,0,0,0,0] decls
-  where plus                   = zipWith (+)
-        f cnt (Decl _ _ stmt)  = g cnt stmt
-        g cnt (Seq xs)         = foldl' g cnt xs
-        g cnt (Call _ _)       = error "Unimplemented call"
-        g cnt (Repeat 0 stmt)  = g cnt stmt
-        g cnt (Repeat i stmt)  = g (g cnt stmt) (Repeat (i-1) stmt)
-        g cnt (Gate gate)      = case gate of
-          H _      -> plus cnt [1,0,0,0,0,0,0,0]
-          X _      -> plus cnt [0,1,0,0,0,0,0,0]
-          Y _      -> plus cnt [0,0,1,0,0,0,0,0]
-          Z _      -> plus cnt [0,0,0,1,0,0,0,0]
-          CNOT _ _ -> plus cnt [0,0,0,0,1,0,0,0]
-          S _      -> plus cnt [0,0,0,0,0,1,0,0]
-          Sinv _   -> plus cnt [0,0,0,0,0,1,0,0]
-          T _      -> plus cnt [0,0,0,0,0,0,1,0]
-          Tinv _   -> plus cnt [0,0,0,0,0,0,1,0]
-          Swap _ _ -> plus cnt [0,0,0,0,0,0,0,1]
-          Rx _ _   -> plus cnt [0,1,0,0,0,0,0,0]
-          Ry _ _   -> plus cnt [0,0,1,0,0,0,0,0]
-          Rz _ _   -> plus cnt [0,0,0,1,0,0,0,0]
-
 -- Transformations
 
 daggerGate :: Primitive -> Primitive
 daggerGate x = case x of
-  H _      -> x
-  X _      -> x
-  Y _      -> x -- WARNING: this is incorrect
-  Z _      -> x
-  CNOT _ _ -> x
-  S x      -> Sinv x
-  Sinv x   -> S x
-  T x      -> Tinv x
-  Tinv x   -> T x
-  Swap _ _ -> x
+  H _           -> x
+  X _           -> x
+  Y _           -> x -- WARNING: this is incorrect
+  Z _           -> x
+  CNOT _ _      -> x
+  S x           -> Sinv x
+  Sinv x        -> S x
+  T x           -> Tinv x
+  Tinv x        -> T x
+  Swap _ _      -> x
+  Rz theta x    -> Rz (-theta) x
+  Rx theta x    -> Rx (-theta) x
+  Ry theta x    -> Ry (-theta) x
+  Uninterp s xs -> Uninterp (s ++ "*") xs
 
 dagger :: [Primitive] -> [Primitive]
 dagger = reverse . map daggerGate
 
 substGate :: Map ID ID -> Primitive -> Primitive
 substGate sub gate = case gate of
-  H x      -> H $ f x
-  X x      -> H $ f x
-  Y x      -> Y $ f x
-  Z x      -> Z $ f x
-  CNOT x y -> CNOT (f x) (f y)
-  S x      -> S $ f x
-  Sinv x   -> Sinv $ f x
-  T x      -> T $ f x
-  Tinv x   -> Tinv $ f x
-  Swap x y -> Swap (f x) (f y)
+  H x           -> H $ f x
+  X x           -> H $ f x
+  Y x           -> Y $ f x
+  Z x           -> Z $ f x
+  CNOT x y      -> CNOT (f x) (f y)
+  S x           -> S $ f x
+  Sinv x        -> Sinv $ f x
+  T x           -> T $ f x
+  Tinv x        -> Tinv $ f x
+  Swap x y      -> Swap (f x) (f y)
+  Rz theta x    -> Rz theta (f x)
+  Rx theta x    -> Rx theta (f x)
+  Ry theta x    -> Ry theta (f x)
+  Uninterp s xs -> Uninterp s (map f xs)
   where f x = Map.findWithDefault x x sub
 
 subst :: Map ID ID -> [Primitive] -> [Primitive]
@@ -158,16 +145,20 @@ cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
 -- Printing
 
 instance Show Primitive where
-  show (H x)      = "H " ++ x
-  show (X x)      = "X " ++ x
-  show (Z x)      = "Z " ++ x
-  show (Y x)      = "Y " ++ x
-  show (CNOT x y) = "tof " ++ x ++ " " ++ y
-  show (S x)      = "S " ++ x
-  show (Sinv x)   = "S* " ++ x
-  show (T x)      = "T " ++ x
-  show (Tinv x)   = "T* " ++ x
-  show (Swap x y) = "swap " ++ x ++ " " ++ y
+  show (H x)           = "H " ++ x
+  show (X x)           = "X " ++ x
+  show (Z x)           = "Z " ++ x
+  show (Y x)           = "Y " ++ x
+  show (CNOT x y)      = "tof " ++ x ++ " " ++ y
+  show (S x)           = "S " ++ x
+  show (Sinv x)        = "S* " ++ x
+  show (T x)           = "T " ++ x
+  show (Tinv x)        = "T* " ++ x
+  show (Swap x y)      = "swap " ++ x ++ " " ++ y
+  show (Rz theta x)    = "Rz(" ++ show theta ++ ") " ++ x
+  show (Rx theta x)    = "Rx(" ++ show theta ++ ") " ++ x
+  show (Ry theta x)    = "Ry(" ++ show theta ++ ") " ++ x
+  show (Uninterp s xs) = s ++ concatMap (" " ++) xs
 
 instance Show Stmt where
   show (Gate gate)               = show gate
