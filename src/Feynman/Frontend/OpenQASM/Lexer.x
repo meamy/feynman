@@ -19,6 +19,7 @@ tokens :-
 
   -- Header
   OPENQASM.*                                                ;
+  include.*                                                 ;
  
   -- Tokens 
   sin                                                       { \s -> TSin }
