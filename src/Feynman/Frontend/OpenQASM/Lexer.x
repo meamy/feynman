@@ -18,10 +18,10 @@ tokens :-
   \/\/.*                                                    ;
 
   -- Header
-  OPENQASM.*                                                ;
   include.*                                                 ;
  
   -- Tokens 
+  OPENQASM                                                  { \s -> THeader }
   sin                                                       { \s -> TSin }
   cos                                                       { \s -> TCos }
   tan                                                       { \s -> TTan }
@@ -62,8 +62,9 @@ tokens :-
 
 -- OpenQASM tokens
 data Token =
+    THeader
   -- Unary operators
-    TSin
+  | TSin
   | TCos
   | TTan
   | TExp

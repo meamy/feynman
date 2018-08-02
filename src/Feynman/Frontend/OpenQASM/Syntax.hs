@@ -9,7 +9,7 @@ data Arg = Var ID | Offset ID Int deriving (Eq,Show)
 data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show)
 data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
 
-data QASM = QASM [Stmt] deriving (Eq,Show)
+data QASM = QASM Double [Stmt] deriving (Eq,Show)
 
 data Stmt =
     DecStmt Dec
