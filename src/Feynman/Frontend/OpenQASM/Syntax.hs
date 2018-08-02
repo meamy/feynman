@@ -12,7 +12,8 @@ data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
 data QASM = QASM Double [Stmt] deriving (Eq,Show)
 
 data Stmt =
-    DecStmt Dec
+    IncStmt String
+  | DecStmt Dec
   | QStmt QExp
   | IfStmt ID Int QExp
   | BarrierStmt [Arg]
@@ -50,3 +51,7 @@ data QExp =
   | MeasureExp Arg Arg
   | ResetExp Arg
   deriving (Eq,Show)
+
+
+{- Pretty printing -}
+--prettyPrint :: QASM -> [String]

@@ -4,9 +4,9 @@ module Feynman.Frontend.OpenQASM.Lexer (Token(..), lexer) where
 
 %wrapper "basic"
 
-$digit = 0-9       -- digits
-$alpha = [a-zA-Z]  -- alphabetic characters
-$eol   = [\n]      -- newline
+$digit  = 0-9        -- digits
+$alpha  = [a-zA-Z]   -- alphabetic characters
+$eol    = [\n]       -- newline
 
 tokens :-
 
@@ -17,11 +17,9 @@ tokens :-
   -- Comments
   \/\/.*                                                    ;
 
-  -- Header
-  include.*                                                 ;
- 
   -- Tokens 
   OPENQASM                                                  { \s -> THeader }
+  include                                                   { \s -> TInclude }
   sin                                                       { \s -> TSin }
   cos                                                       { \s -> TCos }
   tan                                                       { \s -> TTan }
@@ -54,15 +52,17 @@ tokens :-
   \]                                                        { \s -> TRBracket }
   \;                                                        { \s -> TSemicolon }
   \,                                                        { \s -> TComma }
-  [a-z]($digit|$alpha)*                                     { \s -> TID   s }
+  \"[^\"]*\"                                                { \s -> TString (filter (/='"') s) }
+  [a-z]($digit|$alpha)*                                     { \s -> TID s }
   ($digit+\.$digit*|$digit*\.$digit+)([eE][\-\+]?$digit+)?  { \s -> TReal (read s) }
-  [1-9]$digit*|0                                            { \s -> TNat  (read s) }
+  [1-9]$digit*|0                                            { \s -> TNat (read s) }
 
 {
 
 -- OpenQASM tokens
 data Token =
     THeader
+  | TInclude
   -- Unary operators
   | TSin
   | TCos
@@ -100,6 +100,7 @@ data Token =
   | TSemicolon
   | TComma
   -- identifiers & literals
+  | TString String
   | TID String
   | TReal Double
   | TNat Int 

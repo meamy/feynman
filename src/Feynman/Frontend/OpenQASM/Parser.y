@@ -11,6 +11,7 @@ import Feynman.Frontend.OpenQASM.Syntax
 
 %token
   qasm    { THeader }
+  include { TInclude }
   sin     { TSin }
   cos     { TCos }
   tan     { TTan }
@@ -43,6 +44,7 @@ import Feynman.Frontend.OpenQASM.Syntax
   ']'     { TRBracket }
   ';'     { TSemicolon }
   ','     { TComma }
+  str     { TString $$ }
   id      { TID   $$ }
   float   { TReal $$ }
   nat     { TNat  $$ }
@@ -54,7 +56,8 @@ program : qasm float ';' statements { QASM $2 $4 }
 statements : statement             { [$1] }
            | statements statement  { $1 ++ [$2] }
 
-statement : declaration                   { DecStmt $1 }
+statement : include str ';'               { IncStmt $2 }
+          | declaration                   { DecStmt $1 }
           | qop ';'                       { QStmt $1 }
           | if '(' id '=' nat ')' qop ';' { IfStmt $3 $5 $7 }
           | barrier args ';'              { BarrierStmt $2 }
