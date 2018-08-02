@@ -158,8 +158,8 @@ applyGate synth gates g = case g of
     return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
   Uninterp s vs -> do
     bvs <- mapM getSt vs
-    st  <- get
-    orphanLists <- mapM (\v -> exists v st) vs
+    st <- get
+    orphanLists <- mapM (\v -> get >>= exists v) vs
     return $ gates ++ synth (ivals st) (qvals st) (concat orphanLists) ++ [Uninterp s vs]
 
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
