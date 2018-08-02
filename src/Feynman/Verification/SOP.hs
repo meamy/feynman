@@ -13,6 +13,7 @@ import Data.Semigroup
 import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 
+import Feynman.Algebra.Linear hiding (identity)
 import Feynman.Algebra.Polynomial
 import Feynman.Core hiding (toffoli, subst)
 import qualified Feynman.Core as Core
@@ -41,10 +42,18 @@ data SOP a = SOP {
   } deriving (Eq)
 
 instance (Show a, Eq a, Num a) => Show (SOP a) where
-  show sop = printf "|%s> --> 1/sqrt(2)^%d Sum[%s] e^i*pi*{%s}|%s>" is (sde sop) pvars (show $ poly sop) os
+  show sop = printf "|%s> --> %s%s%s|%s>" is sc sm ph os
     where is = concatMap (\(v, b) -> if b then v else "0") . Map.toList $ inVals sop
+          sc = case sde sop of
+                 0 -> ""
+                 i -> "1/sqrt(2)^" ++ show i ++ " "
+          sm = case pathVars sop of
+                 [] -> ""
+                 xs -> "Sum[" ++ (intercalate "," . map (\i -> pathVar i) $ xs) ++ "] "
+          ph = case poly sop == zero of
+                 True  -> ""
+                 False -> "e^i*pi*" ++ showPoly (poly sop)
           os = concatMap showPoly $ Map.elems $ outVals sop
-          pvars = intercalate "," . map (\i -> pathVar i) $ pathVars sop
           showPoly p
             | isMono p  = show p
             | otherwise = "(" ++ show p ++ ")"
@@ -747,7 +756,7 @@ hiddenShiftQuantumSpec n = SOP {
   }
 
 verifyHiddenShift n a () = do
-  putStrLn $ "Verifying Hidden Shift, N=" ++ show n ++ ", A=" ++ show a
+  putStrLn $ "Verifying random Hidden Shift, n=" ++ show n ++ ", A=" ++ show a
   (circ, string) <- generate $ hiddenShift n a
   printVerStats (circ)
   case verifySpec (hiddenShiftSpec n string) vars [] circ of
@@ -756,7 +765,7 @@ verifyHiddenShift n a () = do
   where vars   = ["x" ++ show i | i <- [0..n-1]]
 
 verifyHiddenShiftQuantum n a () = do
-  putStrLn $ "Verifying Symbolic Shift, N=" ++ show n ++ ", A=" ++ show a
+  putStrLn $ "Verifying random Symbolic Shift, n=" ++ show n ++ ", A=" ++ show a
   circ <- generate $ hiddenShiftQuantum n a
   printVerStats (circ)
   case verifySpec (hiddenShiftQuantumSpec n) vars inputs circ of
@@ -764,6 +773,18 @@ verifyHiddenShiftQuantum n a () = do
     Just _  -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]] ++ inputs
         inputs = ["y" ++ show i | i <- [0..n-1]]
+
+simulateHiddenShift n a () = do
+  (circ, string) <- generate $ hiddenShift n a
+  putStrLn $ "Simulating random Hidden Shift, n=" ++ show n
+    ++ ", A=" ++ show a
+    ++ ", x=" ++ show (fromBits . map (`elem` string) . reverse . sort $ vars)
+  printVerStats (circ)
+  let sop = circuitSOPWithHints vars circ
+  print $ reduce (blank vars <> sop)
+  where vars = ["x" ++ show i | i <- [0..n-1]]
+  
+
 {- Circuit designs -}
 
 minimalProductGate []     t = []

@@ -71,6 +71,7 @@ instance (Eq a, Num a) => Eq (Multilinear a) where
 instance (Eq a, Num a, Show a) => Show (Multilinear a) where
   show p@(Multilinear terms)
     | isZero p    = "0"
+    | p == one    = "1"
     | otherwise = intercalate " + " $ map showTerm (Map.assocs terms)
     where showTerm (m, a)
             | monomialDegree m == 0 = show a
