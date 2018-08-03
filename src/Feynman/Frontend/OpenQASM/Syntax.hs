@@ -11,6 +11,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Control.Monad
+import Debug.Trace
 
 {- Abstract syntax -}
 data Typ = Numeric | Creg Int | Qreg Int | Circ Int Int deriving (Eq,Show)
@@ -156,24 +157,53 @@ prettyPrintBinOp bop = case bop of
 
 type Ctx = Map ID Typ
 
+-- Hard coded qelib, easier for now
+qelib1 :: Ctx
+qelib1 = Map.fromList
+  [ ("u3", Circ 3 1),
+    ("u2", Circ 2 1),
+    ("u1", Circ 1 1),
+    ("cx", Circ 0 2),
+    ("id", Circ 0 1),
+    ("x", Circ 0 1),
+    ("y", Circ 0 1),
+    ("z", Circ 0 1),
+    ("h", Circ 0 1),
+    ("s", Circ 0 1),
+    ("sdg", Circ 0 1),
+    ("t", Circ 0 1),
+    ("tdg", Circ 0 1),
+    ("rx", Circ 1 1),
+    ("ry", Circ 1 1),
+    ("rz", Circ 1 1),
+    ("cz", Circ 0 2),
+    ("cy", Circ 0 2),
+    ("ch", Circ 0 2),
+    ("ccx", Circ 0 3),
+    ("crz", Circ 1 2),
+    ("cu1", Circ 1 2),
+    ("cu3", Circ 3 2) ]
+    
+
 check :: QASM -> Either String ()
 check (QASM _ stmts) = foldM_ checkStmt Map.empty stmts
 
 checkStmt :: Ctx -> Stmt -> Either String Ctx
 checkStmt ctx stmt = case stmt of
-  IncStmt s        -> return ctx
-  DecStmt dec      -> checkDec ctx dec
-  QStmt qexp       -> do
+  IncStmt "qelib1.inc" -> return $ Map.union qelib1 ctx
+  IncStmt s            -> return ctx
+  DecStmt dec          -> checkDec ctx dec
+  QStmt qexp           -> do
     checkQExp ctx qexp
     return ctx
-  IfStmt v i qexp  -> do
+  IfStmt v i qexp      -> do
     vTy <- argTyp ctx (Var v)
     case vTy of
       Creg _ -> return ()
       _      -> Left $ "Variable " ++ v ++ " in if statement has wrong type"
     checkQExp ctx qexp
     return ctx
-  BarrierStmt args -> do
+  BarrierStmt args     -> do
     let checkArg arg = do
           argTy <- argTyp ctx arg
           case argTy of
@@ -188,8 +218,7 @@ checkDec ctx dec = case dec of
   VarDec v typ      -> return $ Map.insert v typ ctx
   UIntDec v cp qp   -> return $ Map.insert v (Circ (length cp) (length qp)) ctx
   GateDec v cp qp b -> do
-    let ctx' = Map.union (Map.fromList $ zip cp $ repeat Numeric)
-                         (Map.fromList $ zip qp $ repeat $ Qreg 1)
+    let ctx' = foldr (\v -> Map.insert v (Qreg 1)) (foldr (\v -> Map.insert v Numeric) ctx cp) qp
     forM_ b (checkUExp ctx')
     return $ Map.insert v (Circ (length cp) (length qp)) ctx
 
@@ -234,8 +263,8 @@ checkUExp ctx uexp = case uexp of
     let checkArg arg = do
           argTy <- argTyp ctx arg
           case argTy of
-            Qreg 1 -> return ()
-            _      -> Left $ "Argument " ++ show arg ++ " to barrier has wrong type"
+            Qreg _ -> return ()
+            _      -> Left $ "Argument " ++ show arg ++ " to " ++ v ++ " has wrong type"
     vTy <- argTyp ctx (Var v)
     forM_ exps (checkExp ctx)
     forM_ args checkArg
@@ -255,6 +284,7 @@ checkExp ctx exp = case exp of
       _       -> Left $ "Variable " ++ v ++ " has wrong type in expression"
   UOpExp _ exp       -> checkExp ctx exp
   BOpExp exp1 _ exp2 -> checkExp ctx exp1 >> checkExp ctx exp2
+  _                  -> return ()
 
 argTyp :: Ctx -> Arg -> Either String Typ
 argTyp ctx (Var v) = case Map.lookup v ctx of
