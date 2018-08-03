@@ -4,7 +4,7 @@ module Main (main) where
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
 import Feynman.Frontend.DotQC
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
-import Feynman.Frontend.OpenQASM.Syntax (prettyPrint)
+import Feynman.Frontend.OpenQASM.Syntax (prettyPrint, check)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
@@ -153,5 +153,7 @@ parseArgs pass verify (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
-main = getContents >>= mapM_ putStrLn . prettyPrint . parse . lexer
+main = getContents >>= printIt . check . parse . lexer
+  where printIt (Left s) = putStrLn s
+        printIt _        = putStrLn "Pass"
 --main = getArgs >>= parseArgs trivPass False
