@@ -1,6 +1,7 @@
 module Feynman.Frontend.OpenQASM.Syntax where
 
 import Feynman.Core(ID)
+import Feynman.Frontend.DotQC
 
 import Data.List
 
@@ -30,13 +31,13 @@ data Stmt =
   deriving (Eq,Show)
 
 data Dec =
-    VarDec  { name :: ID,
+    VarDec  { id :: ID,
               typ :: Typ }
-  | GateDec { name :: ID,
+  | GateDec { id :: ID,
               cparams :: [ID],
               qparams :: [ID],
-              body :: [UExp] }
-  | UIntDec { name :: ID,
+              gates :: [UExp] }
+  | UIntDec { id :: ID,
               cparams :: [ID],
               qparams :: [ID] }
   deriving (Eq,Show)
@@ -305,8 +306,65 @@ argTyp ctx (Offset v i) = do
      
 
 {- Transformations -}
--- Doing double duty wrt .qc frontend. If I was smart I would have done all transformations
+-- openQASM <--> .qc doesn't really make much sense. If I was smart I would have done all transformations
 -- on the IR from the beginning, but this is quicker for now. Eventually I'll move everything
--- to a common IR.
+-- to a common IR, but for now it'll all go through .qc
 
---inlineQASM :: QASM -> QASM
+--toDotQC ::
+
+regify :: ID -> Map ID Int -> ID -> Arg
+regify y subs x = case Map.lookup x subs of
+  Nothing -> Var x
+  Just i  -> Offset y i
+
+qcGateToQASM :: (ID -> Arg) -> Gate -> [UExp]
+qcGateToQASM sub (Gate g i p) =
+  let circ = case (g, p) of
+        ("H", [x])      -> [CallGate "h" [] [sub x]]
+        ("X", [x])      -> [CallGate "x" [] [sub x]]
+        ("Y", [x])      -> [CallGate "y" [] [sub x]]
+        ("Z", [x])      -> [CallGate "z" [] [sub x]]
+        ("S", [x])      -> [CallGate "s" [] [sub x]]
+        ("P", [x])      -> [CallGate "s" [] [sub x]]
+        ("S*", [x])     -> [CallGate "sdg" [] [sub x]]
+        ("P*", [x])     -> [CallGate "sdg" [] [sub x]]
+        ("T", [x])      -> [CallGate "t" [] [sub x]]
+        ("T*", [x])     -> [CallGate "tdg" [] [sub x]]
+        ("tof", [x])    -> [CallGate "x" [] [sub x]]
+        ("tof", [x,y])  -> [CallGate "cx" [] [sub x, sub y]]
+        ("cnot", [x,y]) -> [CallGate "cx" [] [sub x, sub y]]
+        ("swap", [x,y]) -> [CallGate "cx" [] [sub x, sub y],
+                            CallGate "cx" [] [sub y, sub x],
+                            CallGate "cx" [] [sub x, sub y]]
+        ("tof", [x,y,z])-> [CallGate "ccx" [] [sub x, sub y, sub z]]
+        ("Z", [x,y,z])  -> [CallGate "h" [] [sub z],
+                            CallGate "ccx" [] [sub x, sub y, sub z],
+                            CallGate "h" [] [sub z]]
+        ("Zd", [x,y,z]) -> [CallGate "h" [] [sub z],
+                            CallGate "ccx" [] [sub x, sub y, sub z],
+                            CallGate "h" [] [sub z]]
+        otherwise       -> [CallGate g [] (map sub p)]
+  in
+    concat $ genericReplicate i circ
+qcGateToQASM sub (ParamGate g i theta p) =
+  let circ = case (g, p) of
+        ("Rz", [x]) -> [CallGate "rz" [IntExp 0] [sub x]]
+        ("Rx", [x]) -> [CallGate "rx" [IntExp 0] [sub x]]
+        ("Ry", [x]) -> [CallGate "ry" [IntExp 0] [sub x]]
+        otherwise   -> [CallGate g [IntExp 0] (map sub p)]
+  in
+    concat $ genericReplicate i circ
+
+qcGatesToQASM :: Map ID Int -> [Gate] -> [UExp]
+qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
+
+fromDotQC :: DotQC -> QASM
+fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts
+  where qMap     = Map.fromList $ zip (qubits dotqc) [0..]
+        stmts    = gateDecs ++ qDecs ++ gates
+        gateDecs = map (\dec -> DecStmt $ GateDec (name dec) [] (params dec) (qcGatesToQASM qMap $ body dec))
+                       (filter ((/= "main") . name) (decls dotqc))
+        qDecs    = [DecStmt $ VarDec "qubits" $ Qreg (length $ qubits dotqc)]
+        gates    = case find ((== "main") . name) (decls dotqc) of
+          Nothing  -> []
+          Just dec -> map (QStmt . GateExp) $ qcGatesToQASM qMap (body dec)
