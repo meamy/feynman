@@ -27,7 +27,6 @@ data Stmt =
   | DecStmt Dec
   | QStmt QExp
   | IfStmt ID Int QExp
-  | BarrierStmt [Arg]
   deriving (Eq,Show)
 
 data Dec =
@@ -52,6 +51,7 @@ data UExp =
     UGate Exp Exp Exp Arg
   | CXGate Arg Arg
   | CallGate ID [Exp] [Arg]
+  | BarrierGate [Arg]
   deriving (Eq,Show)
 
 data Exp =
@@ -77,7 +77,6 @@ prettyPrintStmt stmt = case stmt of
   DecStmt dec      -> prettyPrintDec dec
   QStmt qexp       -> [prettyPrintQExp qexp ++ ";"]
   IfStmt v i qexp  -> ["if(" ++ v ++ "==" ++ show i ++ ")" ++ prettyPrintQExp qexp ++ ";"]
-  BarrierStmt args -> ["barrier " ++ prettyPrintArgs args ++ ";"]
 
 prettyPrintDec :: Dec -> [String]
 prettyPrintDec dec = case dec of
@@ -112,6 +111,8 @@ prettyPrintUExp uexp = case uexp of
     x ++ " " ++ prettyPrintArgs qargs
   CallGate x exps qargs ->
     x ++ "(" ++ prettyPrintExps exps ++ ") " ++ prettyPrintArgs qargs
+  BarrierGate args      ->
+    "barrier " ++ prettyPrintArgs args
 
 prettyPrintIDs :: [ID] -> String
 prettyPrintIDs = intercalate ","
@@ -203,14 +204,6 @@ checkStmt ctx stmt = case stmt of
       _      -> Left $ "Variable " ++ v ++ " in if statement has wrong type"
     checkQExp ctx qexp
     return ctx
-  BarrierStmt args     -> do
-    let checkArg arg = do
-          argTy <- argTyp ctx arg
-          case argTy of
-            Qreg _ -> return ()
-            _      -> Left $ "Argument " ++ show arg ++ " to barrier has wrong type"
-    forM_ args checkArg
-    return ctx
 
 -- Note that we don't require that arguments in the body of a dec are not offsets
 checkDec :: Ctx -> Dec -> Either String Ctx
@@ -274,6 +267,13 @@ checkUExp ctx uexp = case uexp of
         then return ()
         else Left $ "Wrong number of arguments to " ++ v
       _ -> Left $ "Variable " ++ v ++ " is not gate type"
+  BarrierGate args     -> do
+    let checkArg arg = do
+          argTy <- argTyp ctx arg
+          case argTy of
+            Qreg _ -> return ()
+            _      -> Left $ "Argument " ++ show arg ++ " to barrier has wrong type"
+    forM_ args checkArg
 
 checkExp :: Ctx -> Exp -> Either String ()
 checkExp ctx exp = case exp of

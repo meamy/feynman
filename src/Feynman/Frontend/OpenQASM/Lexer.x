@@ -35,7 +35,7 @@ tokens :-
   opaque                                                    { \s -> TOpaque }
   if                                                        { \s -> TIf }
   \=\=                                                      { \s -> TEq }
-  barier                                                    { \s -> TBarrier }
+  barrier                                                   { \s -> TBarrier }
   gate                                                      { \s -> TGate }
   qreg                                                      { \s -> TQreg }
   creg                                                      { \s -> TCreg }
