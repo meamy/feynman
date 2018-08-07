@@ -308,6 +308,25 @@ argTyp ctx (Offset v i) = do
 
 {- Transformations -}
 
+substUExp esub asub uexp = case uexp of
+  UGate e1 e2 e3 a -> UGate (substExp esub e1)
+                            (substExp esub e2)
+                            (substExp esub e3)
+                            (substArg asub a)
+  CXGate a b       -> CXGate (substArg asub a) (substArg asub b)
+  BarrierGate xs   -> BarrierGate (map (substArg asub) xs)
+  CallGate v e xs  -> CallGate v (map (substExp esub) e) (map (substArg asub) xs)
+
+substExp esub exp = case exp of
+  VarExp v         -> Map.findWithDefault (VarExp v) v esub
+  UOpExp uop exp   -> UOpExp uop (substExp esub exp)
+  BOpExp e1 bop e2 -> BOpExp (substExp esub e1) bop (substExp esub e2)
+  _                -> exp
+
+substArg asub arg = case arg of
+  Var v  -> Map.findWithDefault (Var v) v asub
+  _      -> arg
+
 -- Expands all implicitly mapped functions
 desugar :: Ctx -> QASM -> QASM
 desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
@@ -335,6 +354,28 @@ desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
             Qreg i -> map (Offset v) [0..i-1]
             Creg i -> map (Offset v) [0..i-1]
             _      -> [Var v]
+
+-- Inlines all local definitions & non-primitive operations
+inline :: QASM -> QASM
+inline (QASM ver stmts) = QASM ver . snd . foldl' f (Map.empty, []) $ stmts
+  where f (ctx, stmts) stmt = case stmt of
+          DecStmt (GateDec v c q b) -> (Map.insert v (c, q, concatMap (h ctx) b) ctx, stmts)
+          QStmt qexp                -> (ctx, stmts ++ (map QStmt $ g ctx qexp))
+          IfStmt v i qexp           -> (ctx, stmts ++ (map (IfStmt v i) $ g ctx qexp))
+          _                         -> (ctx, stmts ++ [stmt])
+        g ctx qexp = case qexp of
+          GateExp uexp    -> map GateExp $ h ctx uexp
+          _               -> [qexp]
+        h ctx uexp = case uexp of
+          CallGate v e xs -> inlineCall ctx v e xs
+          _               -> [uexp]
+        inlineCall ctx v e xs = case Map.lookup v ctx of
+          Just (c, q, b)  ->
+            let eSubs = Map.fromList $ zip c e
+                aSubs = Map.fromList $ zip q xs
+            in
+              map (substUExp eSubs aSubs) b
+          Nothing         -> [CallGate v e xs]
 
 -- Provides an optimization interface for the main IR
 applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASM -> QASM

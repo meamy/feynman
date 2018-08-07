@@ -9,6 +9,7 @@ import Feynman.Frontend.OpenQASM.Syntax (QASM,
                                          desugar,
                                          emit,
                                          fromDotQC,
+                                         inline,
                                          applyOpt)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
@@ -35,6 +36,9 @@ type QASMPass = QASM -> Either String QASM
 
 trivPass :: QASMPass
 trivPass = Right
+
+inlinePass :: QASMPass
+inlinePass = Right . inline
 
 optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASMPass
 optimizationPass f qasm = Right $ applyOpt f qasm
@@ -82,6 +86,7 @@ parseArgs :: QASMPass -> [String] -> IO ()
 parseArgs pass []     = printHelp
 parseArgs pass (x:xs) = case x of
   "-h"         -> printHelp
+  "-inline"    -> parseArgs (pass >=> inlinePass) xs
   "-phasefold" -> parseArgs (pass >=> phasefoldPass) xs
   "-cnotmin"   -> parseArgs (pass >=> cnotminPass) xs
   "-tpar"      -> parseArgs (pass >=> tparPass) xs
