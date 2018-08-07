@@ -3,7 +3,13 @@ module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
-import Feynman.Frontend.OpenQASM.Syntax (QASM, prettyPrint, check, emit, fromDotQC, applyOpt)
+import Feynman.Frontend.OpenQASM.Syntax (QASM,
+                                         prettyPrint,
+                                         check,
+                                         desugar,
+                                         emit,
+                                         fromDotQC,
+                                         applyOpt)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
@@ -53,8 +59,8 @@ run pass fname src = do
         printErr (Right r) = Right r
         parseAndPass = do
           let qasm   = parse . lexer $ src
-          let symtab = check qasm
-          qasm' <- pass qasm
+          symtab <- check qasm
+          qasm' <- pass $ desugar symtab qasm
           return (qasm, qasm')
 
 printHelp :: IO ()

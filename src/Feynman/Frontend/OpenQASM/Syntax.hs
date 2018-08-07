@@ -308,6 +308,34 @@ argTyp ctx (Offset v i) = do
 
 {- Transformations -}
 
+-- Expands all implicitly mapped functions
+desugar :: Ctx -> QASM -> QASM
+desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
+  where f stmt = case stmt of
+          IncStmt _       -> [stmt]
+          -- By the specification of QASM, functions can only refer to
+          -- parameters in their body, which are explicitly qubit typed
+          DecStmt _       -> [stmt]
+          QStmt qexp      -> map QStmt $ g qexp
+          -- Note that we can't easily expand v due to the design of QASM. Fun.
+          IfStmt v i qexp -> map (IfStmt v i) $ g qexp
+        g qexp = case qexp of
+          MeasureExp a b  -> map (uncurry MeasureExp) $ zip (expand a) (expand b)
+          ResetExp a      -> map ResetExp $ expand a
+          GateExp uexp    -> map GateExp $ h uexp
+        h uexp = case uexp of
+          UGate e1 e2 e3 a -> map (UGate e1 e2 e3) $ expand a
+          CXGate a b       -> map (uncurry CXGate) $ zip (expand a) (expand b)
+          BarrierGate xs   -> [BarrierGate $ concatMap expand xs]
+          -- Can cause problems if not all argument registers have the same length
+          CallGate v e xs  -> map (CallGate v e) $ transpose (map expand xs)
+        expand arg = case arg of
+          Offset _ _ -> [arg]
+          Var v      -> case symtab!v of
+            Qreg i -> map (Offset v) [0..i-1]
+            Creg i -> map (Offset v) [0..i-1]
+            _      -> [Var v]
+
 -- Provides an optimization interface for the main IR
 applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASM -> QASM
 applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
@@ -319,7 +347,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         optStmt (hdr, body) stmt = case stmt of
           IncStmt _                        -> (stmt:hdr, body)
           DecStmt (GateDec v c q gateBody) ->
-            let stmt' = DecStmt $ GateDec v c q $ applyToUExps gateBody in
+            let stmt' = DecStmt $ GateDec v c q $ applyToUExps q gateBody in
               (stmt':hdr, body)
           DecStmt _                        -> (stmt:hdr, body)
           _                                -> (hdr, stmt:body)
@@ -328,15 +356,15 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToStmts stmts =
           let (gates, gateMap, qubitMap) = foldl' stmtToGate ([], Map.empty, Map.empty) stmts
               vars                       = ids gates
-              gates'                     = opt vars vars (reverse gates)
+              gates'                     = opt vars [] (reverse gates)
           in
             map (gateToStmt (gateMap, qubitMap)) gates'
 
-        applyToUExps :: [UExp] -> [UExp]
-        applyToUExps uexps =
+        applyToUExps :: [ID] -> [UExp] -> [UExp]
+        applyToUExps inp uexps =
           let (gates, gateMap, qubitMap) = foldl' uexpToGate ([], Map.empty, Map.empty) uexps
               vars                       = ids gates
-              gates'                     = opt vars vars (reverse gates)
+              gates'                     = opt vars inp (reverse gates)
           in
             map (gateToUExp (gateMap, qubitMap)) gates'
 
