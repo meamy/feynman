@@ -3,9 +3,6 @@ module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
 import Feynman.Frontend.DotQC
-import Feynman.Frontend.OpenQASM.Lexer (lexer)
-import Feynman.Frontend.OpenQASM.Syntax (prettyPrint, check, emit, fromDotQC)
-import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.SOP
@@ -83,14 +80,14 @@ run pass verify fname src = do
   TOD ends endp     <- parseAndPass `seq` getClockTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qc, qc') -> emit $ fromDotQC qc'{-
+    Right (qc, qc') ->
       let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc
       putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
       mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc'
-      putStrLn $ show qc'-}
+      putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
@@ -153,8 +150,4 @@ parseArgs pass verify (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
-{-main = getContents >>= printIt . check . parse . lexer
-  where printIt (Left s) = putStrLn s
-        printIt _        = putStrLn "Pass"
--}
 main = getArgs >>= parseArgs trivPass False

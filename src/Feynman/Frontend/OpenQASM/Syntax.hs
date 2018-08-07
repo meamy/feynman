@@ -1,11 +1,12 @@
 module Feynman.Frontend.OpenQASM.Syntax where
 
-import Feynman.Core(ID)
-import Feynman.Frontend.DotQC
+import Feynman.Core hiding (Stmt)
+import Feynman.Frontend.DotQC (DotQC)
+import qualified Feynman.Frontend.DotQC as DotQC
 
 import Data.List
 
-import Data.Map (Map)
+import Data.Map (Map, (!))
 import qualified Data.Map as Map
 
 import Data.Set (Set)
@@ -187,8 +188,8 @@ qelib1 = Map.fromList
     ("cu3", Circ 3 2) ]
     
 
-check :: QASM -> Either String ()
-check (QASM _ stmts) = foldM_ checkStmt Map.empty stmts
+check :: QASM -> Either String Ctx
+check (QASM _ stmts) = foldM checkStmt Map.empty stmts
 
 checkStmt :: Ctx -> Stmt -> Either String Ctx
 checkStmt ctx stmt = case stmt of
@@ -306,19 +307,161 @@ argTyp ctx (Offset v i) = do
      
 
 {- Transformations -}
+
+-- Provides an optimization interface for the main IR
+applyOpt :: ([Primitive] -> [Primitive]) -> QASM -> QASM
+applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
+  where optStmts stmts =
+          let (hdr, body) = foldl' optStmt ([], []) stmts in
+            reverse hdr ++ applyToStmts (reverse body)
+
+        optStmt :: ([Stmt], [Stmt]) -> Stmt -> ([Stmt], [Stmt])
+        optStmt (hdr, body) stmt = case stmt of
+          IncStmt _                        -> (stmt:hdr, body)
+          DecStmt (GateDec v c q gateBody) ->
+            let stmt' = DecStmt $ GateDec v c q $ applyToUExps gateBody in
+              (stmt':hdr, body)
+          DecStmt _                        -> (stmt:hdr, body)
+          _                                -> (hdr, stmt:body)
+
+        applyToStmts :: [Stmt] -> [Stmt]
+        applyToStmts stmts =
+          let (gates, gateMap, qubitMap) = foldl' stmtToGate ([], Map.empty, Map.empty) stmts
+              gates'                     = opt (reverse gates)
+          in
+            map (gateToStmt (gateMap, qubitMap)) gates'
+
+        applyToUExps :: [UExp] -> [UExp]
+        applyToUExps uexps =
+          let (gates, gateMap, qubitMap) = foldl' uexpToGate ([], Map.empty, Map.empty) uexps
+              gates'                     = opt (reverse gates)
+          in
+            map (gateToUExp (gateMap, qubitMap)) gates'
+
+        stmtToGate :: ([Primitive], Map ID ([Arg] -> Stmt), Map ID Arg) -> Stmt
+          -> ([Primitive], Map ID ([Arg] -> Stmt), Map ID Arg)
+        stmtToGate (gates, gateMap, qubitMap) stmt = case stmt of
+          IfStmt v i qexp -> -- This statement can't be desugared and hence is a nightmare
+            let args      = getArgs qexp
+                vars      = map prettyPrintArg args
+                qubitMap' = foldr (\(x, arg) -> Map.insert x arg) qubitMap $ zip vars args
+                gateName  = "If " ++ v ++ "==" ++ show i ++ " (" ++ prettyPrintQExp qexp ++ ")"
+                gateMap'  = Map.insert gateName (\_ -> stmt) gateMap
+            in
+              ((Uninterp gateName $ v:vars):gates, gateMap', qubitMap')
+          QStmt (MeasureExp arg1 arg2) ->
+            let (x, y)    = (prettyPrintArg arg1, prettyPrintArg arg2)
+                qubitMap' = Map.insert y arg2 $ Map.insert x arg1 qubitMap
+            in
+              ((Uninterp "measure" [x,y]):gates, gateMap, qubitMap')
+          QStmt (ResetExp arg) ->
+            let x = prettyPrintArg arg in
+              ((Uninterp "reset" [x]):gates, gateMap, Map.insert x arg qubitMap)
+          QStmt (GateExp uexp) ->
+            let (gates', uexpGateMap, qubitMap') = uexpToGate (gates, Map.empty, qubitMap) uexp
+                gateMap' = Map.union (Map.map (\f -> QStmt . GateExp . f) uexpGateMap) gateMap
+            in
+              (gates', gateMap', qubitMap')
+
+        uexpToGate :: ([Primitive], Map ID ([Arg] -> UExp), Map ID Arg) -> UExp
+          -> ([Primitive], Map ID ([Arg] -> UExp), Map ID Arg)
+        uexpToGate (gates, gateMap, qubitMap) uexp = case uexp of
+          UGate e1 e2 e3 arg ->
+            let (name, x) = ("U(" ++ prettyPrintExps [e1, e2, e3] ++ ")", prettyPrintArg arg)
+                gate      = Uninterp name [x]
+            in
+              (gate:gates, Map.insert name (UGate e1 e2 e3 . head) gateMap, Map.insert x arg qubitMap)
+          CXGate arg1 arg2 ->
+            let (x, y) = (prettyPrintArg arg1, prettyPrintArg arg2) in
+              ((CNOT x y):gates, gateMap, Map.insert y arg2 $ Map.insert x arg1 qubitMap)
+          CallGate name exps args ->
+            let vars      = map prettyPrintArg args
+                qubitMap' = foldr (\(x, arg) -> Map.insert x arg) qubitMap $ zip vars args
+            in
+              case (name, exps, vars) of
+                ("h", [], x:[])       -> ((H x):gates, gateMap, qubitMap')
+                ("x", [], x:[])       -> ((X x):gates, gateMap, qubitMap')
+                ("y", [], x:[])       -> ((Y x):gates, gateMap, qubitMap')
+                ("z", [], x:[])       -> ((Z x):gates, gateMap, qubitMap')
+                ("s", [], x:[])       -> ((S x):gates, gateMap, qubitMap')
+                ("sdg", [], x:[])     -> ((Sinv x):gates, gateMap, qubitMap')
+                ("t", [], x:[])       -> ((T x):gates, gateMap, qubitMap')
+                ("tdg", [], x:[])     -> ((Tinv x):gates, gateMap, qubitMap')
+                ("cx", [], x:y:[])    -> ((CNOT x y):gates, gateMap, qubitMap')
+                ("id", [], x:[])      -> (gates, gateMap, qubitMap')
+                ("cz", [], x:y:[])    -> (cz x y ++ gates, gateMap, qubitMap')
+                ("ccx", [], x:y:z:[]) -> (ccx x y z ++ gates, gateMap, qubitMap')
+                _                     ->
+                  let gateName = name ++ "(" ++ (prettyPrintExps exps) ++ ")"
+                      gateMap' = Map.insert gateName (CallGate name exps) gateMap
+                  in
+                    ((Uninterp gateName vars):gates, gateMap', qubitMap')
+
+        gateToStmt :: (Map ID ([Arg] -> Stmt), Map ID Arg) -> Primitive -> Stmt
+        gateToStmt (gateMap, qubitMap) gate = case gate of
+          H x            -> QStmt . GateExp $ CallGate "h" [] [qubitMap!x]
+          X x            -> QStmt . GateExp $  CallGate "x" [] [qubitMap!x]
+          Y x            -> QStmt . GateExp $  CallGate "y" [] [qubitMap!x]
+          Z x            -> QStmt . GateExp $  CallGate "z" [] [qubitMap!x]
+          S x            -> QStmt . GateExp $  CallGate "s" [] [qubitMap!x]
+          Sinv x         -> QStmt . GateExp $  CallGate "sdg" [] [qubitMap!x]
+          T x            -> QStmt . GateExp $  CallGate "t" [] [qubitMap!x]
+          Tinv x         -> QStmt . GateExp $  CallGate "tdg" [] [qubitMap!x]
+          CNOT x y       -> QStmt . GateExp $  CXGate (qubitMap!x) (qubitMap!y)
+          Swap x y       -> QStmt . GateExp $  CallGate "swap" [] [qubitMap!x, qubitMap!y]
+          Uninterp id xs -> gateMap!id $ map (qubitMap!) xs
+
+        gateToUExp :: (Map ID ([Arg] -> UExp), Map ID Arg) -> Primitive -> UExp
+        gateToUExp (gateMap, qubitMap) gate = case gate of
+          H x            -> CallGate "h" [] [qubitMap!x]
+          X x            -> CallGate "x" [] [qubitMap!x]
+          Y x            -> CallGate "y" [] [qubitMap!x]
+          Z x            -> CallGate "z" [] [qubitMap!x]
+          S x            -> CallGate "s" [] [qubitMap!x]
+          Sinv x         -> CallGate "sdg" [] [qubitMap!x]
+          T x            -> CallGate "t" [] [qubitMap!x]
+          Tinv x         -> CallGate "tdg" [] [qubitMap!x]
+          CNOT x y       -> CXGate (qubitMap!x) (qubitMap!y)
+          Swap x y       -> CallGate "swap" [] [qubitMap!x, qubitMap!y]
+          Uninterp id xs -> gateMap!id $ map (qubitMap!) xs
+
+        getArgs qexp = case qexp of
+          MeasureExp arg1 arg2        -> [arg1, arg2]
+          ResetExp arg                -> [arg]
+          GateExp (UGate _ _ _ arg)   -> [arg]
+          GateExp (CXGate arg1 arg2)  -> [arg1, arg2]
+          GateExp (CallGate _ _ args) -> args
+          
+          
+
 -- openQASM <--> .qc doesn't really make much sense. If I was smart I would have done all transformations
 -- on the IR from the beginning, but this is quicker for now. Eventually I'll move everything
 -- to a common IR, but for now it'll all go through .qc
 
---toDotQC ::
+-- openQASM --> .qc
+{-
+stmtToDotQC :: ([Gate], DotQC) -> Stmt -> ([Gate], DotQC)
+stmtToDotQC (main, dotqc) stmt = case stmt of
+  IncStmt s            -> (main, dotqc)
+  DecStmt dec          -> (main, dotqc { decls = (decls dotqc) ++ (decToDotQC dec) })
+  QStmt qexp           -> (main ++ qexpToDotQC exp, dotqc)
+  IfStmt v i qexp      -> error "If statements not supported"
 
+decToDotQC :: Dec -> Decl
+
+toDotQC :: QASM -> DotQC
+toDotQC (QASM _ stmts) = dotqc { decls = (decls dotqc) ++ [Decl "main" [] main] }
+  where (main, dotqc) = foldl' stmtToDotQC ([], DotQC [] Set.empty Set.empty []) stmts
+-}
+
+-- .qc --> openQASM
 regify :: ID -> Map ID Int -> ID -> Arg
 regify y subs x = case Map.lookup x subs of
   Nothing -> Var x
   Just i  -> Offset y i
 
-qcGateToQASM :: (ID -> Arg) -> Gate -> [UExp]
-qcGateToQASM sub (Gate g i p) =
+qcGateToQASM :: (ID -> Arg) -> DotQC.Gate -> [UExp]
+qcGateToQASM sub (DotQC.Gate g i p) =
   let circ = case (g, p) of
         ("H", [x])      -> [CallGate "h" [] [sub x]]
         ("X", [x])      -> [CallGate "x" [] [sub x]]
@@ -346,7 +489,7 @@ qcGateToQASM sub (Gate g i p) =
         otherwise       -> [CallGate g [] (map sub p)]
   in
     concat $ genericReplicate i circ
-qcGateToQASM sub (ParamGate g i theta p) =
+qcGateToQASM sub (DotQC.ParamGate g i theta p) =
   let circ = case (g, p) of
         ("Rz", [x]) -> [CallGate "rz" [IntExp 0] [sub x]]
         ("Rx", [x]) -> [CallGate "rx" [IntExp 0] [sub x]]
@@ -355,16 +498,16 @@ qcGateToQASM sub (ParamGate g i theta p) =
   in
     concat $ genericReplicate i circ
 
-qcGatesToQASM :: Map ID Int -> [Gate] -> [UExp]
+qcGatesToQASM :: Map ID Int -> [DotQC.Gate] -> [UExp]
 qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
 fromDotQC :: DotQC -> QASM
 fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts
-  where qMap     = Map.fromList $ zip (qubits dotqc) [0..]
+  where qMap     = Map.fromList $ zip (DotQC.qubits dotqc) [0..]
         stmts    = gateDecs ++ qDecs ++ gates
-        gateDecs = map (\dec -> DecStmt $ GateDec (name dec) [] (params dec) (qcGatesToQASM qMap $ body dec))
-                       (filter ((/= "main") . name) (decls dotqc))
-        qDecs    = [DecStmt $ VarDec "qubits" $ Qreg (length $ qubits dotqc)]
-        gates    = case find ((== "main") . name) (decls dotqc) of
+        f (DotQC.Decl name params body) = DecStmt $ GateDec name [] params (qcGatesToQASM qMap body)
+        gateDecs = map f . filter ((/= "main") . DotQC.name) $ (DotQC.decls dotqc)
+        qDecs    = [DecStmt $ VarDec "qubits" $ Qreg (length $ DotQC.qubits dotqc)]
+        gates    = case find ((== "main") . DotQC.name) (DotQC.decls dotqc) of
           Nothing  -> []
-          Just dec -> map (QStmt . GateExp) $ qcGatesToQASM qMap (body dec)
+          Just dec -> map (QStmt . GateExp) $ qcGatesToQASM qMap (DotQC.body dec)

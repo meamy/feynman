@@ -151,6 +151,9 @@ subst sub = map (substGate sub)
 
 -- Builtin circuits
 
+ccx :: ID -> ID -> ID -> [Primitive]
+ccx x y z = [H z] ++ ccz x y z ++ [H z]
+
 ccz :: ID -> ID -> ID -> [Primitive]
 ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
              CNOT z x, Tinv x, Tinv y, T z, CNOT y x,

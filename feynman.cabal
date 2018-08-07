@@ -101,3 +101,23 @@ executable feynver
                        bytestring,
                        old-time
   default-language:    Haskell2010
+
+executable feynqasm
+  main-is:             Main.hs
+  buildable:           True
+  ghc-options:         -O2
+  default-extensions:  GADTs,
+                       ExistentialQuantification,
+                       FlexibleContexts,
+                       FlexibleInstances
+  hs-source-dirs:      feynmanQASM
+  build-depends:       Feynman,
+                       base, 
+                       containers >= 0.5.8.1,
+                       array >= 0.5.1.0, 
+                       bv, 
+                       QuickCheck >= 2.8.2, 
+                       deepseq,
+                       ansi-terminal,
+                       old-time
+  default-language:    Haskell2010
