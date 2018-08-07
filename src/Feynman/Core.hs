@@ -149,6 +149,25 @@ substGate sub gate = case gate of
 subst :: Map ID ID -> [Primitive] -> [Primitive]
 subst sub = map (substGate sub)
 
+ids :: [Primitive] -> [ID]
+ids = Set.toList . foldr f Set.empty
+  where f gate set   = foldr Set.insert set (idsGate gate)
+        idsGate gate = case gate of
+          H x           -> [x]
+          X x           -> [x]
+          Y x           -> [x]
+          Z x           -> [x]
+          CNOT x y      -> [x,y]
+          S x           -> [x]
+          Sinv x        -> [x]
+          T x           -> [x]
+          Tinv x        -> [x]
+          Swap x y      -> [x,y]
+          Rz theta x    -> [x]
+          Rx theta x    -> [x]
+          Ry theta x    -> [x]
+          Uninterp s xs -> xs
+
 -- Builtin circuits
 
 ccx :: ID -> ID -> ID -> [Primitive]

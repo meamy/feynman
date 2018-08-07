@@ -309,7 +309,7 @@ argTyp ctx (Offset v i) = do
 {- Transformations -}
 
 -- Provides an optimization interface for the main IR
-applyOpt :: ([Primitive] -> [Primitive]) -> QASM -> QASM
+applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASM -> QASM
 applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
   where optStmts stmts =
           let (hdr, body) = foldl' optStmt ([], []) stmts in
@@ -327,14 +327,16 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToStmts :: [Stmt] -> [Stmt]
         applyToStmts stmts =
           let (gates, gateMap, qubitMap) = foldl' stmtToGate ([], Map.empty, Map.empty) stmts
-              gates'                     = opt (reverse gates)
+              vars                       = ids gates
+              gates'                     = opt vars vars (reverse gates)
           in
             map (gateToStmt (gateMap, qubitMap)) gates'
 
         applyToUExps :: [UExp] -> [UExp]
         applyToUExps uexps =
           let (gates, gateMap, qubitMap) = foldl' uexpToGate ([], Map.empty, Map.empty) uexps
-              gates'                     = opt (reverse gates)
+              vars                       = ids gates
+              gates'                     = opt vars vars (reverse gates)
           in
             map (gateToUExp (gateMap, qubitMap)) gates'
 

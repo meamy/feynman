@@ -31,7 +31,7 @@ trivPass :: QASMPass
 trivPass = Right
 
 optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASMPass
-optimizationPass f qasm = Right $ applyOpt (f [] []) qasm
+optimizationPass f qasm = Right $ applyOpt f qasm
 
 phasefoldPass :: QASMPass
 phasefoldPass = optimizationPass phaseFold
