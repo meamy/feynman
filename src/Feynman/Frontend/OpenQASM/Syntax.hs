@@ -376,6 +376,11 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           CXGate arg1 arg2 ->
             let (x, y) = (prettyPrintArg arg1, prettyPrintArg arg2) in
               ((CNOT x y):gates, gateMap, Map.insert y arg2 $ Map.insert x arg1 qubitMap)
+          BarrierGate args ->
+            let vars      = map prettyPrintArg args
+                qubitMap' = foldr (\(x, arg) -> Map.insert x arg) qubitMap $ zip vars args
+            in
+              ((Uninterp "barrier" vars):gates, gateMap, qubitMap')
           CallGate name exps args ->
             let vars      = map prettyPrintArg args
                 qubitMap' = foldr (\(x, arg) -> Map.insert x arg) qubitMap $ zip vars args
@@ -402,16 +407,19 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         gateToStmt :: (Map ID ([Arg] -> Stmt), Map ID Arg) -> Primitive -> Stmt
         gateToStmt (gateMap, qubitMap) gate = case gate of
           H x            -> QStmt . GateExp $ CallGate "h" [] [qubitMap!x]
-          X x            -> QStmt . GateExp $  CallGate "x" [] [qubitMap!x]
-          Y x            -> QStmt . GateExp $  CallGate "y" [] [qubitMap!x]
-          Z x            -> QStmt . GateExp $  CallGate "z" [] [qubitMap!x]
-          S x            -> QStmt . GateExp $  CallGate "s" [] [qubitMap!x]
-          Sinv x         -> QStmt . GateExp $  CallGate "sdg" [] [qubitMap!x]
-          T x            -> QStmt . GateExp $  CallGate "t" [] [qubitMap!x]
-          Tinv x         -> QStmt . GateExp $  CallGate "tdg" [] [qubitMap!x]
-          CNOT x y       -> QStmt . GateExp $  CXGate (qubitMap!x) (qubitMap!y)
-          Swap x y       -> QStmt . GateExp $  CallGate "swap" [] [qubitMap!x, qubitMap!y]
-          Uninterp id xs -> gateMap!id $ map (qubitMap!) xs
+          X x            -> QStmt . GateExp $ CallGate "x" [] [qubitMap!x]
+          Y x            -> QStmt . GateExp $ CallGate "y" [] [qubitMap!x]
+          Z x            -> QStmt . GateExp $ CallGate "z" [] [qubitMap!x]
+          S x            -> QStmt . GateExp $ CallGate "s" [] [qubitMap!x]
+          Sinv x         -> QStmt . GateExp $ CallGate "sdg" [] [qubitMap!x]
+          T x            -> QStmt . GateExp $ CallGate "t" [] [qubitMap!x]
+          Tinv x         -> QStmt . GateExp $ CallGate "tdg" [] [qubitMap!x]
+          CNOT x y       -> QStmt . GateExp $ CXGate (qubitMap!x) (qubitMap!y)
+          Swap x y       -> QStmt . GateExp $ CallGate "swap" [] [qubitMap!x, qubitMap!y]
+          Uninterp "measure" [x,y] -> QStmt $ MeasureExp (qubitMap!x) (qubitMap!y)
+          Uninterp "reset" [x]     -> QStmt $ ResetExp (qubitMap!x)
+          Uninterp "barrier" xs    -> QStmt $ GateExp $ BarrierGate $ map (qubitMap!) xs
+          Uninterp id xs           -> gateMap!id $ map (qubitMap!) xs
 
         gateToUExp :: (Map ID ([Arg] -> UExp), Map ID Arg) -> Primitive -> UExp
         gateToUExp (gateMap, qubitMap) gate = case gate of
@@ -425,7 +433,8 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           Tinv x         -> CallGate "tdg" [] [qubitMap!x]
           CNOT x y       -> CXGate (qubitMap!x) (qubitMap!y)
           Swap x y       -> CallGate "swap" [] [qubitMap!x, qubitMap!y]
-          Uninterp id xs -> gateMap!id $ map (qubitMap!) xs
+          Uninterp "barrier" xs -> BarrierGate $ map (qubitMap!) xs
+          Uninterp id xs        -> gateMap!id $ map (qubitMap!) xs
 
         getArgs qexp = case qexp of
           MeasureExp arg1 arg2        -> [arg1, arg2]
@@ -433,6 +442,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           GateExp (UGate _ _ _ arg)   -> [arg]
           GateExp (CXGate arg1 arg2)  -> [arg1, arg2]
           GateExp (CallGate _ _ args) -> args
+          GateExp (BarrierGate args)  -> args
           
           
 
