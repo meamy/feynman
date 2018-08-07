@@ -346,6 +346,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         optStmt :: ([Stmt], [Stmt]) -> Stmt -> ([Stmt], [Stmt])
         optStmt (hdr, body) stmt = case stmt of
           IncStmt _                        -> (stmt:hdr, body)
+          DecStmt (GateDec _ _ _ [])       -> (stmt:hdr, body)
           DecStmt (GateDec v c q gateBody) ->
             let stmt' = DecStmt $ GateDec v c q $ applyToUExps q gateBody in
               (stmt':hdr, body)
