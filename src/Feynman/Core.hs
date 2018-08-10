@@ -89,6 +89,23 @@ foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
 foldStmt f (Repeat i st) b = f (Repeat i st) (foldStmt f st b)
 foldStmt f s             b = f s b
 
+getArgs :: Primitive -> [ID]
+getArgs gate = case gate of
+  H x           -> [x]
+  X x           -> [x]
+  Y x           -> [x]
+  Z x           -> [x]
+  CNOT x y      -> [x,y]
+  S x           -> [x]
+  Sinv x        -> [x]
+  T x           -> [x]
+  Tinv x        -> [x]
+  Swap x y      -> [x,y]
+  Rz theta x    -> [x]
+  Rx theta x    -> [x]
+  Ry theta x    -> [x]
+  Uninterp s xs -> xs
+
 -- Transformations
 
 daggerGate :: Primitive -> Primitive

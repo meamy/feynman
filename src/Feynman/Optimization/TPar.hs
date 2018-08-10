@@ -28,57 +28,59 @@ import Data.Bits
 
 import Debug.Trace
 
-{-- Generalized T-par -}
-{-  The idea is to traverse the circuit, tracking the phases,
-    and whenever a Hadamard (or more generally something that
-    maps a computational basis state to either a non-computational
-    basis state or a probabilistic mixture, i.e. measurement)
-    is applied synthesize a circuit for the phases that are no
-    longer in the state space. Synthesis can proceed by either
-    T-depth optimal matroid partitioning or CNOT-optimal ways -}
+{- Generalized T-par -}
+{- Soundly (by abstracting Hadamards and other
+ - uninterpreted gates) separate circuits into
+ - CNOT-dihedral chunks with fixed (must) and
+ - floating (may) phases. We do this by
+ - performing forward and backward analysis,
+ - followed by synthesis of the CNOT-dihedral
+ - chunks -}
        
 {- TODO: Merge with phase folding eventually -}
 
+type PhasePoly = Map F2Vec Angle
+
 data AnalysisState = SOP {
-  dim     :: Int,
-  ivals   :: Map ID (F2Vec, Bool),
-  qvals   :: Map ID (F2Vec, Bool),
-  terms   :: Map F2Vec Angle,
+  ivals   :: AffineTrans,
+  qvals   :: AffineTrans,
+  terms   :: PhasePoly,
   phase   :: Angle
 } deriving Show
 
 type Analysis = State AnalysisState
 
-{- Get the bitvector for variable v, or otherwise allocate one -}
+data Chunk =
+    CNOTDihedral AffineTrans AffineTrans PhasePoly PhasePoly
+  | UninterpGate Primitive
+  | GlobalPhase  ID Angle
+  deriving Show
+
+{- Get the bitvector for variable v -}
 getSt :: ID -> Analysis (F2Vec, Bool)
 getSt v = do 
   st <- get
   case Map.lookup v (qvals st) of
     Just bv -> return bv
-    Nothing -> do put $ st { dim = dim', ivals = ivals', qvals = qvals' }
-                  return (bv', False)
-      where dim' = dim st + 1
-            bv' = bitI dim' (dim' - 1)
-            ivals' = Map.insert v (bv', False) (ivals st)
-            qvals' = Map.insert v (bv', False) (qvals st)
+    Nothing -> error $ "No qubit \"" ++ v ++ "\" found in t-par"
 
-{- exists removes a variable (existentially quantifies it) then
+{- existentially quantifies a variable then
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> Analysis ([Phase], [Phase])
-exists v st@(SOP dim ivals qvals terms phase) =
+exists :: ID -> AnalysisState -> Analysis (PhasePoly, PhasePoly)
+exists v st@(SOP ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
       (may, must)   = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
-      (dim', vecs') = addIndependent vecs
+      (_, vecs')    = addIndependent vecs
       avecs'        = zip vecs' $ cnsts ++ [False]
-      vals          = Map.fromList $ zip (vars ++ [v]) avecs'
+      ivals'        = Map.fromList $ zip (vars ++ [v]) avecs'
   in do
-    put $ SOP dim' vals vals Map.empty phase
-    return (Map.toList must, Map.toList may)
+    put $ SOP ivals' ivals' may phase
+    return (must, may)
 
-replaceIval :: Map ID (F2Vec, Bool) -> AnalysisState -> AnalysisState
+replaceIval :: AffineTrans -> AnalysisState -> AnalysisState
 replaceIval ivals' st = st { ivals = ivals' }
 
 updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
@@ -97,83 +99,103 @@ addTerm (bv, p) i st =
           Just x  -> Just $ x + i
           Nothing -> Just $ i
 
-setTerms :: [Phase] -> Int -> AnalysisState -> AnalysisState
-setTerms xs d st = st { terms = tms' }
-  where tms  = Map.fromList xs
-        tms' = if d < dim st then incDim tms else tms
-        incDim = Map.mapKeysMonotonic (zeroExtend 1)
- 
 {-- The main analysis -}
-applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
-applyGate synth gates g = case g of
+applyGate :: [Chunk] -> Primitive -> Analysis [Chunk]
+applyGate acc g = case g of
   T v      -> do
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 1 3)
-    return gates
+    return acc
   Tinv v   -> do
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 7 3)
-    return gates
+    return acc
   S v      -> do
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 1 2)
-    return gates
+    return acc
   Sinv v   -> do
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 3 2)
-    return gates
+    return acc
   Z v      -> do
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 1 1)
-    return gates
+    return acc
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm bv p
+    return acc
+  X v      -> do
+    (bv, b) <- getSt v
+    modify $ updateQval v (bv, Prelude.not b)
+    return acc
   CNOT c t -> do
     (bvc, bc) <- getSt c
     (bvt, bt) <- getSt t
     modify $ updateQval t (bvc + bvt, bc `xor` bt)
-    return gates
-  X v      -> do
-    (bv, b) <- getSt v
-    modify $ updateQval v (bv, Prelude.not b)
-    return gates
-  H v      -> do
-    bv <- getSt v
-    st <- get
-    (must, may) <- exists v st
-    let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may' (dim st)
-    return $ gates ++ circ ++ [H v]
+    return acc
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
     modify $ updateQval u bvv
     modify $ updateQval v bvu
-    return gates
-  Rz p v -> do
-    bv <- getSt v
-    modify $ addTerm bv p
-    return gates
-  Rx p v -> do
-    bv <- getSt v
-    st <- get
-    (must, may) <- exists v st
-    let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may' (dim st)
-    return $ gates ++ circ ++ [Rx p v]
-  Ry p v -> do
-    bv <- getSt v
-    st <- get
-    (must, may) <- exists v st
-    let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may' (dim st)
-    return $ gates ++ circ ++ [Ry p v]
-  Uninterp s vs -> do
-    bvs <- mapM getSt vs
-    st <- get
-    (musts, mays) <- liftM unzip $ mapM (\v -> get >>= exists v) vs
-    let (circ, may') = synth (ivals st) (qvals st) (concat musts) (concat mays)
-    modify $ setTerms may' (dim st)
-    return $ gates ++ circ ++ [Uninterp s vs]
+    return acc
+  _        -> do
+    let args = getArgs g
+    _   <- mapM getSt args
+    st  <- get
+    (musts, mays) <- liftM unzip $ mapM (\v -> get >>= exists v) args
+    let (must, may) = (Map.unionsWith (+) musts, Map.unionsWith (+) mays)
+    return $ (UninterpGate g):(CNOTDihedral (ivals st) (qvals st) must may):acc
 
+finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
+finalize synth gates = do
+  st <- get
+  return $ gates ++ (fst $ synth (ivals st) (qvals st) (Map.toList $ terms st) [])
+                 ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
+
+chunkify :: [ID] -> [ID] -> [Primitive] -> [Chunk]
+chunkify vars inputs gates =
+  let (chunks, st) = runState (foldM applyGate [] gates) init
+      final        = CNOTDihedral (ivals st) (qvals st) (terms st) Map.empty
+      global       = GlobalPhase (head vars) (phase st)
+  in
+      reverse $ global:final:chunks
+  where n        = length vars
+        vals     = Map.fromList . map f $ zip vars [0..]
+        f (v, i) = (v, if v `elem` inputs then (bitI n i, False) else (bitVec n 0, False))
+        init     = SOP vals vals Map.empty 0
+
+synthesizeChunks :: AffineSynthesizer -> [Chunk] -> [Primitive]
+synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.empty
+  where synthesizeChunk acc chunk = case chunk of
+          CNOTDihedral i o must may -> do
+            applied <- get
+            let must'        = Map.differenceWith subtract must applied
+            let may'         = Map.differenceWith subtract may applied
+            let applied'     = Map.difference applied must
+            let (gates, rem) = synth i o (Map.toList must') (Map.toList may')
+            put $ Map.unionWith (+) applied' (Map.difference may' $ Map.fromList rem)
+            return $ acc ++ gates
+          UninterpGate g            -> return $ acc ++ [g]
+          GlobalPhase v angle       -> return $ acc ++ globalPhase v angle
+        subtract a b = if a == b then Nothing else Just $ a - b
+
+gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtpar synth vars inputs gates = synthesizeChunks (affineTrans synth) chunks
+  where chunks = chunkify vars inputs gates
+
+-- Optimization algorithms
+
+{- t-par: the t-par algorithm from [AMM2014] -}
+tpar = gtpar tparMaster
+
+{- minCNOT: the CNOT minimization algorithm from [AAM17] -}
+minCNOT = gtpar cnotMinGrayPointed
+
+{- Open synthesis -}
+{-
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of
   T v      -> do
@@ -227,12 +249,6 @@ applyGateOpen synth gates g = case g of
     modify $ addTerm bv p
     return gates
 
-finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
-finalize synth gates = do
-  st <- get
-  return $ gates ++ (fst $ synth (ivals st) (qvals st) (Map.toList $ terms st) [])
-                 ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
-
 finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalizeOpen synth gates = do
   st <- get
@@ -242,21 +258,6 @@ finalizeOpen synth gates = do
   return $ gates ++ parities ++ circ
                  ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
     
-gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
-gtpar osynth vars inputs gates =
-  let synth = affineTrans osynth
-      init = 
-        SOP { dim = dim', 
-              ivals = Map.fromList ivals, 
-              qvals = Map.fromList ivals, 
-              terms = Map.empty,
-              phase = 0 }
-  in
-    evalState (foldM (applyGate synth) [] gates >>= finalize synth) init
-  where dim'    = length inputs
-        bitvecs = [(bitI dim' x, False) | x <- [0..]] 
-        ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
-
 gtparopen :: OpenSynthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtparopen osynth vars inputs gates =
   let synth = affineTransOpen osynth
@@ -272,14 +273,6 @@ gtparopen osynth vars inputs gates =
         bitvecs = [(bitI dim' x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
--- Optimization algorithms
-
-{- t-par: the t-par algorithm from [AMM2014] -}
-tpar = gtpar tparMaster
-
-{- minCNOT: the CNOT minimization algorithm from [AAM17] -}
-minCNOT = gtpar cnotMinGrayPointed
-
 minCNOTOpen = gtparopen cnotMinGrayOpen
 
 minCNOTMaster vars inputs gates =
@@ -291,3 +284,4 @@ minCNOTMaster vars inputs gates =
       countc = length . filter isct
   in
     minimumBy (comparing countc) [option1, option2]
+-}
