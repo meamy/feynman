@@ -119,20 +119,18 @@ cnotMinGrayOpen0 input xs =
 cnotMinGray = cnotMinGrayPointed0
 
 cnotMinGrayPointed input output xs may =
-  let (gates, [])  = cnotMinGrayPointed0 input output xs [] 
-      (gates', []) = cnotMinGrayPointed0 input output (filter (\(_, i) -> order i /= 1) xs) []
-      --gates'   = cnotMinGray0 input output $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
+  let result1 = cnotMinGrayPointed0 input output xs may
+      result2 = cnotMinGrayPointed0 input output (filter (\(_, i) -> order i /= 1) xs) may
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False
-      countc = length . filter isct
+      countc = length . filter isct . fst
   in
-    (minimumBy (comparing countc) [gates, gates'], may)
+    minimumBy (comparing countc) [result1, result2]
 
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs
       gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> order i /= 1) xs
-      --gates'' = cnotMinGrayOpen0 input $ filter (\(s, i) -> order i /= 1 && wt s > 1) xs
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False

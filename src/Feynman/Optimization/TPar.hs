@@ -42,6 +42,7 @@ import Debug.Trace
 type PhasePoly = Map F2Vec Angle
 
 data AnalysisState = SOP {
+  dim     :: Int,
   ivals   :: AffineTrans,
   qvals   :: AffineTrans,
   terms   :: PhasePoly,
@@ -69,15 +70,18 @@ getSt v = do
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
 exists :: ID -> AnalysisState -> Analysis (PhasePoly, PhasePoly)
-exists v st@(SOP ivals qvals terms phase) =
+exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
       (may, must)   = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
-      (_, vecs')    = addIndependent vecs
+      (dim', vecs') = addIndependent vecs
       avecs'        = zip vecs' $ cnsts ++ [False]
       ivals'        = Map.fromList $ zip (vars ++ [v]) avecs'
+      terms'        = if dim' > dim
+                      then Map.mapKeysMonotonic (zeroExtend 1) may
+                      else may
   in do
-    put $ SOP ivals' ivals' may phase
+    put $ SOP dim' ivals' ivals' terms' phase
     return (must, may)
 
 replaceIval :: AffineTrans -> AnalysisState -> AnalysisState
@@ -165,7 +169,7 @@ chunkify vars inputs gates =
   where n        = length vars
         vals     = Map.fromList . map f $ zip vars [0..]
         f (v, i) = (v, if v `elem` inputs then (bitI n i, False) else (bitVec n 0, False))
-        init     = SOP vals vals Map.empty 0
+        init     = SOP n vals vals Map.empty 0
 
 synthesizeChunks :: AffineSynthesizer -> [Chunk] -> [Primitive]
 synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.empty
