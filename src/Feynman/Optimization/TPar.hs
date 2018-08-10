@@ -216,7 +216,6 @@ tpar = gtpar tparMaster
 minCNOT = gtpar cnotMinGrayPointed
 
 {- Open synthesis -}
-{-
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of
   T v      -> do
@@ -239,36 +238,39 @@ applyGateOpen synth gates g = case g of
     bv <- getSt v
     modify $ addTerm bv (Discrete $ dyadic 1 1)
     return gates
-  CNOT c t -> do
-    (bvc, bc) <- getSt c
-    (bvt, bt) <- getSt t
-    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm bv p
     return gates
   X v      -> do
     (bv, b) <- getSt v
     modify $ updateQval v (bv, Prelude.not b)
     return gates
-  H v      -> do
-    bv <- getSt v
-    st <- get
-    (orphans, may) <- exists v st
-    let (out, parities)    = synth (ivals st) orphans
-        (out', correction) = unifyAffine v out (qvals st)
-    st' <- get
-    let out'' = if (dim st') > (dim st) then Map.map (\(bv, b) -> (zeroExtend 1 bv, b)) out' else out'
-    modify $ replaceIval (Map.insert v ((qvals st')!v) out'')
-    modify $ setTerms may (dim st)
-    return $ gates ++ parities ++ correction ++ [H v]
+  CNOT c t -> do
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+    return gates
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
     modify $ updateQval u bvv
     modify $ updateQval v bvu
     return gates
-  Rz p v -> do
-    bv <- getSt v
-    modify $ addTerm bv p
-    return gates
+  _        -> do
+    let args = getArgs g
+    _   <- mapM getSt args
+    st  <- get
+    (musts, mays) <- liftM unzip $ mapM (\v -> get >>= exists v) args
+    let (must, may) = (Map.unionsWith (+) musts, Map.unionsWith (+) mays)
+    let (out, parities)    = synth (ivals st) (Map.toList must)
+        (out', correction) =
+          let f (i, g) v = (\(i', g') -> (i', g++g')) (unifyAffine v i (qvals st)) in
+            foldl' f (out, []) args
+    st' <- get
+    let out'' = if (dim st') > (dim st) then Map.map (\(bv, b) -> (zeroExtend 1 bv, b)) out' else out'
+    modify $ replaceIval $ foldr (\v -> Map.insert v ((qvals st')!v)) out'' args
+    return $ gates ++ parities ++ correction ++ [g]
 
 finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalizeOpen synth gates = do
@@ -294,8 +296,13 @@ gtparopen osynth vars inputs gates =
         bitvecs = [(bitI dim' x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
+
+{- Open-ended optimizers -}
+
+-- Gray-synth with open ends
 minCNOTOpen = gtparopen cnotMinGrayOpen
 
+-- Compares between open and closed CNOT minimization. Slowest configuration
 minCNOTMaster vars inputs gates =
   let option1 = gtpar cnotMinGrayPointed vars inputs gates
       option2 = gtparopen cnotMinGrayOpen vars inputs gates
@@ -305,4 +312,3 @@ minCNOTMaster vars inputs gates =
       countc = length . filter isct
   in
     minimumBy (comparing countc) [option1, option2]
--}
