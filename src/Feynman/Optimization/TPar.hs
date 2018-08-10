@@ -66,7 +66,7 @@ getSt v = do
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> Analysis [(F2Vec, Angle)]
+exists :: ID -> AnalysisState -> Analysis ([Phase], [Phase])
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
@@ -77,8 +77,8 @@ exists v st@(SOP dim ivals qvals terms phase) =
       terms''       = if dim' > dim then extendTerms terms' else terms'
       vals          = Map.fromList $ zip (vars ++ [v]) avecs'
   in do
-    put $ SOP dim' vals vals terms'' phase
-    return $ Map.toList orp
+    put $ SOP dim' vals vals Map.empty phase
+    return (Map.toList orp, Map.toList terms'')
 
 replaceIval :: Map ID (F2Vec, Bool) -> AnalysisState -> AnalysisState
 replaceIval ivals' st = st { ivals = ivals' }
@@ -98,6 +98,9 @@ addTerm (bv, p) i st =
   where f i oldt = case oldt of
           Just x  -> Just $ x + i
           Nothing -> Just $ i
+
+setTerms :: [Phase] -> AnalysisState -> AnalysisState
+setTerms xs st = st { terms = Map.fromList xs }
  
 {-- The main analysis -}
 applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
@@ -134,8 +137,10 @@ applyGate synth gates g = case g of
   H v      -> do
     bv <- getSt v
     st <- get
-    orphans <- exists v st
-    return $ gates ++ (synth (ivals st) (qvals st) orphans) ++ [H v]
+    (must, may) <- exists v st
+    let (circ, may') = synth (ivals st) (qvals st) must may
+    modify $ setTerms may'
+    return $ gates ++ circ ++ [H v]
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
@@ -149,18 +154,24 @@ applyGate synth gates g = case g of
   Rx p v -> do
     bv <- getSt v
     st <- get
-    orphans <- exists v st
-    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Rx p v]
+    (must, may) <- exists v st
+    let (circ, may') = synth (ivals st) (qvals st) must may
+    modify $ setTerms may'
+    return $ gates ++ circ ++ [Rx p v]
   Ry p v -> do
     bv <- getSt v
     st <- get
-    orphans <- exists v st
-    return $ gates ++ synth (ivals st) (qvals st) orphans ++ [Ry p v]
+    (must, may) <- exists v st
+    let (circ, may') = synth (ivals st) (qvals st) must may
+    modify $ setTerms may'
+    return $ gates ++ circ ++ [Ry p v]
   Uninterp s vs -> do
     bvs <- mapM getSt vs
     st <- get
-    orphanLists <- mapM (\v -> get >>= exists v) vs
-    return $ gates ++ synth (ivals st) (qvals st) (concat orphanLists) ++ [Uninterp s vs]
+    (musts, mays) <- liftM unzip $ mapM (\v -> get >>= exists v) vs
+    let (circ, may') = synth (ivals st) (qvals st) (concat musts) (concat mays)
+    modify $ setTerms may'
+    return $ gates ++ circ ++ [Uninterp s vs]
 
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of
@@ -196,12 +207,13 @@ applyGateOpen synth gates g = case g of
   H v      -> do
     bv <- getSt v
     st <- get
-    orphans <- exists v st
+    (orphans, may) <- exists v st
     let (out, parities)    = synth (ivals st) orphans
         (out', correction) = unifyAffine v out (qvals st)
     st' <- get
     let out'' = if (dim st') > (dim st) then Map.map (\(bv, b) -> (zeroExtend 1 bv, b)) out' else out'
     modify $ replaceIval (Map.insert v ((qvals st')!v) out'')
+    modify $ setTerms may
     return $ gates ++ parities ++ correction ++ [H v]
   Swap u v -> do
     bvu <- getSt u
@@ -217,15 +229,16 @@ applyGateOpen synth gates g = case g of
 finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalize synth gates = do
   st <- get
-  return $ gates ++ (synth (ivals st) (qvals st) $ Map.toList (terms st))
+  return $ gates ++ (fst $ synth (ivals st) (qvals st) (Map.toList $ terms st) [])
                  ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
 
 finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalizeOpen synth gates = do
   st <- get
-  let (out', parities) = synth (ivals st) $ Map.toList (terms st)
-  return $ gates ++ parities
-                 ++ ((affineTrans linearSynth) out' (qvals st) [])
+  let (out', parities) = synth (ivals st) (Map.toList $ terms st)
+  let asynth           = affineTrans (\i o _ may -> (linearSynth i o, may))
+  let (circ, [])       = asynth out' (qvals st) [] []
+  return $ gates ++ parities ++ circ
                  ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
     
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]

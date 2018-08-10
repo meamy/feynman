@@ -17,7 +17,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
 -- The Matroid from the t-par paper [AMM2014]
-instance Matroid ((F2Vec, Angle), Int) where
+instance Matroid (Phase, Int) where
   independent s
     | Set.null s = True
     | otherwise  =
@@ -28,12 +28,12 @@ instance Matroid ((F2Vec, Angle), Int) where
       && width v - rank (fromList vecs) <= n - (length vecs)
 
 tpar :: Synthesizer
-tpar input output [] = linearSynth input output []
-tpar input output xs =
+tpar input output [] may = (linearSynth input output, may)
+tpar input output xs may =
   let partition      = partitionAll (zip xs $ repeat $ length input)
       (circ, input') = foldr synthPartition ([], input) partition
   in
-    circ ++ linearSynth input' output []
+    (circ ++ linearSynth input' output, may)
 
 synthPartition set (circ, input) =
   let (ids, ivecs) = unzip $ Map.toList input
@@ -42,10 +42,10 @@ synthPartition set (circ, input) =
       targ    = resizeMat (m inp) (n inp) . (flip fillFrom $ inp) . fromList $ vecs
       output  = Map.fromList (zip ids $ toList targ)
       g (n,i) = synthesizePhase (ids!!i) n
-      perm    = linearSynth input output []
+      perm    = linearSynth input output
       phase   = concatMap g (zip exps [0..])
   in
     (circ++perm++phase, output)
 
-tparMore input output xs = tpar input output xs'
+tparMore input output xs may = tpar input output xs' may
   where xs' = filter (\(bv, i) -> order i /= 1 && wt bv /= 0) xs

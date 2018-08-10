@@ -18,20 +18,25 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
-type AffineSynthesizer     = Map ID (F2Vec, Bool) -> Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> [Primitive]
-type Synthesizer           = Map ID F2Vec -> Map ID F2Vec -> [(F2Vec, Angle)] -> [Primitive]
-type AffineOpenSynthesizer = Map ID (F2Vec, Bool) -> [(F2Vec, Angle)] -> (Map ID (F2Vec, Bool), [Primitive])
-type OpenSynthesizer       = Map ID F2Vec -> [(F2Vec, Angle)] -> (Map ID F2Vec, [Primitive])
+type LinearTrans = Map ID F2Vec
+type AffineTrans = Map ID (F2Vec, Bool)
+type Phase       = (F2Vec, Angle)
+
+type AffineSynthesizer     = AffineTrans -> AffineTrans -> [Phase] -> [Phase] -> ([Primitive], [Phase])
+type Synthesizer           = LinearTrans -> LinearTrans -> [Phase] -> [Phase] -> ([Primitive], [Phase])
+type AffineOpenSynthesizer = AffineTrans -> [Phase] -> (AffineTrans, [Primitive])
+type OpenSynthesizer       = LinearTrans -> [Phase] -> (LinearTrans, [Primitive])
 
 
 {-- Synthesizers -}
 affineTrans :: Synthesizer -> AffineSynthesizer
-affineTrans synth = \input output xs ->
-  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
-      inX  = f input
-      outX = f output
+affineTrans synth = \input output must may ->
+  let f            = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX          = f input
+      outX         = f output
+      (circ, may') = synth (Map.map fst input) (Map.map fst output) must may
   in
-    inX ++ (synth (Map.map fst input) (Map.map fst output) xs) ++ outX
+    (inX ++ circ ++ outX, may')
 
 affineTransOpen :: OpenSynthesizer -> AffineOpenSynthesizer
 affineTransOpen synth = \input xs ->
@@ -42,11 +47,11 @@ affineTransOpen synth = \input xs ->
     (Map.map (\bv -> (bv, False)) out, inX ++ circ)
 
 emptySynth :: Synthesizer
-emptySynth _ _ _ = []
+emptySynth _ _ _ _ = ([], [])
 
 -- Assumes input and output spaces are identical
-linearSynth :: Synthesizer
-linearSynth input output _ =
+linearSynth :: LinearTrans -> LinearTrans -> [Primitive]
+linearSynth input output =
   let (ids, ivecs) = unzip $ Map.toList input
       (idt, ovecs) = unzip $ Map.toList output
       mat  = transformMatStrict (fromList ivecs) (fromList ovecs)
@@ -75,18 +80,20 @@ synthVec ids vec =
     foldl' f Nothing lst
 
 cnotMin :: Synthesizer
-cnotMin input output [] = linearSynth input output []
-cnotMin input output ((x, i):xs) =
+cnotMin input output [] may = (linearSynth input output, may)
+cnotMin input output ((x, i):xs) may =
   let ivecs  = Map.toList input
       solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
   in
     case solver x >>= synthVec ivecs of
-      Nothing            -> error "Fatal: something bad happened"
-      Just ((v, bv), gates) -> gates ++ synthesizePhase v i ++ cnotMin (Map.insert v bv input) output xs
+      Nothing               -> error "Fatal: something bad happened"
+      Just ((v, bv), gates) ->
+        let (circ, may') = cnotMin (Map.insert v bv input) output xs may in
+          (gates ++ synthesizePhase v i ++ circ, may')
   
 cnotMinMore :: Synthesizer
-cnotMinMore input output [] = linearSynth input output []
-cnotMinMore input output (x:xs) =
+cnotMinMore input output [] may     = (linearSynth input output, may)
+cnotMinMore input output (x:xs) may =
   let ivecs  = Map.toList input
       solver = minSolution $ transpose $ fromList $ snd $ unzip ivecs
       takeMin (bv, x, acc) x' bv'
@@ -96,18 +103,20 @@ cnotMinMore input output (x:xs) =
       synthIt (bv, (_, i), acc) = synthVec ivecs bv >>= \(res, gates) -> Just (res, i, gates, acc)
   in
     case solver (fst x) >>= \bv -> foldM f (bv, x, []) xs >>= synthIt of
-      Nothing                       -> error "Fatal: something bad happened"
-      Just ((v, bv), i, g, xs') -> g ++ synthesizePhase v i ++ cnotMinMore (Map.insert v bv input) output xs'
+      Nothing                   -> error "Fatal: something bad happened"
+      Just ((v, bv), i, g, xs') ->
+        let (circ, may') = cnotMinMore (Map.insert v bv input) output xs' may in
+            (g ++ synthesizePhase v i ++ circ, may')
 
 cnotMinMost :: Synthesizer
-cnotMinMost input output xs = cnotMinMore input output xs'
+cnotMinMost input output xs may = cnotMinMore input output xs' may
   where xs' = filter (\(_, i) -> order i /= 1) xs
 
 -- Given x, U and V, apply a linear transformation L to U such that
 --   1) LU(x) = V(x), and
 --   2) span(LU - x) = span(V - x)
 
-synthV :: ID -> F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+synthV :: ID -> F2Vec -> LinearTrans -> (LinearTrans, [Primitive])
 synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x of
   Nothing -> error "Fatal: vector not in linear span"
   Just y  ->
@@ -115,14 +124,14 @@ synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x
           Nothing -> v
           Just i  -> (Map.keys input)!!i
         input' = Map.insert u x input
-        gates  = linearSynth input input' []
+        gates  = linearSynth input input'
     in
       if v == u
         then (input', gates)
         else (Map.insert v x (Map.insert u (input!v) input), gates ++ [Swap u v])
     
 
-addToSpan :: ID -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+addToSpan :: ID -> LinearTrans -> (LinearTrans, [Primitive])
 addToSpan v input
   | inLinearSpan (Map.elems . Map.delete v $ input) (input!v) = (input, [])
   | otherwise =
@@ -131,7 +140,7 @@ addToSpan v input
         Nothing -> error "Fatal: Adding to span of independent set"
         Just i  -> (Map.insert (ids!!i) (vecs!!i + input!v) input, [CNOT v (ids!!i)])
 
-subsetize :: ID -> Map ID F2Vec -> (F2Vec -> Bool) -> (Map ID F2Vec, [Primitive])
+subsetize :: ID -> LinearTrans -> (F2Vec -> Bool) -> (LinearTrans, [Primitive])
 subsetize v input solver =
   let x = input!v 
       f accum u vec
@@ -140,7 +149,7 @@ subsetize v input solver =
   in
     swap $ Map.mapAccumWithKey f [] input
 
-unify :: ID -> Map ID F2Vec -> Map ID F2Vec -> (Map ID F2Vec, [Primitive])
+unify :: ID -> LinearTrans -> LinearTrans -> (LinearTrans, [Primitive])
 unify v input output =
   let (input', gates) = synthV v (output!v) input
       vSolve = inLinearSpan (Map.elems . Map.delete v $ output)
@@ -150,7 +159,7 @@ unify v input output =
   in
     if sameSpace (Map.elems . Map.delete v $ output') (Map.elems . Map.delete v $ output)
       then (output', gates ++ gates')
-      else (output, gates ++ (linearSynth input' output []))
+      else (output, gates ++ (linearSynth input' output))
 
 unifyAffine v input output =
   let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
