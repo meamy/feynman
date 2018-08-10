@@ -116,8 +116,13 @@ cnotMinGrayOpen0 input xs =
 
 {- Master method -}
 
-cnotMinGray = cnotMinGrayPointed0
+-- Fastest
+cnotMinGray i o must may = cnotMinGrayPointed0 i o (filter (\(_, i) -> order i /= 1) must) may
 
+-- Eagerly applies phases
+cnotMinGrayEager = \i o mu ma -> cnotMinGrayPointed0 i o (mu ++ ma) []
+
+-- Compares between configurations (doubles runtime but best performance)
 cnotMinGrayPointed input output xs may =
   let result1 = cnotMinGrayPointed0 input output xs may
       result2 = cnotMinGrayPointed0 input output (filter (\(_, i) -> order i /= 1) xs) may
@@ -128,6 +133,7 @@ cnotMinGrayPointed input output xs may =
   in
     minimumBy (comparing countc) [result1, result2]
 
+-- Compares between open-ended configurations
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs
       gates'  = cnotMinGrayOpen0 input $ filter (\(_, i) -> order i /= 1) xs

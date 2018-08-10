@@ -153,23 +153,35 @@ applyGate acc g = case g of
     let (must, may) = (Map.unionsWith (+) musts, Map.unionsWith (+) mays)
     return $ (UninterpGate g):(CNOTDihedral (ivals st) (qvals st) must may):acc
 
-finalize :: AffineSynthesizer -> [Primitive] -> Analysis [Primitive]
-finalize synth gates = do
-  st <- get
-  return $ gates ++ (fst $ synth (ivals st) (qvals st) (Map.toList $ terms st) [])
-                 ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
-
 chunkify :: [ID] -> [ID] -> [Primitive] -> [Chunk]
 chunkify vars inputs gates =
   let (chunks, st) = runState (foldM applyGate [] gates) init
       final        = CNOTDihedral (ivals st) (qvals st) (terms st) Map.empty
       global       = GlobalPhase (head vars) (phase st)
   in
-      reverse $ global:final:chunks
+      global:final:chunks
   where n        = length vars
         vals     = Map.fromList . map f $ zip vars [0..]
         f (v, i) = (v, if v `elem` inputs then (bitI n i, False) else (bitVec n 0, False))
         init     = SOP n vals vals Map.empty 0
+
+-- Propagates phases backwards as far as possible
+backPropagate :: [Chunk] -> [Chunk]
+backPropagate chunks = evalState (foldM processChunk [] chunks) (Map.empty, Map.empty)
+  where processChunk acc chunk = case chunk of
+          CNOTDihedral i o must may -> do
+            (st, phases)  <- get
+            let n    = width.fst.head.Map.elems $ i
+            let may' = Map.union (Map.mapKeys (flip (@@) (n-1,0)) phases) may
+            put (i, Map.union must may')
+            return $ (CNOTDihedral i o must may'):acc
+          UninterpGate g -> do
+            (st, phases) <- get
+            let vecs  = fst.unzip.snd.unzip.Map.toList.foldr Map.delete st $ getArgs g
+            let float = Map.filterWithKey (\b _ -> inLinearSpan vecs b) phases
+            put (st, float)
+            return $ chunk:acc
+          GlobalPhase v angle -> return $ chunk:acc
 
 synthesizeChunks :: AffineSynthesizer -> [Chunk] -> [Primitive]
 synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.empty
@@ -188,14 +200,19 @@ synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.
 
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar synth vars inputs gates = synthesizeChunks (affineTrans synth) chunks
+  where chunks = backPropagate $ chunkify vars inputs gates
+
+gtparFast :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
   where chunks = chunkify vars inputs gates
+        synth' = \i o mu ma -> (fst $ synth i o mu [], ma)
 
--- Optimization algorithms
+{- Optimization algorithms -}
 
-{- t-par: the t-par algorithm from [AMM2014] -}
+-- t-par: the t-par algorithm from [AMM2014]
 tpar = gtpar tparMaster
 
-{- minCNOT: the CNOT minimization algorithm from [AAM17] -}
+-- minCNOT: the CNOT minimization algorithm from [AAM17]
 minCNOT = gtpar cnotMinGrayPointed
 
 {- Open synthesis -}
