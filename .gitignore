@@ -1,6 +1,7 @@
 # temporaries
 *~
 *.swp
+\#*\#
 
 # executables
 feyn
