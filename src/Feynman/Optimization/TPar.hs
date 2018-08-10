@@ -70,15 +70,13 @@ exists :: ID -> AnalysisState -> Analysis ([Phase], [Phase])
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
-      (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
+      (may, must)   = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
       avecs'        = zip vecs' $ cnsts ++ [False]
-      extendTerms   = Map.mapKeysMonotonic (zeroExtend 1)
-      terms''       = if dim' > dim then extendTerms terms' else terms'
       vals          = Map.fromList $ zip (vars ++ [v]) avecs'
   in do
     put $ SOP dim' vals vals Map.empty phase
-    return (Map.toList orp, Map.toList terms'')
+    return (Map.toList must, Map.toList may)
 
 replaceIval :: Map ID (F2Vec, Bool) -> AnalysisState -> AnalysisState
 replaceIval ivals' st = st { ivals = ivals' }
@@ -99,8 +97,11 @@ addTerm (bv, p) i st =
           Just x  -> Just $ x + i
           Nothing -> Just $ i
 
-setTerms :: [Phase] -> AnalysisState -> AnalysisState
-setTerms xs st = st { terms = Map.fromList xs }
+setTerms :: [Phase] -> Int -> AnalysisState -> AnalysisState
+setTerms xs d st = st { terms = tms' }
+  where tms  = Map.fromList xs
+        tms' = if d < dim st then incDim tms else tms
+        incDim = Map.mapKeysMonotonic (zeroExtend 1)
  
 {-- The main analysis -}
 applyGate :: AffineSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
@@ -139,7 +140,7 @@ applyGate synth gates g = case g of
     st <- get
     (must, may) <- exists v st
     let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may'
+    modify $ setTerms may' (dim st)
     return $ gates ++ circ ++ [H v]
   Swap u v -> do
     bvu <- getSt u
@@ -156,21 +157,21 @@ applyGate synth gates g = case g of
     st <- get
     (must, may) <- exists v st
     let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may'
+    modify $ setTerms may' (dim st)
     return $ gates ++ circ ++ [Rx p v]
   Ry p v -> do
     bv <- getSt v
     st <- get
     (must, may) <- exists v st
     let (circ, may') = synth (ivals st) (qvals st) must may
-    modify $ setTerms may'
+    modify $ setTerms may' (dim st)
     return $ gates ++ circ ++ [Ry p v]
   Uninterp s vs -> do
     bvs <- mapM getSt vs
     st <- get
     (musts, mays) <- liftM unzip $ mapM (\v -> get >>= exists v) vs
     let (circ, may') = synth (ivals st) (qvals st) (concat musts) (concat mays)
-    modify $ setTerms may'
+    modify $ setTerms may' (dim st)
     return $ gates ++ circ ++ [Uninterp s vs]
 
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
@@ -213,7 +214,7 @@ applyGateOpen synth gates g = case g of
     st' <- get
     let out'' = if (dim st') > (dim st) then Map.map (\(bv, b) -> (zeroExtend 1 bv, b)) out' else out'
     modify $ replaceIval (Map.insert v ((qvals st')!v) out'')
-    modify $ setTerms may
+    modify $ setTerms may (dim st)
     return $ gates ++ parities ++ correction ++ [H v]
   Swap u v -> do
     bvu <- getSt u
@@ -274,7 +275,7 @@ gtparopen osynth vars inputs gates =
 -- Optimization algorithms
 
 {- t-par: the t-par algorithm from [AMM2014] -}
-tpar = gtpar tparMore
+tpar = gtpar tparMaster
 
 {- minCNOT: the CNOT minimization algorithm from [AAM17] -}
 minCNOT = gtpar cnotMinGrayPointed

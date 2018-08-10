@@ -18,6 +18,7 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
+{- Type synonyms for convenience -}
 type LinearTrans = Map ID F2Vec
 type AffineTrans = Map ID (F2Vec, Bool)
 type Phase       = (F2Vec, Angle)
@@ -28,7 +29,7 @@ type AffineOpenSynthesizer = AffineTrans -> [Phase] -> (AffineTrans, [Primitive]
 type OpenSynthesizer       = LinearTrans -> [Phase] -> (LinearTrans, [Primitive])
 
 
-{-- Synthesizers -}
+{- Basic synthesizers & transformers -}
 affineTrans :: Synthesizer -> AffineSynthesizer
 affineTrans synth = \input output must may ->
   let f            = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
@@ -49,7 +50,7 @@ affineTransOpen synth = \input xs ->
 emptySynth :: Synthesizer
 emptySynth _ _ _ _ = ([], [])
 
--- Assumes input and output spaces are identical
+-- Assumes span(input) = span(output)
 linearSynth :: LinearTrans -> LinearTrans -> [Primitive]
 linearSynth input output =
   let (ids, ivecs) = unzip $ Map.toList input
@@ -69,6 +70,8 @@ linearSynth input output =
       then error "Fatal: map keys not equal"
       else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
+
+{- Deprecated CNOT minimizing CNOT-dihedral synthesis -}
 synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
 synthVec ids vec =
   let lst = zip ids $ reverse $ toBits $ vec
@@ -112,10 +115,12 @@ cnotMinMost :: Synthesizer
 cnotMinMost input output xs may = cnotMinMore input output xs' may
   where xs' = filter (\(_, i) -> order i /= 1) xs
 
+
+{- Tools for open-ended CNOT-dihedral synthesis -}
+
 -- Given x, U and V, apply a linear transformation L to U such that
 --   1) LU(x) = V(x), and
 --   2) span(LU - x) = span(V - x)
-
 synthV :: ID -> F2Vec -> LinearTrans -> (LinearTrans, [Primitive])
 synthV v x input = case oneSolution (transpose . fromList . Map.elems $ input) x of
   Nothing -> error "Fatal: vector not in linear span"
