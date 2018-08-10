@@ -243,7 +243,7 @@ runSingle n m = do
   let ids = map show [1..n]
   let ist = genInitSt ids
   set <- generate $ generateSizedSet n m
-  let circ = cnotMinGray ist ist $ zip (Set.toList set) (repeat 1)
+  let (circ, []) = cnotMinGray ist ist (zip (Set.toList set) (repeat 1)) []
   return $ countCNOTs circ
 
 runDouble :: Int -> Int -> IO (Int, Int)
@@ -251,7 +251,7 @@ runDouble n m = do
   let ids = map show [1..n]
   let ist = genInitSt ids
   set <- generate $ generateSizedSet n m
-  let circ  = cnotMinGray ist ist $ zip (Set.toList set) (repeat 1)
+  let (circ, []) = cnotMinGray ist ist (zip (Set.toList set) (repeat 1)) []
   let circ' = bruteForceASkeleton ids set ist
   when (not $ check ids ist set circ) $ putStrLn "WARNING"
   return $ (countCNOTs circ, countCNOTs $ fromJust circ')
@@ -294,8 +294,9 @@ computeMinAll n = Set.foldr (\x -> Map.insert x $ bruteForceASkeleton ids x ist)
         ist = genInitSt ids
         pow = someSubsets n
 
-computeAlgAll n = Set.foldr (\x -> Map.insert x $ cnotMinGray ist ist $ zip (Set.toList x) (repeat 1)) Map.empty pow
-  where ids = map show [1..n]
+computeAlgAll n = Set.foldr f Map.empty pow
+  where f x = Map.insert x . fst $ cnotMinGray ist ist (zip (Set.toList x) (repeat 1)) []
+        ids = map show [1..n]
         ist = genInitSt ids
         pow = allSubsets n
 
