@@ -90,7 +90,7 @@ cnotMinGrayPointed0 input output xs may =
       solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
       f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
+    case mapM f xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
         let initPt      = [Pt [0..length ivecs - 1] Nothing Nothing xs']
@@ -106,7 +106,7 @@ cnotMinGrayOpen0 input xs =
       solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
       f (v, i) = solver v >>= \v' -> Just (v', i)
   in
-    case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
+    case mapM f xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
         let initPt      = [Pt [0..length ivecs - 1] Nothing Nothing xs']
