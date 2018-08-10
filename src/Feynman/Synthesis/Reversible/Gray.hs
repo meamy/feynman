@@ -53,23 +53,26 @@ findBestSplitMono xs vecs = (l, c, delete c xs, r)
         c = maximumBy (comparing countCol) xs
         (l, r) = f c
 
-graySynthesis :: [ID] -> LinearTrans -> [Pt] -> Writer [Primitive] (LinearTrans)
-graySynthesis ids out []     = return out
-graySynthesis ids out (x:xs) = case x of
-  Pt _ _ _ [] -> graySynthesis ids out xs
+graySynthesis :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])
+graySynthesis ids out []     may = return (out, may)
+graySynthesis ids out (x:xs) may = case x of
+  Pt _ _ _ [] -> graySynthesis ids out xs may
   Pt c (Just t) (Just p) v ->
-    let idp  = ids !! p
-        idt  = ids !! t
+    let (idp, idt) = (ids!!p, ids!!t)
+        (bvp, bvt) = (out!idp, out!idt)
         xs'  = (Pt c (Just t) Nothing v):(adjust t p xs)
-        out' = case (out!idp, out!idt) of
-          (bvp, bvt) -> Map.insert idt (bvp + bvt) out
+        out' = Map.insert idt (bvp + bvt) out
     in do
       tell [CNOT idp idt]
-      graySynthesis ids out' xs'
+      case find (\(bv, _) -> bvp + bvt == bv) may of
+        Nothing      -> graySynthesis ids out' xs' may
+        Just (bv, a) -> do
+          tell $ synthesizePhase idt a
+          graySynthesis ids out' xs' (delete (bv, a) may)
   Pt [] (Just t) Nothing [(_, a)] -> do
     tell $ synthesizePhase (ids !! t) a
-    graySynthesis ids out xs
-  Pt [] Nothing _ _ -> graySynthesis ids out xs
+    graySynthesis ids out xs may
+  Pt [] Nothing _ _ -> graySynthesis ids out xs may
   Pt (c:cs) targ Nothing vecs ->
     let (vl, c', cs', vr) = findBestSplitMono (c:cs) vecs
         xzero = Pt cs' targ Nothing vl
@@ -77,7 +80,7 @@ graySynthesis ids out (x:xs) = case x of
           Just t  -> Pt cs' targ (Just c') vr
           Nothing -> Pt cs' (Just c') Nothing vr
     in
-      graySynthesis ids out (xzero:xone:xs)
+      graySynthesis ids out (xzero:xone:xs) may
 
 -- Pointed
 cnotMinGrayPointed0 :: Synthesizer
@@ -90,10 +93,10 @@ cnotMinGrayPointed0 input output xs may =
     case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
-        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs']
-            (outin, gates) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
+        let initPt      = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            ((o, m), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt may
         in
-          (gates ++ linearSynth outin output, may)
+          (g ++ linearSynth o output, m)
 
 -- non-pointed synthesis
 cnotMinGrayOpen0 :: OpenSynthesizer
@@ -106,8 +109,10 @@ cnotMinGrayOpen0 input xs =
     case mapM f xs of -- . filter ((/= 1) . order . snd) $ xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
-        let initPt         = [Pt [0..length ivecs - 1] Nothing Nothing xs'] in
-          runWriter $ graySynthesis (fst $ unzip ivecs) input initPt
+        let initPt      = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            ((o, _), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt []
+        in
+          (o, g)
 
 {- Master method -}
 
