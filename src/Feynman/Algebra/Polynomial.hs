@@ -14,7 +14,7 @@ import Data.Bits
 
 import Data.Ratio
 
-import Algebra.Base
+import Feynman.Algebra.Base
 
 {- Monomial representation -}
 -- TODO: Substitutions need to find a degree 1 monomial, which (if found) requires

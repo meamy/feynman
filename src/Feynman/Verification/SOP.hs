@@ -42,7 +42,7 @@ data SOP a = SOP {
   outVals  :: Map ID (Multilinear Z2)
   } deriving (Eq)
 
-instance (Show a, Eq a, Num a) => Show (SOP a) where
+instance (Show a, Eq a, Ring a) => Show (SOP a) where
   show sop = printf "|%s> --> %s%s%s|%s>" is sc sm ph os
     where is = concatMap (\(v, b) -> if b then v else "0") . Map.toList $ inVals sop
           sc = case sde sop of
