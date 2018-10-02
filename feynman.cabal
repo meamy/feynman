@@ -55,15 +55,35 @@ library
   default-language:    Haskell2010
   
 
-executable feyn
-  main-is:             Main.hs
+executable feynopt
+  main-is:             FeynOpt.hs
   buildable:           True
   ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
                        FlexibleInstances
-  hs-source-dirs:      feynman
+  hs-source-dirs:      tools
+  build-depends:       Feynman,
+                       base, 
+                       containers >= 0.5.8.1,
+                       array >= 0.5.1.0, 
+                       bv, 
+                       QuickCheck >= 2.8.2, 
+                       deepseq,
+                       ansi-terminal,
+                       old-time
+  default-language:    Haskell2010
+
+executable feynver
+  main-is:             FeynVerify.hs
+  buildable:           True
+  ghc-options:         -O2
+  default-extensions:  GADTs,
+                       ExistentialQuantification,
+                       FlexibleContexts,
+                       FlexibleInstances
+  hs-source-dirs:      tools
   build-depends:       Feynman,
                        base, 
                        containers >= 0.5.8.1,

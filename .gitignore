@@ -6,6 +6,8 @@
 # executables
 feyn
 feyn-prof
+feynopt
+feynver
 
 # folders
 dist/
