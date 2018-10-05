@@ -108,23 +108,23 @@ applyGate :: [Chunk] -> Primitive -> Analysis [Chunk]
 applyGate acc g = case g of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 3)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 3)
     return acc
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 7 3)
+    modify $ addTerm bv (Discrete $ dyadicUnit 7 3)
     return acc
   S v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 2)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 2)
     return acc
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 3 2)
+    modify $ addTerm bv (Discrete $ dyadicUnit 3 2)
     return acc
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 1)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 1)
     return acc
   Rz p v -> do
     bv <- getSt v
@@ -220,23 +220,23 @@ applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [
 applyGateOpen synth gates g = case g of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 3)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 3)
     return gates
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 7 3)
+    modify $ addTerm bv (Discrete $ dyadicUnit 7 3)
     return gates
   S v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 2)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 2)
     return gates
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 3 2)
+    modify $ addTerm bv (Discrete $ dyadicUnit 3 2)
     return gates
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm bv (Discrete $ dyadic 1 1)
+    modify $ addTerm bv (Discrete $ dyadicUnit 1 1)
     return gates
   Rz p v -> do
     bv <- getSt v

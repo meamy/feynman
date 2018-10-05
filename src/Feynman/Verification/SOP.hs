@@ -13,6 +13,7 @@ import Data.Semigroup
 import Data.Map (Map, (!), (!?))
 import qualified Data.Map as Map
 
+import Feynman.Algebra.Base hiding (zero, one)
 import Feynman.Algebra.Linear hiding (identity)
 import Feynman.Algebra.Polynomial
 import Feynman.Core hiding (toffoli, subst)
@@ -188,38 +189,25 @@ instance (Eq a, Num a) => Monoid (SOP a) where
 
 {- Implementations -}
 
-newtype Z8 = Z8 { inject :: Int } deriving (Eq)
-
-instance Show Z8 where
-  show (Z8 x) = show x
-
-instance Num Z8 where
-  (Z8 x) + (Z8 y) = Z8 $ (x + y) `mod` 8
-  (Z8 x) * (Z8 y) = Z8 $ (x * y) `mod` 8
-  negate (Z8 x)   = Z8 $ 8 - x
-  abs (Z8 x)      = Z8 $ x `mod` 8
-  signum (Z8 x)   = Z8 $ signum x
-  fromInteger i   = Z8 $ fromIntegral $ i `mod` 8
-
-toSOPWithHints :: [ID] -> Primitive -> SOP Z8
+toSOPWithHints :: [ID] -> Primitive -> SOP DyadicUnit
 toSOPWithHints vars gate = case gate of
   H x      -> init { pathVars = [0],
                      sde = s + 1,
-                     poly = p + ofTerm (fromInteger 4) [x, "p0"],
+                     poly = p + ofTerm (dyadicUnit 1 1) [x, "p0"],
                      outVals = Map.insert x (ofVar "p0") outv }
   X x      -> init { outVals = Map.adjust (+ one) x outv }
-  Y x      -> init { poly = p + (constant $ fromInteger 2) + (ofTerm (fromInteger 4) [x]),
+  Y x      -> init { poly = p + (constant $ dyadicUnit 1 2) + (ofTerm (dyadicUnit 1 1) [x]),
                      outVals = Map.adjust (+ one) x outv }
-  Z x      -> init { poly = p + (ofTerm (fromInteger 4) [x]) }
+  Z x      -> init { poly = p + (ofTerm (dyadicUnit 1 1) [x]) }
   CNOT x y -> init { outVals = Map.adjust (+ (ofVar x)) y outv }
-  S x      -> init { poly = p + (ofTerm (fromInteger 2) [x]) }
-  Sinv x   -> init { poly = p + (ofTerm (fromInteger 6) [x]) }
-  T x      -> init { poly = p + (ofTerm (fromInteger 1) [x]) }
-  Tinv x   -> init { poly = p + (ofTerm (fromInteger 7) [x]) }
+  S x      -> init { poly = p + (ofTerm (dyadicUnit 1 2) [x]) }
+  Sinv x   -> init { poly = p + (ofTerm (dyadicUnit 3 2) [x]) }
+  T x      -> init { poly = p + (ofTerm (dyadicUnit 1 3) [x]) }
+  Tinv x   -> init { poly = p + (ofTerm (dyadicUnit 7 3) [x]) }
   Swap x y -> init { outVals = Map.insert x (outv!y) $ Map.insert y (outv!x) outv }
   where init@(SOP s inv pathv p outv) = identity vars
 
-toSOP :: Primitive -> SOP Z8
+toSOP :: Primitive -> SOP DyadicUnit
 toSOP gate = case gate of
   H x      -> toSOPWithHints [x] gate
   X x      -> toSOPWithHints [x] gate
@@ -233,14 +221,15 @@ toSOP gate = case gate of
   Swap x y -> toSOPWithHints [x,y] gate
 
 
-circuitSOPWithHints :: [ID] -> [Primitive] -> SOP Z8
+circuitSOPWithHints :: [ID] -> [Primitive] -> SOP DyadicUnit
 circuitSOPWithHints vars circuit = foldMap (toSOPWithHints vars) circuit
 
-circuitSOP :: [Primitive] -> SOP Z8
+circuitSOP :: [Primitive] -> SOP DyadicUnit
 circuitSOP circuit = foldMap toSOP circuit
 
 {- Simulation -}
 
+{-
 newtype DyadicInt = D (Int, Int) deriving (Eq) -- NOTE: must be in lowest form
 newtype DOmega    = DOmega (DyadicInt, DyadicInt, DyadicInt, DyadicInt) deriving (Eq)
 
@@ -321,7 +310,7 @@ foldPaths f g sop = case pathVars sop of
           trace ("  expanding at " ++ (pathVar x)) $
           g (foldPaths f g sop0) (foldPaths f g sop1)
 
-foldReduce :: (Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
+foldReduce :: (Eq a, Periodic a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
 foldReduce f g sop = case pathVars sop of
       []   -> f sop
       x:xs ->
@@ -335,7 +324,7 @@ foldReduce f g sop = case pathVars sop of
           trace ("  expanding at " ++ (pathVar x)) $
           g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
 
-foldReduceFull :: (Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
+foldReduceFull :: (Eq a, Periodic a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
 foldReduceFull f g sop = case (pathVars sop, vars $ poly sop) of
       ([], []) -> f sop
       ([], x:xs) ->
@@ -372,29 +361,23 @@ amplitudes :: SOP Z8 -> Map (Map ID (Multilinear Bool)) DOmega
 amplitudes sop = foldReduceFull f g sop
   where f sop = Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
         g = Map.unionWith (+)
-
+-}
 {- Verification -}
 
-class Num a => Fin a where
-  order :: a -> Int
-
-instance Fin Z8 where
-  order (Z8 x) = (lcm x 8) `div` x
-
-injectZ2 :: Fin a => a -> Maybe Bool
+injectZ2 :: Periodic a => a -> Maybe Bool
 injectZ2 a = case order a of
   0 -> Just False
   2 -> Just True
   _ -> Nothing
 
-toBooleanPoly :: (Eq a, Fin a) => Multilinear a -> Maybe (Multilinear Bool)
+toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2 . simplify
 
-axiomSimplify :: (Eq a, Fin a) => SOP a -> Maybe Int
+axiomSimplify :: (Eq a, Periodic a) => SOP a -> Maybe Int
 axiomSimplify sop = msum . (map f) $ internalPaths sop
   where f i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
 
-axiomHHStrict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
+axiomHHStrict :: (Eq a, Periodic a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
 axiomHHStrict sop = msum . (map f) $ internalPaths sop
   where g (x, p) = x `elem` (map pathVar $ pathVars sop)
         f i      = do
@@ -403,7 +386,7 @@ axiomHHStrict sop = msum . (map f) $ internalPaths sop
           (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
-axiomHHOutputRestricted :: (Eq a, Fin a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
+axiomHHOutputRestricted :: (Eq a, Periodic a) => SOP a -> Maybe (Int, Int, Multilinear Bool)
 axiomHHOutputRestricted sop = msum . (map f) $ internalPaths sop
   where g (x, p) = x `elem` (map pathVar $ pathVars sop) && degree p <= 1
         f i      = do
@@ -412,13 +395,13 @@ axiomHHOutputRestricted sop = msum . (map f) $ internalPaths sop
           (j, psub) <- find g $ solveForX p''
           return (i, read $ tail j, psub)
 
-axiomSH3Strict :: (Eq a, Fin a) => SOP a -> Maybe (Int, Multilinear Bool)
+axiomSH3Strict :: SOP DyadicUnit -> Maybe (Int, Multilinear Bool)
 axiomSH3Strict sop = msum . (map f) $ internalPaths sop
   where f i =
-          let p' = factorOut (pathVar i) $ (poly sop) - (ofTerm 2 [pathVar i]) in
+          let p' = factorOut (pathVar i) $ (poly sop) - (ofTerm (dyadicUnit 1 2) [pathVar i]) in
             toBooleanPoly p' >>= \q -> Just (i, q)
 
-axiomUnify :: (Eq a, Fin a) => SOP a -> Maybe (ID, Int, Multilinear Bool, Int, Multilinear Bool)
+axiomUnify :: SOP DyadicUnit -> Maybe (ID, Int, Multilinear Bool, Int, Multilinear Bool)
 axiomUnify sop = msum . (map f) $ internal
   where internal   = internalPaths sop
         findSoln i = find (\(x, _) -> x == pathVar i) . solveForX
@@ -426,16 +409,16 @@ axiomUnify sop = msum . (map f) $ internal
           p'      <- return $ factorOut (pathVar i) $ poly sop
           (m, _)  <- find (\(m, a) -> monomialDegree m == 1 && order a == 4) . Map.toList . terms $ p'
           x       <- find (\v -> not (v == pathVar i)) $ monomialVars m
-          p1      <- toBooleanPoly (p' - (ofTerm 2 [x]))
+          p1      <- toBooleanPoly (p' - (ofTerm (dyadicUnit 1 2) [x]))
           msum . (map $ g p' i x p1) $ internal \\ [i]
         g p' i x p1 j = do
           p''       <- return $ factorOut (pathVar j) $ poly sop
-          p2        <- toBooleanPoly (p'' - (constant (fromInteger 2)) - (ofTerm 6 [x]))
+          p2        <- toBooleanPoly (p'' - (constant (dyadicUnit 1 2)) - (ofTerm (dyadicUnit 3 2) [x]))
           (_, jsub) <- findSoln j (subst x zero p1)
           (_, isub) <- findSoln i (subst x one p2)
           return (x, i, isub, j, jsub)
 
-axiomKill :: (Eq a, Fin a) => SOP a -> Maybe ()
+axiomKill :: (Eq a, Periodic a) => SOP a -> Maybe ()
 axiomKill sop = msum . (map f) $ internalPaths sop
   where f i      = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
@@ -445,7 +428,7 @@ axiomKill sop = msum . (map f) $ internalPaths sop
             else Nothing
 
 -- Main axiom reduction function
-applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
+applyAxiom :: SOP DyadicUnit -> Either (SOP DyadicUnit) (SOP DyadicUnit)
 applyAxiom sop = case sop of
   (axiomSimplify -> Just rem) -> Right $
     sop { sde      = sde sop - 2,
@@ -472,7 +455,7 @@ applyAxiom sop = case sop of
         }
   _ -> Left sop
 
-applyAxiomOutputRestricted :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
+applyAxiomOutputRestricted :: SOP DyadicUnit -> Either (SOP DyadicUnit) (SOP DyadicUnit)
 applyAxiomOutputRestricted sop = case sop of
   (axiomSimplify -> Just rem) -> Right $
     sop { sde      = sde sop - 2,
@@ -490,22 +473,15 @@ applyAxiomOutputRestricted sop = case sop of
   _ -> Left sop
 
 -- Strategies
-reduce :: (Eq a, Fin a) => SOP a -> SOP a
+reduce :: SOP DyadicUnit -> SOP DyadicUnit
 reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
 
-evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> SOP a
+evaluate :: SOP DyadicUnit -> Map ID Bool -> Map ID Bool -> SOP DyadicUnit
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
-
-{-
-cliffordTCrush :: SOP Z8 -> Map ID Bool -> Map ID Bool -> DOmega
-cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
-  where fromLeft (Left x) = x
-        sop' = fromLeft $ foldM (\sop _ -> applyAxiomOutputRestricted sop) (ofKet ket <> sop) [0..]
--}
 
 -- Main verification functions
 
-verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
+verifySpec :: SOP DyadicUnit -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP DyadicUnit)
 verifySpec spec vars inputs gates =
   let sop     = circuitSOPWithHints vars (dagger gates)
       reduced = reduce $ (spec <> sop)
@@ -514,14 +490,14 @@ verifySpec spec vars inputs gates =
       True  -> Nothing
       False -> Just reduced
 
-validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP DyadicUnit)
 validate vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
       ket     = blank (vars \\ inputs)
       bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
       reduced = reduce $ restrictGeneral (ket <> sop) bra
   in
-    case (axiomKill reduced, all (== (fromInteger 1)) . Map.elems $ amplitudes reduced) of
+    case (axiomKill reduced, reduced == identityTrans (inVals ket)) of
       (Just _, _) -> Just reduced
       (_, False)  -> Just reduced
       (_, _)      -> Nothing
@@ -550,7 +526,7 @@ cTSpec x y z = SOP {
   sde      = 0,
   inVals   = Map.fromList [(x, True), (y, True), (z, False)],
   pathVars = [],
-  poly     = ofTerm (Z8 1) [x, y],
+  poly     = ofTerm (dyadicUnit 1 3) [x, y],
   outVals  = Map.fromList [(x, ofVar x), (y, ofVar y), (z, zero)]
   }
 
@@ -558,7 +534,7 @@ cHSpec x y = SOP {
   sde      = 1,
   inVals   = Map.fromList [(x, True), (y, True)],
   pathVars = [0],
-  poly     = ofTerm (Z8 4) [x, y, pathVar 0],
+  poly     = ofTerm (dyadicUnit 1 1) [x, y, pathVar 0],
   outVals  = Map.fromList [(x, ofVar x), (y, ofVar y + ofTerm True [x, y] + ofTerm True [x, pathVar 0])]
   }
 
@@ -587,7 +563,7 @@ toffoliN = go 0
           in
             subproduct ++ go (i+1) (anc:xs) ++ dagger subproduct
 
-toffoliNSpec :: [ID] -> SOP Z8
+toffoliNSpec :: [ID] -> SOP DyadicUnit
 toffoliNSpec xs = SOP {
   sde      = 0,
   inVals   = Map.fromList $ [(x, True) | x <- xs] ++ [(y, False) | y <- anc],
@@ -648,7 +624,7 @@ carryRipple n a b c =
   in
     compute ++ copy ++ (dagger compute)
 
-adderOOPSpec :: Int -> [ID] -> [ID] -> [ID] -> SOP Z8
+adderOOPSpec :: Int -> [ID] -> [ID] -> [ID] -> SOP DyadicUnit
 adderOOPSpec n a b c = SOP {
   sde      = 0,
   inVals   = Map.fromList $ [(v, True) | v <- a ++ b ++ c] ++ [(v, False) | v <- anc ++ carry],
@@ -733,7 +709,7 @@ hiddenShiftQuantum n alternations = do
   where n2 = n `div` 2
         vars = ["x" ++ show i | i <- [0..n-1]]
 
-hiddenShiftSpec :: Int -> [String] -> SOP Z8
+hiddenShiftSpec :: Int -> [String] -> SOP DyadicUnit
 hiddenShiftSpec n string = SOP {
   sde      = 0,
   inVals   = Map.fromList [("x" ++ show i, False) | i <- [0..n-1]],
@@ -744,7 +720,7 @@ hiddenShiftSpec n string = SOP {
        Map.fromList $ map f ["x" ++ show i | i <- [0..n-1]]
   }
 
-hiddenShiftQuantumSpec :: Int -> SOP Z8
+hiddenShiftQuantumSpec :: Int -> SOP DyadicUnit
 hiddenShiftQuantumSpec n = SOP {
   sde      = 0,
   inVals   = Map.fromList $ [("x" ++ show i, False) | i <- [0..n-1]] ++

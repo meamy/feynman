@@ -18,7 +18,7 @@ type ID = String
 type Loc = Int
 
 {- Phase angles -}
-data Angle = Discrete Dyadic | Continuous Double deriving (Eq, Ord)
+data Angle = Discrete DyadicUnit | Continuous Double deriving (Eq, Ord)
 
 apply :: (forall a. Num a => a -> a) -> Angle -> Angle
 apply f (Discrete a)   = Discrete $ f a
@@ -27,8 +27,8 @@ apply f (Continuous a) = Continuous $ f a
 apply2 :: (forall a. Num a => a -> a -> a) -> Angle -> Angle -> Angle
 apply2 f a b = case (a,b) of
   (Discrete a, Discrete b)     -> Discrete $ f a b
-  (Discrete a, Continuous b)   -> Continuous $ f (toDouble a) b
-  (Continuous a, Discrete b)   -> Continuous $ f a (toDouble b)
+  (Discrete a, Continuous b)   -> Continuous $ f (realToFrac a) b
+  (Continuous a, Discrete b)   -> Continuous $ f a (realToFrac b)
   (Continuous a, Continuous b) -> Continuous $ f a b
 
 instance Show Angle where

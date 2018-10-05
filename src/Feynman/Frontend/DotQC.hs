@@ -317,7 +317,7 @@ parseDiscrete = do
   string "pi"
   string "/2^"
   power <- int
-  return $ Discrete $ dyadic numerator (power+1)
+  return $ Discrete $ dyadicUnit numerator (power+1)
 
 parseContinuous = floating2 True >>= return . Continuous
 

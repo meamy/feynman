@@ -103,19 +103,19 @@ applyGate :: (Primitive, Loc) -> Analysis ()
 applyGate (gate, l) = case gate of
   T v      -> do
     bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 3)
+    modify $ addTerm l bv (Discrete $ dyadicUnit 1 3)
   Tinv v   -> do
     bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 7 3)
+    modify $ addTerm l bv (Discrete $ dyadicUnit 7 3)
   S v      -> do
     bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 2)
+    modify $ addTerm l bv (Discrete $ dyadicUnit 1 2)
   Sinv v   -> do
     bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 3 2)
+    modify $ addTerm l bv (Discrete $ dyadicUnit 3 2)
   Z v      -> do
     bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 1)
+    modify $ addTerm l bv (Discrete $ dyadicUnit 1 1)
   CNOT c t -> do
     (bvc, bc) <- getSt c
     (bvt, bt) <- getSt t
