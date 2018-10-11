@@ -13,7 +13,7 @@ import qualified Data.Map.Strict as Map
 
 import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
-import Text.Parsec.Char hiding (space)
+import Text.Parsec.Char (endOfLine)
 import Control.Monad
 
 type Nat = Word
