@@ -47,10 +47,11 @@ library
                        bv, 
                        containers >= 0.5.8.1,
                        mtl, 
-                       parsec, parsec-numbers,
+                       parsec >= 3.0, parsec3-numbers,
                        deepseq,
                        fgl,
                        old-time,
+                       bytestring,
                        bimap
   default-language:    Haskell2010
   
@@ -72,6 +73,7 @@ executable feynopt
                        QuickCheck >= 2.8.2, 
                        deepseq,
                        ansi-terminal,
+                       bytestring,
                        old-time
   default-language:    Haskell2010
 
@@ -92,5 +94,6 @@ executable feynver
                        QuickCheck >= 2.8.2, 
                        deepseq,
                        ansi-terminal,
+                       bytestring,
                        old-time
   default-language:    Haskell2010

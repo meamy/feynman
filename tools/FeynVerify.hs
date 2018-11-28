@@ -16,6 +16,9 @@ import qualified Data.Set as Set
 import Control.Monad
 import Control.DeepSeq
 
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+
 data Result = Eq | NEq
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
@@ -50,8 +53,8 @@ printHelp = mapM_ putStrLn lines
 run :: [String] -> IO ()
 run (x:y:[])
   | (drop (length x - 3) x == ".qc") && (drop (length y - 3) y == ".qc") = do
-      xsrc <- readFile x
-      ysrc <- readFile y
+      xsrc <- B.readFile x
+      ysrc <- B.readFile y
       TOD starts startp <- getClockTime
       let result        = equivalenceCheck xsrc ysrc
       TOD ends endp     <- result `seq` getClockTime

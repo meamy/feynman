@@ -21,6 +21,9 @@ import Control.Monad
 import System.Time
 import Control.DeepSeq
 
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+
 import Benchmarks
 
 {- Toolkit passes -}
@@ -71,7 +74,7 @@ equivalenceCheck qc qc' =
 
 {- Main program -}
 
-run :: DotQCPass -> Bool -> String -> String -> IO ()
+run :: DotQCPass -> Bool -> String -> ByteString -> IO ()
 run pass verify fname src = do
   TOD starts startp <- getClockTime
   TOD ends endp     <- parseAndPass `seq` getClockTime
@@ -143,7 +146,7 @@ parseArgs pass verify (x:xs) = case x of
   "Small"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
   "Med"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
   "All"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
-  f | (drop (length f - 3) f) == ".qc" -> readFile f >>= run pass verify f
+  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= run pass verify f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()

@@ -11,9 +11,11 @@ import qualified Data.Set as Set
 import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
-import Text.ParserCombinators.Parsec hiding (space)
-import Text.ParserCombinators.Parsec.Number
-import Text.Parsec.Char (endOfLine)
+import Data.ByteString (ByteString)
+
+import Text.Parsec hiding (space)
+import Text.Parsec.Char hiding (space)
+import Text.Parsec.Number
 import Control.Monad
 
 type Nat = Word
@@ -417,4 +419,5 @@ parseFile = do
   eof
   return $ DotQC qubits (Set.fromList inputs) (Set.fromList outputs) decls
 
+parseDotQC :: ByteString -> Either ParseError DotQC
 parseDotQC = parse parseFile ".qc parser"

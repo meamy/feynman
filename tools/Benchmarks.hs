@@ -32,6 +32,8 @@ import Feynman.Core (Primitive(CNOT, T, Tinv))
 import qualified Data.BitVector as BitVector
 import Test.QuickCheck
 
+import qualified Data.ByteString as B
+
 import Control.Monad
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
@@ -155,7 +157,7 @@ withTiming f = do
 --runBenchmarks :: DotQCPass -> Maybe (DotQC -> DotQC -> Either String DotQC) -> [String] -> IO ()
 runBenchmarks pass verify xs =
   let runBench s = do
-        src <- readFile $ benchmarksPath ++ s ++ ".qc"
+        src <- B.readFile $ benchmarksPath ++ s ++ ".qc"
         TOD starts startp <- getClockTime
         case printErr (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c') of
           Left err      -> do
@@ -398,7 +400,7 @@ runVerSuite = do
 
 gatelistOfFile :: String -> IO [Primitive]
 gatelistOfFile fname = do
-  s <- readFile fname
+  s <- B.readFile fname
   case parseDotQC s of
     Left err -> putStrLn (show err) >> return []
     Right c  ->
