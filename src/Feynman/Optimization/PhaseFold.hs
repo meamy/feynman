@@ -161,25 +161,31 @@ runAnalysis vars inputs gates =
 phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 phaseFold vars inputs gates =
   let (SOP _ _ terms orphans phase) = runAnalysis vars inputs gates
-      choose = Set.findMax
-      f (gates, phase) (locs, exp) =
-        let (i, phase', exp') = case choose locs of
-              (i, False) -> (i, phase, exp)
-              (i, True)  -> (i, phase + exp, (-exp))
-            getTarget gate = case gate of
-              T x -> x
-              S x -> x
-              Z x -> x
+      allTerms      = (snd . unzip . Map.toList $ terms) ++ orphans
+      (lmap, phase') =
+        let f (lmap, phase) (locs, exp) =
+              let (i, phase', exp') = case Set.findMax locs of
+                    (i, False) -> (i, phase, exp)
+                    (i, True)  -> (i, phase + exp, (-exp))
+              in
+                (Set.foldr (\(j, _) -> Map.insert i (if i == j then exp' else zero)) lmap locs, phase')
+        in
+          foldl' f (Map.empty, phase) allTerms
+      gates' =
+        let getTarget gate = case gate of
+              T x    -> x
+              S x    -> x
+              Z x    -> x
               Tinv x -> x
               Sinv x -> x
-            inSet j = any (\(l, _) -> j == l) $ Set.toList locs
-            g x@(gate, j) xs
-              | j == i    = (zip (synthesizePhase (getTarget gate) exp') (repeat i)) ++ xs
-              | inSet j   = xs
-              | otherwise = x:xs
+              Rz _ x -> x
+            f (gate, i) = case Map.lookup i lmap of
+              Nothing -> [(gate, i)]
+              Just exp
+                | exp == zero -> []
+                | otherwise   -> zip (synthesizePhase (getTarget gate) exp) (repeat i)
         in
-          (foldr g [] gates, phase')
-      (gates', phase') = foldl' f (zip gates [2..], phase) ((snd $ unzip $ Map.toList terms) ++ orphans)
+          concatMap f (zip gates [2..])
   in
     (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
 
