@@ -1,10 +1,16 @@
 # Feynman
 
-## What is Feynman?
+Feynman is a toolkit for quantum circuit analysis in the path integral
+model of quantum mechnics. The toolkit comprises synthesis, 
+optimization and verification methods based around representations of 
+circuit actions as sums-over-paths.
 
-Feynman is a set of algorithms and tools designed to explore the use of
-Richard Feynman's sum-over-paths technique in quantum circuit analysis,
-optimization and simulation.
+Two ways of interfacing with the Feynman project are possible. Standalone
+tools built on Feynman, found in [tools](https://github.com/meamy/feynman/tree/master/tools), 
+provide command-line interfaces for optimizing and/or verifying
+quantum circuits, or the [Feynman](https://github.com/meamy/feynman/tree/master/src/Feynman) 
+library can be imported and used directly in other Haskell projects.
+
 
 ## Prerequisites
 
@@ -73,7 +79,3 @@ codes](https://arxiv.org/abs/1601.07363) for instance.
 # Authors
 
 Matthew Amy
-
-
-
-More to come...
