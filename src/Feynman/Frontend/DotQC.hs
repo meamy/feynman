@@ -13,6 +13,7 @@ import qualified Data.Map.Strict as Map
 
 import Text.ParserCombinators.Parsec hiding (space)
 import Text.ParserCombinators.Parsec.Number
+import Text.Parsec.Char hiding (space)
 import Control.Monad
 
 type Nat = Word
@@ -168,6 +169,44 @@ simplifyDotQC circ = circ { decls = map f $ decls circ }
           else
             f $ decl { body = body' }
 
+applyDotQC :: ([Gate] -> [Gate]) -> DotQC -> DotQC
+applyDotQC trans circ = circ { decls = map f $ decls circ }
+  where f decl = decl { body = trans $ body decl }
+
+expandAll :: DotQC -> DotQC
+expandAll = applyDotQC (fromCliffordT . toCliffordT)
+
+expandToffolis :: DotQC -> DotQC
+expandToffolis circ =
+  let (maxlength, circ') =
+        let (maxlength', decls') = foldl f (0, []) $ decls circ in
+          (maxlength', circ { decls = decls' })
+      f (maxlength, decls) decl@(Decl _ _ body) =
+        let (maxlength', body') = foldl g (maxlength, []) body in
+          (maxlength', decls ++ [decl { body = body' }])
+      g (maxlength, gates) gate@(Gate name i p) =
+        let res = case (name, p) of
+              ("tof", xs) | length xs > 3 -> concatMap (\_ -> mct xs) [1..i]
+              _                           -> [gate]
+        in
+          (max maxlength (length p), gates ++ res)
+      ancillas = ["anc" ++ show i | i <- [0..maxlength-4]]
+  in
+    circ' { qubits = (qubits circ) ++ ancillas }
+
+-- Circuit expansions
+mct :: [ID] -> [Gate]
+mct = go 0
+  where go i []         = []
+        go i (x:[])     = [Gate "X" 1 []]
+        go i (x:y:[])   = [Gate "tof" 1 [x,y]]
+        go i (x:y:z:[]) = [Gate "tof" 1 [x,y,z]]
+        go i (x:y:z:xs) =
+          let anc        = "anc" ++ show i
+              subproduct = [Gate "tof" 1 [x,y,anc]]
+          in
+            subproduct ++ go (i+1) (anc:z:xs) ++ reverse subproduct
+
 gateToCliffordT :: Gate -> [Primitive]
 gateToCliffordT (Gate g i p) =
   let circ = case (g, p) of
@@ -205,6 +244,7 @@ gateToCliffordT (Gate g i p) =
         ("Zd", [x,y,z]) -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
                              CNOT z x, T x, T y, Tinv z, CNOT y x,
                              T x, CNOT y z, CNOT z x, CNOT x y]
+        ("tof", xs)     -> toCliffordT $ mct xs
         otherwise       -> [Uninterp g p]
   in
     concat $ genericReplicate i circ
@@ -300,8 +340,8 @@ showCliffordTStats circ =
 space = char ' '
 semicolon = char ';'
 sep = space <|> tab
-comment = char '#' >> manyTill anyChar newline >> return '#'
-delimiter = semicolon <|> newline 
+comment = char '#' >> manyTill anyChar endOfLine >> return '#'
+delimiter = semicolon <|> endOfLine
 
 skipSpace     = skipMany $ sep <|> comment
 skipWithBreak = many1 (skipMany sep >> delimiter >> skipMany sep)
@@ -377,85 +417,4 @@ parseFile = do
   eof
   return $ DotQC qubits (Set.fromList inputs) (Set.fromList outputs) decls
 
-parseDotQC = (liftM simplifyDotQC) . (parse parseFile ".qc parser")
-
-
--- Tests
-
-toffoli = DotQC { qubits  = ["x", "y", "z"],
-                  inputs  = Set.fromList ["x", "y", "z"],
-                  outputs = Set.fromList ["x", "y", "z"],
-                  decls  = [main] }
-    where main = Decl { name = "main",
-                       params = [],
-                       body = [ Gate "H" 1 ["z"],
-                                Gate "T" 1 ["x"],
-                                Gate "T" 1 ["y"],
-                                Gate "T" 1 ["z"], 
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "T*" 1 ["y"],
-                                Gate "T" 1 ["z"],
-                                Gate "tof" 1 ["y", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "H" 1 ["z"] ] }
-
-toffoliDecl = DotQC { qubits  = ["a", "b", "c"],
-                      inputs  = Set.fromList ["a", "b", "c"],
-                      outputs = Set.fromList ["a", "b", "c"],
-                      decls  = [tof, main] }
-    where tof = Decl { name = "toffoli",
-                       params = ["x", "y", "z"],
-                       body = [ Gate "H" 1 ["z"],
-                                Gate "T" 1 ["x"],
-                                Gate "T" 1 ["y"],
-                                Gate "T" 1 ["z"], 
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "T*" 1 ["y"],
-                                Gate "T" 1 ["z"],
-                                Gate "tof" 1 ["y", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "H" 1 ["z"] ] }
-          main = Decl { name = "main",
-                        params = [],
-                        body = [Gate "toffoli" 1 ["a", "b", "c"]] }
-
-toffoliZDecl = DotQC { qubits  = ["a", "b", "c"],
-                       inputs  = Set.fromList ["a", "b", "c"],
-                       outputs = Set.fromList ["a", "b", "c"],
-                       decls  = [ccz, tof, main] }
-    where ccz = Decl { name = "CCZ",
-                       params = ["x", "y", "z"],
-                       body = [ Gate "T" 1 ["x"],
-                                Gate "T" 1 ["y"],
-                                Gate "T" 1 ["z"], 
-                                Gate "tof" 1 ["x", "y"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "T*" 1 ["y"],
-                                Gate "T" 1 ["z"],
-                                Gate "tof" 1 ["y", "x"],
-                                Gate "T*" 1 ["x"],
-                                Gate "tof" 1 ["y", "z"],
-                                Gate "tof" 1 ["z", "x"],
-                                Gate "tof" 1 ["x", "y"] ] }
-          tof = Decl { name = "toffoli",
-                       params = ["x", "y", "z"],
-                       body = [ Gate "H" 1 ["z"],
-                                Gate "CCZ" 1 ["x", "y", "z"],
-                                Gate "H" 1 ["z"] ] }
-          main = Decl { name = "main",
-                        params = [],
-                        body = [Gate "toffoli" 1 ["a", "b", "c"]] }
+parseDotQC = parse parseFile ".qc parser"

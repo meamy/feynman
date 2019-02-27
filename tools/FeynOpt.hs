@@ -33,6 +33,12 @@ trivPass = Right
 inlinePass :: DotQCPass
 inlinePass = Right . inlineDotQC
 
+mctPass :: DotQCPass
+mctPass = Right . expandToffolis
+
+ctPass :: DotQCPass
+ctPass = Right . expandAll
+
 optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQCPass
 optimizationPass f qc = Right $ qc { decls = map applyOpt $ decls qc }
   where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
@@ -96,18 +102,25 @@ printHelp = mapM_ putStrLn lines
           "",
           "Run with feyn [passes] (<circuit>.qc | Small | Med | All)",
           "",
-          "Passes:",
+          "Transformation passes:",
           "  -inline\tInline all sub-circuits",
+          "  -mctExpand\tExpand all MCT gates using |0>-initialized ancillas",
+          "  -toCliffordT\tExpand all gates to Clifford+T gates",
+          "",
+          "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
-          "  -phasefold\tPhase folding pass, merges phase gates. Non-increasing in all metrics",
+          "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
-          "  -verify\tPerform verification algorithm of [A18] after optimization passes",
+          "  -O2\t\t**Standard strategy** Phase folding + simplify",
+          "",
+          "Verification passes:",
+          "  -verify\tPerform verification algorithm of [A18] after all passes",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
           "",
-          "WARNING: Using \"-verify\" with \"All\" will likely crash your computer without first setting",
+          "WARNING: Using \"-verify\" with \"All\" may crash your computer without first setting",
           "         user-level memory limits. Use with caution"
           ]
           
@@ -115,18 +128,21 @@ printHelp = mapM_ putStrLn lines
 parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
 parseArgs pass verify []     = printHelp
 parseArgs pass verify (x:xs) = case x of
-  "-h"         -> printHelp
-  "-inline"    -> parseArgs (pass >=> inlinePass) verify xs
-  "-phasefold" -> parseArgs (pass >=> phasefoldPass) verify xs
-  "-cnotmin"   -> parseArgs (pass >=> cnotminPass) verify xs
-  "-tpar"      -> parseArgs (pass >=> tparPass) verify xs
-  "-simplify"  -> parseArgs (pass >=> simplifyPass) verify xs
-  "-verify"    -> parseArgs pass True xs
-  "VerBench"   -> runBenchmarks cnotminPass (Just equivalenceCheck) benchmarksMedium
-  "VerAlg"     -> runVerSuite
-  "Small"      -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
-  "Med"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
-  "All"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
+  "-h"           -> printHelp
+  "-inline"      -> parseArgs (pass >=> inlinePass) verify xs
+  "-mctExpand"   -> parseArgs (pass >=> mctPass) verify xs
+  "-toCliffordT" -> parseArgs (pass >=> ctPass) verify xs
+  "-simplify"    -> parseArgs (pass >=> simplifyPass) verify xs
+  "-phasefold"   -> parseArgs (pass >=> simplifyPass >=> phasefoldPass) verify xs
+  "-cnotmin"     -> parseArgs (pass >=> simplifyPass >=> cnotminPass) verify xs
+  "-tpar"        -> parseArgs (pass >=> simplifyPass >=> tparPass) verify xs
+  "-O2"          -> parseArgs (pass >=> simplifyPass >=> phasefoldPass >=> simplifyPass) verify xs
+  "-verify"      -> parseArgs pass True xs
+  "VerBench"     -> runBenchmarks cnotminPass (Just equivalenceCheck) benchmarksMedium
+  "VerAlg"       -> runVerSuite
+  "Small"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
+  "Med"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
+  "All"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
   f | (drop (length f - 3) f) == ".qc" -> readFile f >>= run pass verify f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
