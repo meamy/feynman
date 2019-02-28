@@ -168,7 +168,7 @@ phaseFold vars inputs gates =
                     (i, False) -> (i, phase, exp)
                     (i, True)  -> (i, phase + exp, (-exp))
               in
-                (Set.foldr (\(j, _) -> Map.insert i (if i == j then exp' else zero)) lmap locs, phase')
+                (Set.foldr (\(j, _) -> Map.insert j (if i == j then exp' else zero)) lmap locs, phase')
         in
           foldl' f (Map.empty, phase) allTerms
       gates' =
