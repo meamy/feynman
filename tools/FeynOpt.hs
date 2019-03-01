@@ -3,6 +3,16 @@ module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
 import Feynman.Frontend.DotQC
+import Feynman.Frontend.OpenQASM.Lexer (lexer)
+import Feynman.Frontend.OpenQASM.Syntax (QASM,
+                                         prettyPrint,
+                                         check,
+                                         desugar,
+                                         emit,
+                                         fromDotQC,
+                                         inline,
+                                         applyOpt)
+import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.SOP
@@ -28,40 +38,36 @@ import Benchmarks
 
 {- Toolkit passes -}
 
-type DotQCPass = DotQC -> Either String DotQC
+data Pass = Triv
+          | Inline
+          | MCT
+          | CT
+          | Simplify
+          | Phasefold
+          | CNOTMin
+          | TPar
 
-trivPass :: DotQCPass
-trivPass = Right
+{- DotQC -}
 
-inlinePass :: DotQCPass
-inlinePass = Right . inlineDotQC
-
-mctPass :: DotQCPass
-mctPass = Right . expandToffolis
-
-ctPass :: DotQCPass
-ctPass = Right . expandAll
-
-optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQCPass
-optimizationPass f qc = Right $ qc { decls = map applyOpt $ decls qc }
+optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC -> DotQC
+optimizeDotQC f qc = qc { decls = map applyOpt $ decls qc }
   where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
         wrap g        = fromCliffordT . g . toCliffordT
         inp           = Set.toList $ inputs qc
 
-phasefoldPass :: DotQCPass
-phasefoldPass = optimizationPass phaseFold
+dotQCPass :: Pass -> (DotQC -> DotQC)
+dotQCPass pass = case pass of
+  Triv      -> id
+  Inline    -> inlineDotQC
+  MCT       -> expandToffolis
+  CT        -> expandAll
+  Simplify  -> simplifyDotQC
+  Phasefold -> optimizeDotQC phaseFold
+  CNOTMin   -> optimizeDotQC minCNOT
+  TPar      -> optimizeDotQC tpar
 
-tparPass :: DotQCPass
-tparPass = optimizationPass tpar
-
-cnotminPass :: DotQCPass
-cnotminPass = optimizationPass minCNOT
-
-simplifyPass :: DotQCPass
-simplifyPass = Right . simplifyDotQC
-
-equivalenceCheck :: DotQC -> DotQC -> Either String DotQC
-equivalenceCheck qc qc' =
+equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
+equivalenceCheckDotQC qc qc' =
   let gatelist      = toCliffordT . toGatelist $ qc
       gatelist'     = toCliffordT . toGatelist $ qc'
       primaryInputs = Set.toList $ inputs qc
@@ -72,15 +78,13 @@ equivalenceCheck qc qc' =
       (_, Just sop) -> Left $ "Failed to verify: " ++ show sop
       _             -> Right qc'
 
-{- Main program -}
-
-run :: DotQCPass -> Bool -> String -> ByteString -> IO ()
-run pass verify fname src = do
+runDotQC :: [Pass] -> Bool -> String -> ByteString -> IO ()
+runDotQC passes verify fname src = do
   TOD starts startp <- getClockTime
   TOD ends endp     <- parseAndPass `seq` getClockTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qc, qc') ->
+    Right (qc, qc') -> do
       let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
@@ -92,10 +96,20 @@ run pass verify fname src = do
         printErr (Right r) = Right r
         parseAndPass = do
           qc  <- printErr $ parseDotQC src
-          qc' <- pass qc
+          qc' <- return $ foldr dotQCPass qc passes
           seq (depth $ toGatelist qc') (return ()) -- Nasty solution to strictifying
-          when verify . void $ equivalenceCheck qc qc'
+          when verify . void $ equivalenceCheckDotQC qc qc'
           return (qc, qc')
+
+{- Deprecated transformations for benchmark suites -}
+benchPass :: [Pass] -> (DotQC -> Either String DotQC)
+benchPass passes = \qc -> Right $ foldr dotQCPass qc passes
+
+benchVerif :: Bool -> Maybe (DotQC -> DotQC -> Either String DotQC)
+benchVerif True  = Just equivalenceCheckDotQC
+benchVerif False = Nothing
+
+{- Main program -}
 
 printHelp :: IO ()
 printHelp = mapM_ putStrLn lines
@@ -128,26 +142,26 @@ printHelp = mapM_ putStrLn lines
           ]
           
 
-parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
-parseArgs pass verify []     = printHelp
-parseArgs pass verify (x:xs) = case x of
+parseArgs :: [Pass] -> Bool -> [String] -> IO ()
+parseArgs passes verify []     = printHelp
+parseArgs passes verify (x:xs) = case x of
   "-h"           -> printHelp
-  "-inline"      -> parseArgs (pass >=> inlinePass) verify xs
-  "-mctExpand"   -> parseArgs (pass >=> mctPass) verify xs
-  "-toCliffordT" -> parseArgs (pass >=> ctPass) verify xs
-  "-simplify"    -> parseArgs (pass >=> simplifyPass) verify xs
-  "-phasefold"   -> parseArgs (pass >=> simplifyPass >=> phasefoldPass) verify xs
-  "-cnotmin"     -> parseArgs (pass >=> simplifyPass >=> cnotminPass) verify xs
-  "-tpar"        -> parseArgs (pass >=> simplifyPass >=> tparPass) verify xs
-  "-O2"          -> parseArgs (pass >=> simplifyPass >=> phasefoldPass >=> simplifyPass) verify xs
-  "-verify"      -> parseArgs pass True xs
-  "VerBench"     -> runBenchmarks cnotminPass (Just equivalenceCheck) benchmarksMedium
+  "-inline"      -> parseArgs (Inline:passes) verify xs
+  "-mctExpand"   -> parseArgs (MCT:passes) verify xs
+  "-toCliffordT" -> parseArgs (CT:passes) verify xs
+  "-simplify"    -> parseArgs (Simplify:passes) verify xs
+  "-phasefold"   -> parseArgs (Phasefold:Simplify:passes) verify xs
+  "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
+  "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
+  "-O2"          -> parseArgs (Simplify:Phasefold:Simplify:passes) verify xs
+  "-verify"      -> parseArgs passes True xs
+  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
   "VerAlg"       -> runVerSuite
-  "Small"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
-  "Med"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
-  "All"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
-  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= run pass verify f
+  "Small"        -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksSmall
+  "Med"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksMedium
+  "All"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksAll
+  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
-main = getArgs >>= parseArgs trivPass False
+main = getArgs >>= parseArgs [] False
