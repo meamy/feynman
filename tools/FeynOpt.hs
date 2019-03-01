@@ -1,7 +1,8 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, TypeApplications, ScopedTypeVariables #-}
 module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
+import Feynman.Frontend
 import Feynman.Frontend.DotQC
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
@@ -28,74 +29,72 @@ import Benchmarks
 
 {- Toolkit passes -}
 
-type DotQCPass = DotQC -> Either String DotQC
+type Pass a = a -> Either String a
 
-trivPass :: DotQCPass
+trivPass :: Frontend a => Pass a
 trivPass = Right
 
-inlinePass :: DotQCPass
-inlinePass = Right . inlineDotQC
+inlinePass :: Frontend a => Pass a
+inlinePass = Right . inline
 
-mctPass :: DotQCPass
-mctPass = Right . expandToffolis
+mctPass :: Frontend a => Pass a
+mctPass = Right . decomposeMCT
 
-ctPass :: DotQCPass
-ctPass = Right . expandAll
+ctPass :: Frontend a => Pass a
+ctPass = Right . decomposeAll
 
-optimizationPass :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQCPass
-optimizationPass f qc = Right $ qc { decls = map applyOpt $ decls qc }
-  where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
-        wrap g        = fromCliffordT . g . toCliffordT
-        inp           = Set.toList $ inputs qc
+phasefoldPass :: Frontend a => Pass a
+phasefoldPass = optimize phaseFold
 
-phasefoldPass :: DotQCPass
-phasefoldPass = optimizationPass phaseFold
+tparPass :: Frontend a => Pass a
+tparPass = optimize tpar
 
-tparPass :: DotQCPass
-tparPass = optimizationPass tpar
+cnotminPass :: Frontend a => Pass a
+cnotminPass = optimize minCNOT
 
-cnotminPass :: DotQCPass
-cnotminPass = optimizationPass minCNOT
+simplifyPass :: Frontend a => Pass a
+simplifyPass = Right . simplify
 
-simplifyPass :: DotQCPass
-simplifyPass = Right . simplifyDotQC
-
-equivalenceCheck :: DotQC -> DotQC -> Either String DotQC
-equivalenceCheck qc qc' =
-  let gatelist      = toCliffordT . toGatelist $ qc
-      gatelist'     = toCliffordT . toGatelist $ qc'
-      primaryInputs = Set.toList $ inputs qc
-      result        = validate (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
+verifyPass :: Frontend a => a -> Pass a
+verifyPass circ =
+  let gatelist      = sequentialize circ
+      primaryInputs = parameters circ
+      go circ' =
+        let gatelist' = sequentialize circ'
+            result    = validate Set.empty primaryInputs gatelist gatelist'
+        in
+          case (primaryInputs == parameters circ', result) of
+            (False, _)    -> Left $ "Failed to verify: circuits have different inputs"
+            (_, Just sop) -> Left $ "Failed to verify: miter circuit maps " ++ show sop
+            _             -> Right circ'
   in
-    case (inputs qc == inputs qc', result) of
-      (False, _)    -> Left $ "Failed to verify: different inputs"
-      (_, Just sop) -> Left $ "Failed to verify: " ++ show sop
-      _             -> Right qc'
+    go
 
 {- Main program -}
 
-run :: DotQCPass -> Bool -> String -> ByteString -> IO ()
-run pass verify fname src = do
+run :: Frontend a => Pass a -> Bool -> String -> ByteString -> IO ()
+run (pass :: Pass a) verify fname src = do
   TOD starts startp <- getClockTime
   TOD ends endp     <- parseAndPass `seq` getClockTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qc, qc') ->
+    Right (circ, circ') -> do
       let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
-      putStrLn $ "# Feynman -- quantum circuit toolkit"
-      putStrLn $ "# Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc
-      putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc'
-      putStrLn $ show qc'
+      let cmt  = commentPrefix @a
+      putStrLn $ cmt ++ " Feynman -- quantum circuit toolkit"
+      putStrLn $ cmt ++ " Original (" ++ fname ++ "):"
+      mapM_ putStrLn . map ((cmt ++ "   ") ++) $ statistics circ
+      putStrLn $ cmt ++ " Result (" ++ formatFloatN time 3 ++ "ms):"
+      mapM_ putStrLn . map ((cmt ++ "   ") ++) $ statistics circ'
+      putStrLn $ show circ'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
-          qc  <- printErr $ parseDotQC src
-          qc' <- pass qc
-          seq (depth $ toGatelist qc') (return ()) -- Nasty solution to strictifying
-          when verify . void $ equivalenceCheck qc qc'
-          return (qc, qc')
+          circ  <- printErr $ parse src
+          circ' <- pass qc
+          seq (length $ sequentialize circ') (return ()) -- Nasty solution to strictifying
+          when verify . void $ verifyPass circ circ'
+          return (circ, circ')
 
 printHelp :: IO ()
 printHelp = mapM_ putStrLn lines
@@ -128,7 +127,7 @@ printHelp = mapM_ putStrLn lines
           ]
           
 
-parseArgs :: DotQCPass -> Bool -> [String] -> IO ()
+parseArgs :: Frontend a => Pass a -> Bool -> [String] -> IO ()
 parseArgs pass verify []     = printHelp
 parseArgs pass verify (x:xs) = case x of
   "-h"           -> printHelp
@@ -146,7 +145,7 @@ parseArgs pass verify (x:xs) = case x of
   "Small"        -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksSmall
   "Med"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksMedium
   "All"          -> runBenchmarks pass (if verify then Just equivalenceCheck else Nothing) benchmarksAll
-  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= run pass verify f
+  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= (run @ DotQC) pass verify f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
