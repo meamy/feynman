@@ -109,6 +109,32 @@ benchVerif :: Bool -> Maybe (DotQC -> DotQC -> Either String DotQC)
 benchVerif True  = Just equivalenceCheckDotQC
 benchVerif False = Nothing
 
+{- QASM -}
+
+qasmPass :: Pass -> (QASM -> QASM)
+qasmPass pass = case pass of
+  Triv      -> id
+  Inline    -> inline
+  MCT       -> inline
+  CT        -> inline
+  Simplify  -> id
+  Phasefold -> applyOpt phaseFold
+  CNOTMin   -> applyOpt minCNOT
+  TPar      -> applyOpt tpar
+
+runQASM :: [Pass] -> Bool -> String -> String -> IO ()
+runQASM passes verify fname src = do
+  case parseAndPass of
+    Left err        -> putStrLn $ "ERROR: " ++ err
+    Right (qasm, qasm') -> emit qasm'
+  where printErr (Left l)  = Left $ show l
+        printErr (Right r) = Right r
+        parseAndPass = do
+          let qasm   = parse . lexer $ src
+          symtab <- check qasm
+          qasm' <- return $ foldr qasmPass (desugar symtab qasm) passes
+          return (qasm, qasm')
+
 {- Main program -}
 
 printHelp :: IO ()
@@ -161,6 +187,7 @@ parseArgs passes verify (x:xs) = case x of
   "Med"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksMedium
   "All"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksAll
   f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
+  f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= runQASM passes verify f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
