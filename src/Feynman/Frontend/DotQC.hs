@@ -1,6 +1,7 @@
 module Feynman.Frontend.DotQC where
 
 import Feynman.Core (ID, Primitive(..), showLst, Angle(..))
+import Feynman.Frontend
 import Feynman.Algebra.Base
 
 import Data.List
@@ -59,6 +60,21 @@ instance Show DotQC where
           i'  = ".i " ++ showLst (filter (`Set.member` i) q)
           o'  = ".o " ++ showLst (filter (`Set.member` o) q)
           bod = map show . uncurry (++) . partition (\decl -> name decl /= "main") $ decls
+
+instance Frontend DotQC where
+  parseIt       = parseDotQC
+  commentPrefix = "#"
+  parameters    = Set.toList . inputs
+  sequentialize = toCliffordT . toGatelist
+  statistics    = showCliffordTStats
+  inline        = inlineDotQC
+  decomposeMCT  = expandToffolis
+  decomposeAll  = expandAll
+  simplify      = simplifyDotQC
+  optimize f qc = qc { decls = map applyOpt $ decls qc }
+    where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
+          wrap g        = fromCliffordT . g . toCliffordT
+          inp           = Set.toList $ inputs qc
 
 {- Accessors -}
 
@@ -141,8 +157,8 @@ inv gate@(ParamGate g i f p) =
     "Rx"   -> Just $ ParamGate g i (-f) p
     "Ry"   -> Just $ ParamGate g i (-f) p
 
-simplify :: [Gate] -> [Gate]
-simplify circ =
+simplifyGatelist :: [Gate] -> [Gate]
+simplifyGatelist circ =
   let circ' = zip circ [0..]
       allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
       f (last, erasures) (gate, uid) =
@@ -165,7 +181,7 @@ simplify circ =
 simplifyDotQC :: DotQC -> DotQC
 simplifyDotQC circ = circ { decls = map f $ decls circ }
   where f decl =
-          let body' = simplify $ body decl in
+          let body' = simplifyGatelist $ body decl in
           if body' == body decl then
             decl
           else

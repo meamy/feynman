@@ -39,6 +39,7 @@ library
 
                        Feynman.Verification.SOP,
 
+                       Feynman.Frontend
                        Feynman.Frontend.DotQC
                        Feynman.Frontend.OpenQASM.Syntax
                        Feynman.Frontend.OpenQASM.Lexer
