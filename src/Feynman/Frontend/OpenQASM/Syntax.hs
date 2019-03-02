@@ -336,7 +336,7 @@ desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
           -- parameters in their body, which are explicitly qubit typed
           DecStmt _       -> [stmt]
           QStmt qexp      -> map QStmt $ g qexp
-          -- Note that we can't easily expand v due to the design of QASM. Fun.
+          -- Note that we can't expand v due to the design of QASM. Fun.
           IfStmt v i qexp -> map (IfStmt v i) $ g qexp
         g qexp = case qexp of
           MeasureExp a b  -> map (uncurry MeasureExp) $ zip (expand a) (expand b)
@@ -356,8 +356,10 @@ desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
             _      -> [Var v]
 
 -- Inlines all local definitions & non-primitive operations
+-- Note: non-strictness can hopefully allow for some efficient
+--       fusion with operations on inlined code
 inline :: QASM -> QASM
-inline (QASM ver stmts) = QASM ver . snd . foldl' f (Map.empty, []) $ stmts
+inline (QASM ver stmts) = QASM ver . snd . foldl f (Map.empty, []) $ stmts
   where f (ctx, stmts) stmt = case stmt of
           DecStmt (GateDec v c q b) -> (Map.insert v (c, q, concatMap (h ctx) b) ctx, stmts)
           QStmt qexp                -> (ctx, stmts ++ (map QStmt $ g ctx qexp))
@@ -514,27 +516,75 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           GateExp (CallGate _ _ args) -> args
           GateExp (BarrierGate args)  -> args
           
-          
+{- Statistics -}
 
--- openQASM <--> .qc doesn't really make much sense. If I was smart I would have done all transformations
--- on the IR from the beginning, but this is quicker for now. Eventually I'll move everything
--- to a common IR, but for now it'll all go through .qc
+-- Assumes inlined code
+gateCounts :: QASM -> Map ID Int
+gateCounts (QASM ver stmts) = foldl gcStmt Map.empty stmts
+  where gcStmt cnts stmt = case stmt of
+          IncStmt _       -> cnts
+          DecStmt _       -> cnts 
+          QStmt qexp      -> gcQExp cnts qexp
+          IfStmt _ _ qexp -> gcQExp cnts qexp
+        gcQExp cnts qexp = case qexp of
+          GateExp uexp         -> gcUExp cnts uexp
+          MeasureExp arg1 arg2 -> addToCount 1 "measurement" cnts
+          ResetExp arg1        -> addToCount 1 "reset" cnts
+        gcUExp cnts uexp = case uexp of
+          UGate e1 e2 e3 _     ->
+            let name = "U(" ++ prettyPrintExps [e1, e2, e3] ++ ")" in
+              addToCount 1 name cnts
+          CXGate _ _           -> addToCount 1 "cnot" cnts
+          CallGate name exps _ -> case name of
+            "h"   -> addToCount 1 "H" cnts
+            "x"   -> addToCount 1 "X" cnts
+            "y"   -> addToCount 1 "Y" cnts
+            "z"   -> addToCount 1 "Z" cnts
+            "s"   -> addToCount 1 "S" cnts
+            "sdg" -> addToCount 1 "S" cnts
+            "t"   -> addToCount 1 "T" cnts
+            "tdg" -> addToCount 1 "T" cnts
+            "cx"  -> addToCount 1 "cnot" cnts
+            "id"  -> cnts
+            "cz"  -> addToCount 1 "cz" cnts
+            "ccx" -> addToCount 2 "H" $ addToCount 7 "cnot" $ addToCount 7 "T" cnts
+            _     -> addToCount 1 (name ++ "(" ++ (prettyPrintExps exps) ++ ")") cnts
+          BarrierGate _     -> cnts
 
--- openQASM --> .qc
-{-
-stmtToDotQC :: ([Gate], DotQC) -> Stmt -> ([Gate], DotQC)
-stmtToDotQC (main, dotqc) stmt = case stmt of
-  IncStmt s            -> (main, dotqc)
-  DecStmt dec          -> (main, dotqc { decls = (decls dotqc) ++ (decToDotQC dec) })
-  QStmt qexp           -> (main ++ qexpToDotQC exp, dotqc)
-  IfStmt v i qexp      -> error "If statements not supported"
+        addToCount i str cnts =
+          let alterf val = case val of
+                Nothing -> Just i
+                Just c  -> Just $ c+i
+          in
+            Map.alter alterf str cnts
 
-decToDotQC :: Dec -> Decl
+bitCounts :: QASM -> (Int, Int)
+bitCounts (QASM ver stmts) = foldl bcStmt (0, 0) stmts
+  where bcStmt cnts stmt = case stmt of
+          DecStmt dec  -> bcDec cnts dec
+          _            -> cnts
+        bcDec (cbits, qbits) dec = case dec of
+          VarDec _ (Creg i) -> (cbits + i, qbits)
+          VarDec _ (Qreg i) -> (cbits, qbits + i)
+          _                 -> (cbits, qbits)
 
-toDotQC :: QASM -> DotQC
-toDotQC (QASM _ stmts) = dotqc { decls = (decls dotqc) ++ [Decl "main" [] main] }
-  where (main, dotqc) = foldl' stmtToDotQC ([], DotQC [] Set.empty Set.empty []) stmts
--}
+--depth :: QASM -> Int
+--gateDepth :: [ID] -> QASM -> Int
+
+showStats :: QASM -> [String]
+showStats qasm =
+  let qasm'  = inline qasm
+      bits   =
+        let (cbits, qbits) = bitCounts qasm' in
+          ["cbits: " ++ show cbits, "qubits: " ++ show qbits]
+      counts =
+        let f (gate, count) = gate ++ ": " ++ show count in
+          map f . Map.toList $ gateCounts qasm'
+  in
+    bits ++ counts
+    
+      
+{- Cross compilation -}
 
 -- .qc --> openQASM
 regify :: ID -> Map ID Int -> ID -> Arg

@@ -2,7 +2,7 @@
 module Main (main) where
 
 import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
-import Feynman.Frontend.DotQC
+import Feynman.Frontend.DotQC hiding (showStats)
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
 import Feynman.Frontend.OpenQASM.Syntax (QASM,
                                          prettyPrint,
@@ -11,7 +11,8 @@ import Feynman.Frontend.OpenQASM.Syntax (QASM,
                                          emit,
                                          fromDotQC,
                                          inline,
-                                         applyOpt)
+                                         applyOpt,
+                                         showStats)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
@@ -124,16 +125,26 @@ qasmPass pass = case pass of
 
 runQASM :: [Pass] -> Bool -> String -> String -> IO ()
 runQASM passes verify fname src = do
+  TOD starts startp <- getClockTime
+  TOD ends endp     <- parseAndPass `seq` getClockTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qasm, qasm') -> emit qasm'
+    Right (qasm, qasm') -> do
+      let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+      putStrLn $ "// Feynman -- quantum circuit toolkit"
+      putStrLn $ "// Original (" ++ fname ++ "):"
+      mapM_ putStrLn . map ("//   " ++) $ showStats qasm
+      putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+      mapM_ putStrLn . map ("//   " ++) $ showStats qasm'
+      emit qasm'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
           let qasm   = parse . lexer $ src
           symtab <- check qasm
-          qasm' <- return $ foldr qasmPass (desugar symtab qasm) passes
-          return (qasm, qasm')
+          let qasm'  = desugar symtab qasm -- For correct gate counts
+          qasm'' <- return $ foldr qasmPass qasm' passes
+          return (qasm', qasm'')
 
 {- Main program -}
 
@@ -143,7 +154,7 @@ printHelp = mapM_ putStrLn lines
           "Feynman -- quantum circuit toolkit",
           "Written by Matthew Amy",
           "",
-          "Run with feyn [passes] (<circuit>.qc | Small | Med | All)",
+          "Run with feyn [passes] (<circuit>.(qc | qasm) | Small | Med | All)",
           "",
           "Transformation passes:",
           "  -inline\tInline all sub-circuits",
