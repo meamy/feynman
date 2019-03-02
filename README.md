@@ -34,47 +34,69 @@ Once all dependencies have been met, Feynman can be built from the top-level
 directory with the command
 
 ```
-cabal build feyn
+cabal build
 ```
 
-This will place the compiled binary `feyn` in the folder `dist/build/feyn/`.
+This will build the Feynman library, as well as binary tools for optimizing
+(`feynopt`) and equivalence checking circuits (`feynver`), found in the 
+`dist/build/` folder.
 
 Alternatively, a Makefile is provided which will build Feynman and copy the
-executable to the top-level directory. To compile with the makefile simply type
+executables to the top-level directory. To compile with the makefile simply
+execute the command
 
 ```
 make
 ```
 
-## Using Feynman
+## Using feynopt
 
-Feynman currently has a single frontend, DotQC, a quantum circuit description
-language designed for use with [QCViewer](https://github.com/aparent/QCViewer/). 
-A description of the .qc file format is available
+Feynman currently has frontends for
+[openQASM](https://github.com/Qiskit/openqasm/blob/master/spec/qasm2.rst) and
+[.qc](https://circuits.qsoft.iqc.uwaterloo.ca/about/spec).
+Examples of both can be found in the
+[benchmarks](https://github.com/meamy/feynman/tree/master/benchmarks) folder.
 
-To run feynman on a .qc file, execute the command
-
-```
-feyn <filename>.qc
-```
-
-Various optimization algorithms can be run on the input file, including the
-[t-par](https://arxiv.org/abs/1303.2042) algorithm:
+To run the Feynman optimizer `feynopt` on a .qc or openQASM file, execute the
+command
 
 ```
-./feyn -tpar <filename>.qc
+feynopt <filename>.(qc | qasm)
 ```
 
-Other options include `-phasefold` and `-cnotmin`. The former applies a
-variation of the t-par algorithm where circuits are not re-synthesized, while
-the latter attempts to resynthesize circuits minimizing CNOT counts.
+`feynopt` automatically recognizes the extensions .qc and .qasm as .qc and
+openQASM files, respectively.
+
+For a list of all available optimizations and transformations, use the command
+
+```
+feynopt -h
+```
+
+## Using feynver
+
+The `feynver` binary tool allows for equivalence checking of separate circuit
+files. Standard usage is
+
+```
+feynver <filename1>.qc <filename2>.qc
+```
+
+The input circuits must agree on the names of the primary inputs (i.e. non-initialized qubits),
+but they may use different ancillas.
+
+*Note: `feynver` currently only supports the .qc frontend*
 
 ### Benchmarks
 
 The Feynman repository comes with a suite of quantum circuit benchmarks, found
 in the `benchmarks` folder. For more information on the benchmarks the user is
-directed to [T-count optimization and Reed-Muller
-codes](https://arxiv.org/abs/1601.07363) for instance.
+directed to [Formal Methods in Quantum Circuit
+Design](http://hdl.handle.net/10012/14480).
+
+The benchmark suite also includes example openQASM circuits, taken from the
+openQASM github
+[repository](https://github.com/Qiskit/openqasm/tree/master/examples).
 
 # Authors
 
