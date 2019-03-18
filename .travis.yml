@@ -1,7 +1,18 @@
 language: haskell
+
 ghc:
   - "8.0.2"
   - "8.0"
   - "8.2"
   - "8.4"
   - "8.6"
+
+before_install:
+  - cabal install alex
+  - cabal install happy
+
+cache:
+  directories:
+    - $HOME/.cabal/packages
+    - $HOME/.cabal/store
+    - $HOME/.cabal/bin
