@@ -40,6 +40,7 @@ library
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
                        Feynman.Optimization.TPar,
+                       Feynman.Optimization.HPhaseFold,
 
                        Feynman.Verification.SOP,
 
