@@ -13,6 +13,7 @@ import Feynman.Frontend.OpenQASM.Syntax (QASM,
                                          showStats)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
+import Feynman.Optimization.HPhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.SOP
 
@@ -65,7 +66,7 @@ dotQCPass pass = case pass of
   CT        -> expandAll
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
-  Statefold -> optimizeDotQC stateFold
+  Statefold -> optimizeDotQC hPhaseFold
   CNOTMin   -> optimizeDotQC minCNOT
   TPar      -> optimizeDotQC tpar
 
@@ -123,7 +124,7 @@ qasmPass pass = case pass of
   CT        -> inline
   Simplify  -> id
   Phasefold -> applyOpt phaseFold
-  Statefold -> applyOpt stateFold
+  Statefold -> applyOpt hPhaseFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
 

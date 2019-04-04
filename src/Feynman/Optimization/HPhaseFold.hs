@@ -8,7 +8,7 @@ import Feynman.Synthesis.Phase
 import Data.List hiding (transpose)
 import Data.Maybe
 
-import Data.Map.Strict (Map)
+import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
 import Data.Set (Set)
@@ -53,10 +53,13 @@ getSt v = get >>= \st ->
 {- Here we want to compute the new state if interference has occurred,
    or otherwise assign a fresh variable with branch point the old state -}
 existsH :: ID -> Analysis ()
-existsH v = do
-  input  <- getSt v
-  (n, _) <- assignFresh v
-  modify $ \st -> st { subs = Map.insert n input (subs st) }
+existsH v = get >>= \st -> case interferenceOn v st of
+  Just bv' -> do
+    modify $ updateQval v bv'
+  Nothing -> do
+    input  <- getSt v
+    (n, _) <- assignFresh v
+    modify $ \st -> st { subs = Map.insert n input (subs st) }
 
 updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
@@ -73,7 +76,24 @@ addTerm l (bv, p) i st =
   where f i oldt = case oldt of
           Just (s, x) -> Just (Set.insert (l, p) s, x + i)
           Nothing     -> Just (Set.singleton (l, p), i)
- 
+
+interferenceOn :: ID -> AnalysisState -> Maybe (F2Vec, Bool)
+interferenceOn v st =
+  let varsOfBV bv = filter (testBit bv) [0..(dim st) - 1]
+      checkPoly v =
+        let g (v, num) (bv, (_, a)) = case (v `elem` (varsOfBV bv), order a == 2) of
+              (False, _)    -> Just (v, num)
+              (True, True)  -> Just (v, num+1)
+              (True, False) -> Nothing
+        in
+          foldM g (v, 0) $ Map.toList (terms st)
+      f (v, num)  = (\(bv, parity) -> (bv, parity `xor` (1 == num `mod` 2))) ((subs st)!v)
+      vars        = varsOfBV $ fst ((qvals st)!v)
+      outVars     = map varsOfBV . fst . unzip . Map.elems . Map.delete v $ qvals st
+      candidates  = filter (\v -> Map.member v (subs st)) $ foldl' (\\) vars outVars
+   in
+      fmap f . msum $ map checkPoly candidates
+  
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()
 applyGate (gate, l) = case gate of

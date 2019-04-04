@@ -106,6 +106,7 @@ appearsIn :: String -> Multilinear a -> Bool
 appearsIn v (Multilinear terms) = any (v `inMonomial`) . Map.keys $ terms
 
 {- Constructors -}
+
 zero :: Multilinear a
 zero = Multilinear Map.empty
 
