@@ -68,6 +68,7 @@ data Primitive =
   | Rx       Angle ID
   | Ry       Angle ID
   | Uninterp ID [ID]
+  deriving (Eq)
 
 data Stmt =
     Gate Primitive
@@ -166,6 +167,34 @@ ids = Set.toList . foldr f Set.empty
           Rx theta x    -> [x]
           Ry theta x    -> [x]
           Uninterp s xs -> xs
+
+converge :: Eq a => (a -> a) -> a -> a
+converge f a
+  | a' == a   = a'
+  | otherwise = converge f a'
+  where a' = f a
+
+simplifyPrimitive :: [Primitive] -> [Primitive]
+simplifyPrimitive circ =
+  let circ'         = zip circ [0..]
+      simplify circ =
+        let erasures = snd $ foldl' f (Map.empty, Set.empty) circ
+            f (frontier, erasures) (gate, uid) =
+              let args@(x:xs) = getArgs gate
+                  checkDagger (gate', uid')
+                    | gate' == daggerGate gate = Just (gate, uid')
+                    | otherwise                = Nothing
+                  checkArg (gate, uid) q = do
+                    (_, uid') <- Map.lookup q frontier
+                    if uid' == uid then Just (gate, uid) else Nothing
+              in
+                case Map.lookup x frontier >>= checkDagger >>= (\g -> foldM checkArg g xs) of
+                  Just (_, uid') -> (foldr Map.delete frontier args, foldr Set.insert erasures [uid, uid'])
+                  Nothing        -> (foldr (\q -> Map.insert q (gate, uid)) frontier args, erasures)
+        in
+          filter (\(_, uid) -> not $ Set.member uid erasures) circ
+  in
+    fst . unzip . (converge simplify) $ circ'
 
 -- Builtin circuits
 

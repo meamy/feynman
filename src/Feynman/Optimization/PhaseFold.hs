@@ -116,33 +116,25 @@ applyGate (gate, l) = case gate of
   Z v      -> do
     bv <- getSt v
     modify $ addTerm l bv (Discrete $ dyadic 1 1)
+  Rz p v -> do
+    bv <- getSt v
+    modify $ addTerm l bv p
+  X v      -> do
+    (bv, b) <- getSt v
+    modify $ updateQval v (bv, Prelude.not b)
   CNOT c t -> do
     (bvc, bc) <- getSt c
     (bvt, bt) <- getSt t
     modify $ updateQval t (bvc + bvt, bc `xor` bt)
-  X v      -> do
-    (bv, b) <- getSt v
-    modify $ updateQval v (bv, Prelude.not b)
-  H v      -> do
-    bv <- getSt v
-    modify $ exists v
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
     modify $ updateQval u bvv
     modify $ updateQval v bvu
-  Rz p v -> do
-    bv <- getSt v
-    modify $ addTerm l bv p
-  Rx p v -> do
-    bv <- getSt v
-    modify $ exists v
-  Ry p v -> do
-    bv <- getSt v
-    modify $ exists v
-  Uninterp s vs -> do
-    bvs <- mapM getSt vs
-    mapM_ (\v -> modify $ exists v) vs
+  _        -> do
+    let args = getArgs gate
+    _ <- mapM getSt args
+    mapM_ (\v -> modify $ exists v) args
   
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
@@ -188,6 +180,29 @@ phaseFold vars inputs gates =
           concatMap f (zip gates [2..])
   in
     (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
+
+{- X rotation merging -}
+
+swapXZ :: [Primitive] -> [Primitive]
+swapXZ = simplifyPrimitive . (swapGate =<<)
+  where swapGate gate = case gate of
+          H x           -> [H x]
+          X x           -> [H x, X x, H x]
+          Y x           -> [Y x]
+          Z x           -> [H x, Z x, H x]
+          CNOT x y      -> [CNOT y x]
+          S x           -> [H x, S x, H x]
+          Sinv x        -> [H x, Sinv x, H x]
+          T x           -> [H x, T x, H x]
+          Tinv x        -> [H x, Tinv x, H x]
+          Swap x y      -> [Swap x y]
+          Rz theta x    -> [H x, Rz theta x, H x]
+          Rx theta x    -> [H x, Rx theta x, H x]
+          Ry theta x    -> [Ry theta x]
+          Uninterp s xs -> [Uninterp s xs]
+
+stateFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+stateFold vars inputs = swapXZ . phaseFold vars inputs . swapXZ
 
 {-
 -- Phase dependence analysis

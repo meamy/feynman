@@ -42,6 +42,7 @@ data Pass = Triv
           | CT
           | Simplify
           | Phasefold
+          | Statefold
           | CNOTMin
           | TPar
 
@@ -64,6 +65,7 @@ dotQCPass pass = case pass of
   CT        -> expandAll
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
+  Statefold -> optimizeDotQC stateFold
   CNOTMin   -> optimizeDotQC minCNOT
   TPar      -> optimizeDotQC tpar
 
@@ -121,6 +123,7 @@ qasmPass pass = case pass of
   CT        -> inline
   Simplify  -> id
   Phasefold -> applyOpt phaseFold
+  Statefold -> applyOpt stateFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
 
@@ -189,6 +192,7 @@ parseArgs passes verify (x:xs) = case x of
   "-toCliffordT" -> parseArgs (CT:passes) verify xs
   "-simplify"    -> parseArgs (Simplify:passes) verify xs
   "-phasefold"   -> parseArgs (Phasefold:Simplify:passes) verify xs
+  "-statefold"   -> parseArgs (Statefold:Simplify:passes) verify xs
   "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
   "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
   "-O2"          -> parseArgs (Simplify:Phasefold:Simplify:passes) verify xs
