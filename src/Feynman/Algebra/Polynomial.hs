@@ -60,6 +60,9 @@ reduceMonomial = Set.delete
 firstVar :: Monomial -> String
 firstVar = Set.elemAt 0
 
+emptyMonomial :: Monomial -> Bool
+emptyMonomial = (== Set.empty)
+
 {- Multi-linear polynomials -}
 data Multilinear a = Multilinear {
   terms :: !(Map Monomial a)

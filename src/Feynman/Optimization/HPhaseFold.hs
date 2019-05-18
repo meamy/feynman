@@ -3,6 +3,8 @@ module Feynman.Optimization.HPhaseFold where
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
+import Feynman.Algebra.Polynomial hiding (zero, one, terms)
+import qualified Feynman.Algebra.Polynomial as P
 import Feynman.Synthesis.Phase
 
 import Data.List hiding (transpose)
@@ -17,6 +19,8 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 
 import Data.Bits
+
+import Debug.Trace
 
 {-- Hadamard-conjugated Phase folding -}
 {- Main idea here is to enable some propagation of
@@ -77,22 +81,47 @@ addTerm l (bv, p) i st =
           Just (s, x) -> Just (Set.insert (l, p) s, x + i)
           Nothing     -> Just (Set.singleton (l, p), i)
 
+varsOfBV :: F2Vec -> [Int]
+varsOfBV bv = filter (testBit bv) [0..(width bv) - 1]
+
+bvOfMultilinear :: Multilinear Bool -> Maybe (F2Vec, Bool)
+bvOfMultilinear p
+  | degree p > 1 = Nothing
+  | otherwise    = Just $ unsafeConvert p
+    where unsafeConvert = (foldl' f (bitI 0 0, False)). Map.keys . P.terms
+          f (bv, const) m
+            | emptyMonomial m = (bv, const `xor` True)
+            | otherwise       =
+              let v = read $ firstVar m in
+                (bv `xor` (bitI (v+1) v), const)
+
+multilinearOfBV :: (F2Vec, Bool) -> Multilinear Bool
+multilinearOfBV bv = (foldl' (+) const) . map (ofVar . show) . varsOfBV $ fst bv
+  where const = if snd bv then P.one else P.zero
+
+multilinearPP :: AnalysisState -> Multilinear Angle
+multilinearPP st = Map.foldlWithKey f (Map.foldlWithKey g P.zero $ terms st) $ subs st
+  where g poly bv (_, a) = poly + distribute a (multilinearOfBV (bv, False))
+        f poly v bv      = poly + (ofVar $ show v)*(distribute (Discrete (dyadic 1 1)) $ multilinearOfBV bv)
+
+injectZ2 :: Periodic a => a -> Maybe Bool
+injectZ2 a = case order a of
+  0 -> Just False
+  2 -> Just True
+  _ -> Nothing
+
+toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
+toBooleanPoly = convertMaybe injectZ2 . simplify
+
 interferenceOn :: ID -> AnalysisState -> Maybe (F2Vec, Bool)
 interferenceOn v st =
-  let varsOfBV bv = filter (testBit bv) [0..(dim st) - 1]
-      checkPoly v =
-        let g (v, num) (bv, (_, a)) = case (v `elem` (varsOfBV bv), order a == 2) of
-              (False, _)    -> Just (v, num)
-              (True, True)  -> Just (v, num+1)
-              (True, False) -> Nothing
-        in
-          foldM g (v, 0) $ Map.toList (terms st)
-      f (v, num)  = (\(bv, parity) -> (bv, parity `xor` (1 == num `mod` 2))) ((subs st)!v)
+  let checkPoly v = return (factorOut (show v) poly) >>= toBooleanPoly >>= bvOfMultilinear
+      poly        = multilinearPP st
       vars        = varsOfBV $ fst ((qvals st)!v)
       outVars     = map varsOfBV . fst . unzip . Map.elems . Map.delete v $ qvals st
       candidates  = filter (\v -> Map.member v (subs st)) $ foldl' (\\) vars outVars
    in
-      fmap f . msum $ map checkPoly candidates
+      msum $ map checkPoly candidates
   
 {-- The main analysis -}
 applyGate :: (Primitive, Loc) -> Analysis ()

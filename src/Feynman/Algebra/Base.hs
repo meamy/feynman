@@ -41,7 +41,7 @@ instance Num Dyadic where
   negate (Dy (a,n))       = canonicalize $ Dy (-a,n)
   abs (Dy (a,n))          = Dy (a,n)
   signum (Dy (a,n))       = Dy (0,0)
-  fromInteger i           = Dy (0,0)
+  fromInteger i           = Dy (fromInteger i,0)
 
 instance Abelian Dyadic where
   zero             = Dy (0,0)
