@@ -75,9 +75,10 @@ equivalenceCheckDotQC qc qc' =
       result        = validate (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
   in
     case (inputs qc == inputs qc', result) of
-      (False, _)    -> Left $ "Failed to verify: different inputs"
-      (_, Just sop) -> Left $ "Failed to verify: " ++ show sop
-      _             -> Right qc'
+      (False, _)           -> Left $ "Circuits not equivalent (different inputs)"
+      (_, NotIdentity str) -> Left $ "Circuits not equivalent (" ++ str ++ ")"
+      (_, Unknown sop)     -> Left $ "Failed to verify: \n  " ++ show sop
+      _                    -> Right qc'
 
 runDotQC :: [Pass] -> Bool -> String -> ByteString -> IO ()
 runDotQC passes verify fname src = do

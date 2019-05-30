@@ -19,8 +19,6 @@ import Control.DeepSeq
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
-data Result = Eq | NEq
-
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
 equivalenceCheck src src' = do
@@ -31,12 +29,10 @@ equivalenceCheck src src' = do
           let gates  = toCliffordT . toGatelist $ qc
               gates' = toCliffordT . toGatelist $ qc'
               ins    = Set.toList $ inputs qc
-              result = validate (union (qubits qc) (qubits qc')) ins gates gates'
           in
-            case (inputs qc == inputs qc', result) of
-              (False, _)  -> NEq
-              (_, Just _) -> NEq
-              _           -> Eq
+            if inputs qc /= inputs qc'
+            then NotIdentity "Inputs don't match"
+            else validate (union (qubits qc) (qubits qc')) ins gates gates'
 
 {- Main program -}
 
@@ -50,6 +46,20 @@ printHelp = mapM_ putStrLn lines
           ""
           ]
 
+printResult result time = case result of
+  Identity pf -> do
+    putStrLn $ "Equal (took " ++ formatFloatN time 3 ++ "ms)"
+    putStrLn $ "Proof:"
+    mapM_ (\rl -> putStrLn $ "  " ++  show rl) pf
+  NotIdentity ce -> do
+    putStrLn $ "Not equal (took " ++ formatFloatN time 3 ++ "ms)"
+    putStrLn $ "Reason:"
+    putStrLn $ "  " ++ ce
+  Unknown sop -> do
+    putStrLn $ "Inconclusive (took " ++ formatFloatN time 3 ++ "ms)"
+    putStrLn $ "Residual path sum:"
+    putStrLn $ "  " ++ show sop
+
 run :: [String] -> IO ()
 run (x:y:[])
   | (drop (length x - 3) x == ".qc") && (drop (length y - 3) y == ".qc") = do
@@ -60,9 +70,8 @@ run (x:y:[])
       TOD ends endp     <- result `seq` getClockTime
       let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
       case result of
-        Left l      -> putStrLn $ show l
-        Right (Eq)  -> putStrLn $ "Equal (" ++ formatFloatN time 3 ++ "ms)"
-        Right (NEq) -> putStrLn $ "Not equal (" ++ formatFloatN time 3 ++ "ms)"
+        Left l         -> putStrLn $ show l
+        Right (result) -> printResult result time
 run _ = do
       putStrLn "Invalid argument(s)"
       printHelp
