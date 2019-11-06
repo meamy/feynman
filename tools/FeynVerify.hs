@@ -23,7 +23,7 @@ data Result = Eq | NEq
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
-equivalenceCheck src src' = do
+equivalenceCheck options src src' = do
   qc  <- parseDotQC src
   qc' <- parseDotQC src'
   return $ ver qc qc'
@@ -31,7 +31,10 @@ equivalenceCheck src src' = do
           let gates  = toCliffordT . toGatelist $ qc
               gates' = toCliffordT . toGatelist $ qc'
               ins    = Set.toList $ inputs qc
-              result = validate (union (qubits qc) (qubits qc')) ins gates gates'
+              result =
+                if Set.member "IgnoreGarbage" options
+                then validateOnInputs (Set.member "IgnoreGlobal" options) (union (qubits qc) (qubits qc')) ins gates gates'
+                else validateIsometry (Set.member "IgnoreGlobal" options) (union (qubits qc) (qubits qc')) ins gates gates'
           in
             case (inputs qc == inputs qc', result) of
               (False, _)  -> NEq
@@ -46,26 +49,33 @@ printHelp = mapM_ putStrLn lines
           "Feynver -- quantum circuit equivalence checker",
           "Written by Matthew Amy",
           "",
-          "Usage: feynver <circuit1>.qc <circuit2>.qc",
+          "Usage: feynver [options] <circuit1>.qc <circuit2>.qc",
+          "",
+          "Options:",
+          "  -ignore-global-phase\tVerify equivalence up to a global phase",
+          "  -ignore-ancillas\tVerify equivalence up to (separable) garbage in the ancilla qubits",
           ""
           ]
 
-run :: [String] -> IO ()
-run (x:y:[])
+run :: Set String -> [String] -> IO ()
+run options (x:y:[])
   | (drop (length x - 3) x == ".qc") && (drop (length y - 3) y == ".qc") = do
       xsrc <- B.readFile x
       ysrc <- B.readFile y
       TOD starts startp <- getClockTime
-      let result        = equivalenceCheck xsrc ysrc
+      let result        = equivalenceCheck options xsrc ysrc
       TOD ends endp     <- result `seq` getClockTime
       let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
       case result of
         Left l      -> putStrLn $ show l
         Right (Eq)  -> putStrLn $ "Equal (" ++ formatFloatN time 3 ++ "ms)"
         Right (NEq) -> putStrLn $ "Not equal (" ++ formatFloatN time 3 ++ "ms)"
-run _ = do
+run options (x:xs)
+  | x == "-ignore-global-phase" = run (Set.insert "IgnoreGlobal" options) xs
+  | x == "-ignore-ancillas"     = run (Set.insert "IgnoreGarbage" options) xs
+run _ _ = do
       putStrLn "Invalid argument(s)"
       printHelp
 
 main :: IO ()
-main = getArgs >>= run
+main = getArgs >>= run Set.empty

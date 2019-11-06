@@ -505,23 +505,44 @@ cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
 verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
 verifySpec spec vars inputs gates =
   let sop     = circuitSOPWithHints vars (dagger gates)
-      reduced = reduce $ (spec <> sop)
+      reduced = reduce $ spec <> sop
   in
     case reduced == identityTrans (inVals spec) of
       True  -> Nothing
       False -> Just reduced
 
-validate :: [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
-validate vars inputs c1 c2 =
+validateIsometry :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validateIsometry global vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
       ket     = blank (vars \\ inputs)
       bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
-      reduced = reduce $ restrictGeneral (ket <> sop) bra
+      reduced =
+        let sop' = reduce $ restrictGeneral (ket <> sop) bra in
+          if global
+          then sop' { poly = dropConstant $ poly sop' }
+          else sop'
   in
     case (axiomKill reduced, all (== (fromInteger 1)) . Map.elems $ amplitudes reduced) of
       (Just _, _) -> Just reduced
       (_, False)  -> Just reduced
       (_, _)      -> Nothing
+
+validateOnInputs :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validateOnInputs global vars inputs c1 c2 =
+  let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
+      ket     = blank (vars \\ inputs)
+      reduced =
+        let sop' = reduce $ ket <> sop in
+          if global
+          then sop' { poly = dropConstant $ poly sop' }
+          else sop'
+      checkIt sop =
+        let out = outVals sop in
+          all (\v -> not (v `appearsIn` (poly sop)) && out!v == ofVar v) inputs
+  in
+    if checkIt reduced
+    then Nothing
+    else Just reduced
 
 {- Tests -}
 
@@ -900,7 +921,7 @@ verifyClifford () = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
                                                           ("c9", c9), ("c10", c10), ("c11", c11)]
         threequbit = mapSnds ($ "z") . mapSnds ($ "y") . mapSnds ($ "x") $ [("c12", c12), ("c13", c13),
                                                                             ("c14", c14), ("c15", c15)]
-        f (name, c) = case validate ["x", "y", "z"] ["x", "y", "z"] c [] of
+        f (name, c) = case validateIsometry False ["x", "y", "z"] ["x", "y", "z"] c [] of
           Nothing -> putStrLn $ "Successfully verified relation " ++ name
           _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
@@ -940,7 +961,7 @@ verifyCliffordT () = sequence_ . map f $ onequbit ++ twoqubit
                                       ("t6", t6), ("t7", t7), ("t8", t8), ("t9", t9)]
         twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("t10", t10), ("t11", t11), ("t12", t12),
                                                           ("t13", t13), ("t14", t14)]
-        f (name, c) = case validate ["x", "y"] ["x", "y"] c [] of
+        f (name, c) = case validateIsometry False ["x", "y"] ["x", "y"] c [] of
           Nothing -> putStrLn $ "Successfully verified relation " ++ name
           _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
@@ -967,3 +988,10 @@ printVerStats circ =
       Swap x y -> (Set.fromList [x,y], 0, 0, 0)
     g (uids1, m1, c1, t1) (uids2, m2, c2, t2) =
       (Set.union uids1 uids2, m1+m2, c1+c2, t1+t2)
+
+-- Phase specifications
+phaseSpec :: (Eq a, Num a) => [ID] -> a -> SOP a
+phaseSpec xs v = SOP 0 inv [] (ofTerm v xs) outv
+  where
+    inv  = Map.fromList $ zip xs (repeat True)
+    outv = Map.fromList $ [(q, ofVar q) | q <- xs]

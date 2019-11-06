@@ -72,7 +72,7 @@ equivalenceCheckDotQC qc qc' =
   let gatelist      = toCliffordT . toGatelist $ qc
       gatelist'     = toCliffordT . toGatelist $ qc'
       primaryInputs = Set.toList $ inputs qc
-      result        = validate (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
+      result        = validateIsometry False (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
   in
     case (inputs qc == inputs qc', result) of
       (False, _)    -> Left $ "Failed to verify: different inputs"
