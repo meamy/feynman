@@ -31,8 +31,7 @@ import Debug.Trace
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-{- Invariants:
-   sort . Map.elems == Map.elems -}
+{- path sums with polynomials over `a` -}
 data SOP a = SOP {
   sde      :: Int,
   inVals   :: Map ID Bool,
@@ -55,7 +54,7 @@ instance (Show a, Eq a, Num a) => Show (SOP a) where
                  False -> "e^i*pi*" ++ showPoly (poly sop)
           os = concatMap showPoly $ Map.elems $ outVals sop
           showPoly p
-            | isMono p  = show p
+            | isMono (simplify p)  = show p
             | otherwise = "(" ++ show p ++ ")"
 
 pathVar :: Int -> ID
@@ -307,6 +306,8 @@ scaledExp i (Z8 x)
 isClosed :: (Eq a, Num a) => SOP a -> Bool
 isClosed = (< 1) . degree . poly
 
+{- Folds over paths -}
+
 foldPaths :: (Eq a, Num a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
 foldPaths f g sop = case pathVars sop of
       []   -> f sop
@@ -331,7 +332,7 @@ foldReduce f g sop = case pathVars sop of
                          poly = simplify . subst (pathVar x) one $ poly sop,
                          outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
         in
-          g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
+          g (foldReduce f g . snd . reduce $ sop0) (foldReduce f g . snd . reduce $ sop1)
 
 foldReduceFull :: (Show a, Eq a, Fin a) => (SOP a -> b) -> (b -> b -> b) -> SOP a -> b
 foldReduceFull f g sop = case (pathVars sop, inputVars) of
@@ -342,7 +343,7 @@ foldReduceFull f g sop = case (pathVars sop, inputVars) of
             sop1 = sop { poly = simplify . subst x one $ poly sop,
                          outVals = Map.map (simplify . subst x one) $ outVals sop }
         in
-          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
+          g (foldReduceFull f g . snd . reduce $ sop0) (foldReduceFull f g . snd . reduce $ sop1)
       (x:xs, _) ->
         let sop0 = sop { pathVars = xs,
                          poly = simplify . subst (pathVar x) zero $ poly sop,
@@ -351,7 +352,7 @@ foldReduceFull f g sop = case (pathVars sop, inputVars) of
                          poly = simplify . subst (pathVar x) one $ poly sop,
                          outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
         in
-          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
+          g (foldReduceFull f g . snd . reduce $ sop0) (foldReduceFull f g . snd . reduce $ sop1)
   where inputVars = foldr (\poly -> union (vars poly)) (vars $ poly sop) (Map.elems $ outVals sop)
 
 expandPaths :: (Eq a, Num a) => SOP a -> [SOP a]
@@ -370,7 +371,20 @@ amplitudes sop = foldReduceFull f g sop
   where f sop = Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
         g = Map.unionWith (+)
 
-{- Verification -}
+{- Reduction -}
+
+data Rule =
+    Elim String
+  | Omega String (Multilinear Bool)
+  | HH String String (Multilinear Bool)
+  | Case String String (Multilinear Bool) String (Multilinear Bool)
+
+instance Show Rule where
+  show (Elim x)         = "[Elim] " ++ x
+  show (Omega x p)      = "[Omega] " ++ x ++ ", remainder: " ++ show p
+  show (HH x y p)       = "[HH] " ++ x ++ ", " ++ y ++ " <- "  ++ show p
+  show (Case x y p z q) = "[Case] " ++ x ++ ", " ++ y ++ " <- " ++ show p
+                                         ++ ", " ++ z ++ " <- " ++ show q
 
 class Num a => Fin a where
   order :: a -> Int
@@ -432,119 +446,139 @@ axiomUnify sop = msum . (map f) $ internal
           (_, isub) <- findSoln i (subst x one p2)
           return (x, i, isub, j, jsub)
 
-axiomKill :: (Eq a, Fin a) => SOP a -> Maybe ()
+axiomKill :: (Eq a, Fin a) => SOP a -> Maybe Int
 axiomKill sop = msum . (map f) $ internalPaths sop
   where f i      = do
           p'        <- return $ factorOut (pathVar i) $ poly sop
           p''       <- toBooleanPoly p'
           if intersect (vars p'') (map pathVar $ pathVars sop) == []
-            then Just ()
+            then Just i
             else Nothing
 
--- Main axiom reduction function
-applyAxiom :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
-applyAxiom sop = case sop of
-  (axiomSimplify -> Just rem) -> Right $
-    sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [rem] }
-  (axiomHHStrict -> Just (rem, sub, eq)) -> Right $
-    sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [rem, sub],
-          poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
-          outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
-  (axiomSH3Strict -> Just (rem, eq)) -> Right $
-    sop { sde      = sde sop - 1,
-          pathVars = pathVars sop \\ [rem],
-          poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop)
-        }
-  (axiomUnify     -> Just (x, i, isub, j, jsub)) -> Right $
-    sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [i, j],
-          poly     =
-            let xp = ofVar x
-                pi = subst (pathVar j) jsub . subst x zero . removeVar (pathVar i) $ poly sop
-                pj = subst (pathVar i) isub . subst x one  . removeVar (pathVar j) $ poly sop
-            in
-              simplify $ xp*pj + pi - xp*pi
-        }
-  _ -> Left sop
+-- Single application of an axiom
+applyRule :: (Eq a, Fin a) => SOP a -> Maybe (Rule, SOP a)
+applyRule sop = case sop of
+  (axiomSimplify -> Just rem) ->
+    let sop' = sop { sde      = sde sop - 2,
+                     pathVars = pathVars sop \\ [rem] }
+    in
+      Just (Elim $ pathVar rem, sop')
+  (axiomHHStrict -> Just (rem, sub, eq)) ->
+    let sop' = sop { sde      = sde sop - 2,
+                     pathVars = pathVars sop \\ [rem, sub],
+                     poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
+                     outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
+    in
+      Just (HH (pathVar rem) (pathVar sub) eq, sop')
+  (axiomSH3Strict -> Just (rem, eq)) ->
+    let sop' = sop { sde      = sde sop - 1,
+                     pathVars = pathVars sop \\ [rem],
+                     poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop) }
+    in
+      Just (Omega (pathVar rem) eq, sop')
+  (axiomUnify     -> Just (x, i, isub, j, jsub)) ->
+    let sop' = sop { sde      = sde sop - 2,
+                     pathVars = pathVars sop \\ [i, j],
+                     poly     =
+                       let xp = ofVar x
+                           pi = subst (pathVar j) jsub . subst x zero . removeVar (pathVar i) $ poly sop
+                           pj = subst (pathVar i) isub . subst x one  . removeVar (pathVar j) $ poly sop
+                       in
+                         simplify $ xp*pj + pi - xp*pi
+                   }
+    in
+      Just (Case x (pathVar i) isub (pathVar j) jsub, sop')
+  _ -> Nothing
 
-applyAxiomOutputRestricted :: (Eq a, Fin a) => SOP a -> Either (SOP a) (SOP a)
-applyAxiomOutputRestricted sop = case sop of
-  (axiomSimplify -> Just rem) -> Right $
-    sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [rem] }
-  (axiomHHOutputRestricted -> Just (rem, sub, eq)) -> Right $
-    sop { sde      = sde sop - 2,
-          pathVars = pathVars sop \\ [rem, sub],
-          poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
-          outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
-  (axiomSH3Strict -> Just (rem, eq)) -> Right $
-    sop { sde      = sde sop - 1,
-          pathVars = pathVars sop \\ [rem],
-          poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop)
-        }
-  _ -> Left sop
+-- Only performs linear substitutions. Useful for simplifying without increasing complexity
+applyRuleOutputRestricted :: (Eq a, Fin a) => SOP a -> Maybe (Rule, SOP a)
+applyRuleOutputRestricted sop = case sop of
+  (axiomSimplify -> Just rem) ->
+    let sop' = sop { sde      = sde sop - 2,
+                     pathVars = pathVars sop \\ [rem] }
+    in
+      Just (Elim $ pathVar rem, sop')
+  (axiomHHOutputRestricted -> Just (rem, sub, eq)) ->
+    let sop' = sop { sde      = sde sop - 2,
+                     pathVars = pathVars sop \\ [rem, sub],
+                     poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
+                     outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
+    in
+      Just (HH (pathVar rem) (pathVar sub) eq, sop')
+  (axiomSH3Strict -> Just (rem, eq)) ->
+    let sop' = sop { sde      = sde sop - 1,
+                     pathVars = pathVars sop \\ [rem],
+                     poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop) }
+    in
+      Just (Omega (pathVar rem) eq, sop')
+  _ -> Nothing
 
--- Strategies
-reduce :: (Eq a, Fin a) => SOP a -> SOP a
-reduce (flip (foldM (\sop _ -> applyAxiom sop)) [0..] -> Left sop) = sop
+{- Strategies -}
 
-evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> SOP a
+-- Applies reductions until a fixpoint is reached
+reduce :: (Eq a, Fin a) => SOP a -> ([Rule], SOP a)
+reduce sop = go ([], sop)
+  where go (applied, sop) = case applyRule sop of
+          Nothing           -> (reverse applied, sop)
+          Just (rule, sop') -> go (rule:applied, sop')
+
+-- Fully reduces a path sum for a given input and output state
+evaluate :: (Eq a, Fin a) => SOP a -> Map ID Bool -> Map ID Bool -> ([Rule], SOP a)
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 
-{-
-cliffordTCrush :: SOP Z8 -> Map ID Bool -> Map ID Bool -> DOmega
-cliffordTCrush sop ket bra = amplitudeUnsafe (restrict sop' bra)
-  where fromLeft (Left x) = x
-        sop' = fromLeft $ foldM (\sop _ -> applyAxiomOutputRestricted sop) (ofKet ket <> sop) [0..]
--}
+{- Verification -}
 
--- Main verification functions
+type CounterEx = String -- Temporary
 
-verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Z8)
+data VerificationResult a =
+    Identity [Rule]
+  | NotIdentity CounterEx
+  | Unknown (SOP a)
+
+-- Verifies directly against a path sum
+verifySpec :: SOP Z8 -> [ID] -> [ID] -> [Primitive] -> VerificationResult Z8
 verifySpec spec vars inputs gates =
-  let sop     = circuitSOPWithHints vars (dagger gates)
-      reduced = reduce $ spec <> sop
+  let sop        = circuitSOPWithHints vars (dagger gates)
+      (pf, sop') = reduce $ (spec <> sop)
   in
-    case reduced == identityTrans (inVals spec) of
-      True  -> Nothing
-      False -> Just reduced
+    case sop' == identityTrans (inVals spec) of
+      True  -> Identity pf
+      False -> Unknown sop'
 
-validateIsometry :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validateIsometry :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> VerificationResult Z8
 validateIsometry global vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
       ket     = blank (vars \\ inputs)
       bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
-      reduced =
-        let sop' = reduce $ restrictGeneral (ket <> sop) bra in
+      (pf, sop') =
+        let (pf, sop') = reduce $ restrictGeneral (ket <> sop) bra in
           if global
-          then sop' { poly = dropConstant $ poly sop' }
-          else sop'
+          then (pf, sop' { poly = dropConstant $ poly sop' })
+          else (pf, sop')
   in
-    case (axiomKill reduced, all (== (fromInteger 1)) . Map.elems $ amplitudes reduced) of
-      (Just _, _) -> Just reduced
-      (_, False)  -> Just reduced
-      (_, _)      -> Nothing
+    case (sop' == identityTrans (inVals sop), axiomKill sop') of
+      (True, _)       -> Identity pf
+      (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i
+      (False, _)      -> Unknown sop'
 
-validateOnInputs :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Maybe (SOP Z8)
+validateOnInputs :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> VerificationResult Z8
 validateOnInputs global vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
       ket     = blank (vars \\ inputs)
-      reduced =
-        let sop' = reduce $ ket <> sop in
+      (pf, sop') =
+        let (pf, sop') = reduce $ ket <> sop in
           if global
-          then sop' { poly = dropConstant $ poly sop' }
-          else sop'
+          then (pf, sop' { poly = dropConstant $ poly sop' })
+          else (pf, sop')
       checkIt sop =
         let out = outVals sop in
           all (\v -> not (v `appearsIn` (poly sop)) && out!v == ofVar v) inputs
   in
-    if checkIt reduced
-    then Nothing
-    else Just reduced
+    if checkIt sop'
+    then Identity pf
+    else Unknown sop'
 
-{- Tests -}
+{- Tests & experiments -}
 
 tof = [ H "z",
         T "x", T "y", T "z", 
@@ -621,8 +655,8 @@ verifyToffoliN n () = do
   putStrLn $ "Verifying Toffoli, N=" ++ show n
   printVerStats (toffoliN inputs)
   case verifySpec (toffoliNSpec inputs) vars inputs (toffoliN inputs) of
-    Nothing -> putStrLn $ "  Success!"
-    Just _  -> putStrLn $ "  ERROR: failed to verify"
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
   where inputs = take n $ map (\i -> [i]) ['a'..]
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
@@ -647,8 +681,8 @@ verifyMaslovN n () = do
   putStrLn $ "Verifying Maslov, N=" ++ show n
   printVerStats (maslovToffoli inputs)
   case verifySpec (toffoliNSpec inputs) vars inputs (maslovToffoli inputs) of
-    Nothing -> putStrLn $ "  Success!"
-    Just _  -> putStrLn $ "  ERROR: failed to verify"
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
   where inputs = take n $ map (\i -> [i]) ['a'..]
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
@@ -688,8 +722,8 @@ verifyOOPAdder n () = do
   putStrLn $ "Verifying Adder, N=" ++ show n
   printVerStats (carryRipple n a b c)
   case verifySpec (adderOOPSpec n a b c) (a ++ b ++ c ++ anc ++ carry) (a ++ b ++ c) (carryRipple n a b c) of
-    Nothing -> putStrLn $ "  Success!"
-    Just _  -> putStrLn $ "  ERROR: failed to verify"
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
   where a = ["a" ++ show i | i <- [0..n-1]]
         b = ["b" ++ show i | i <- [0..n-1]]
         c = ["c" ++ show i | i <- [0..n-1]]
@@ -778,8 +812,8 @@ verifyHiddenShift n a () = do
   (circ, string) <- generate $ hiddenShift n a
   printVerStats (circ)
   case verifySpec (hiddenShiftSpec n string) vars [] circ of
-    Nothing -> putStrLn $ "  Success!"
-    Just _  -> putStrLn $ "  ERROR: failed to verify"
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]]
 
 verifyHiddenShiftQuantum n a () = do
@@ -787,8 +821,8 @@ verifyHiddenShiftQuantum n a () = do
   circ <- generate $ hiddenShiftQuantum n a
   printVerStats (circ)
   case verifySpec (hiddenShiftQuantumSpec n) vars inputs circ of
-    Nothing -> putStrLn $ "  Success!"
-    Just _  -> putStrLn $ "  ERROR: failed to verify"
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
   where vars   = ["x" ++ show i | i <- [0..n-1]] ++ inputs
         inputs = ["y" ++ show i | i <- [0..n-1]]
 
@@ -922,8 +956,8 @@ verifyClifford () = sequence_ . map f $ onequbit ++ twoqubit ++ threequbit
         threequbit = mapSnds ($ "z") . mapSnds ($ "y") . mapSnds ($ "x") $ [("c12", c12), ("c13", c13),
                                                                             ("c14", c14), ("c15", c15)]
         f (name, c) = case validateIsometry False ["x", "y", "z"] ["x", "y", "z"] c [] of
-          Nothing -> putStrLn $ "Successfully verified relation " ++ name
-          _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
+          Identity _ -> putStrLn $ "Successfully verified relation " ++ name
+          _          -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
         mapSnd f (a, b) = (a, f b)
 
@@ -962,8 +996,8 @@ verifyCliffordT () = sequence_ . map f $ onequbit ++ twoqubit
         twoqubit   = mapSnds ($ "y") . mapSnds ($ "x") $ [("t10", t10), ("t11", t11), ("t12", t12),
                                                           ("t13", t13), ("t14", t14)]
         f (name, c) = case validateIsometry False ["x", "y"] ["x", "y"] c [] of
-          Nothing -> putStrLn $ "Successfully verified relation " ++ name
-          _       -> putStrLn $ "ERROR: Failed to verify relation " ++ name
+          Identity _ -> putStrLn $ "Successfully verified relation " ++ name
+          _          -> putStrLn $ "ERROR: Failed to verify relation " ++ name
         mapSnds f xs    = map (mapSnd f) xs
         mapSnd f (a, b) = (a, f b)
 
