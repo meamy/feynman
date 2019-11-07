@@ -28,11 +28,15 @@ equivalenceCheck options src src' = do
   where ver qc qc' =
           let gates  = toCliffordT . toGatelist $ qc
               gates' = toCliffordT . toGatelist $ qc'
+              vars   = union (qubits qc) (qubits qc')
               ins    = Set.toList $ inputs qc
+              ignore = Set.member "IgnoreGlobal" options
               result =
                 if Set.member "IgnoreGarbage" options
-                then validateOnInputs (Set.member "IgnoreGlobal" options) (union (qubits qc) (qubits qc')) ins gates gates'
-                else validateIsometry (Set.member "IgnoreGlobal" options) (union (qubits qc) (qubits qc')) ins gates gates'
+                then validateOnInputs ignore vars ins gates gates'
+                else if Set.member "Postselect" options
+                  then validateToScale ignore vars ins gates gates'
+                  else validateIsometry ignore vars ins gates gates'
           in
             if inputs qc /= inputs qc'
             then NotIdentity "Inputs don't match"
@@ -51,6 +55,7 @@ printHelp = mapM_ putStrLn lines
           "Options:",
           "  -ignore-global-phase\tVerify equivalence up to a global phase",
           "  -ignore-ancillas\tVerify equivalence up to (separable) garbage in the ancilla qubits",
+          "  -postselect-ancillas\tVerify equivalence, post-selecting on the ancillas being in the 0 state",
           ""
           ]
 
@@ -83,6 +88,7 @@ run options (x:y:[])
 run options (x:xs)
   | x == "-ignore-global-phase" = run (Set.insert "IgnoreGlobal" options) xs
   | x == "-ignore-ancillas"     = run (Set.insert "IgnoreGarbage" options) xs
+  | x == "-postselect-ancillas" = run (Set.insert "Postselect" options) xs
 run _ _ = do
       putStrLn "Invalid argument(s)"
       printHelp

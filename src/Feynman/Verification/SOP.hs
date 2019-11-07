@@ -558,7 +558,26 @@ validateIsometry global vars inputs c1 c2 =
   in
     case (sop' == identityTrans (inVals sop), axiomKill sop') of
       (True, _)       -> Identity pf
-      (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i
+      (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i ++ " (" ++ show sop' ++ ")"
+      (False, _)      -> Unknown sop'
+
+validateToScale :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> VerificationResult Z8
+validateToScale global vars inputs c1 c2 =
+  let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
+      ket     = blank (vars \\ inputs)
+      bra     = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals (ket <> sop)
+      (pf, sop') =
+        let (pf, sop') = reduce $ restrictGeneral (ket <> sop) bra in
+          if global
+          then (pf, sop' { poly = dropConstant $ poly sop' })
+          else (pf, sop')
+      checkIt sop =
+        let out = outVals sop in
+          all (\v -> not (v `appearsIn` (poly sop)) && out!v == ofVar v) inputs
+  in
+    case (checkIt sop', axiomKill sop') of
+      (True, _)       -> Identity pf
+      (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i ++ " (" ++ show sop' ++ ")"
       (False, _)      -> Unknown sop'
 
 validateOnInputs :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> VerificationResult Z8
