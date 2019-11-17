@@ -100,6 +100,16 @@ The benchmark suite also includes example openQASM circuits, taken from the
 openQASM github
 [repository](https://github.com/Qiskit/openqasm/tree/master/examples).
 
+# Citing
+
+Feynman is a collection of algorithms and techniques spanning a number of papers. If
+you wish to cite in an academic paper, the relevant papers are listed below.
+
+* M. Amy, [_Formal methods in Quantum Circuit Design_](https://uwspace.uwaterloo.ca/handle/10012/14480). PhD thesis, 2019.
+* M. Amy, [_Towards Large-scale Functional Verification of Universal Quantum Circuits_](https://arxiv.org/abs/1805.06908v2). In Proc. Quantum Physics & Logic (QPL), 2018.
+* M. Amy, P. Azimzadeh, M. Mosca, [_On the CNOT complexity of CNOT–phase circuits_](https://iopscience.iop.org/article/10.1088/2058-9565/aad8ca/meta). Quantum Science & Technology 4(1). 2018.
+* M. Amy, D. Maslov, M. Mosca, [_Polynomial-Time T-Depth Optimization of Clifford+T Circuits Via Matroid Partitioning_](https://ieeexplore.ieee.org/abstract/document/6899791). IEEE Trans. Computer-Aided Design of Integrated Circuits and systems 33(10). 2014.
+
 # Authors
 
 Matthew Amy
