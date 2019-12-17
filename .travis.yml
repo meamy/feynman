@@ -1,5 +1,7 @@
 language: haskell
 
+cabal: "1.24"
+
 ghc:
   - "8.0.2"
   - "8.0"
