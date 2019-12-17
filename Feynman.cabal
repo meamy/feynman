@@ -69,6 +69,7 @@ executable feynopt
                        FlexibleContexts,
                        FlexibleInstances
   hs-source-dirs:      tools
+  other-modules:       Benchmarks
   build-depends:       Feynman,
                        base, 
                        containers >= 0.5.8.1,
