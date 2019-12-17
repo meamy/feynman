@@ -635,11 +635,6 @@ qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
 fromDotQC :: DotQC -> QASM
 fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts
-  where qMap     = Map.fromList $ zip (DotQC.qubits dotqc) [0..]
-        stmts    = gateDecs ++ qDecs ++ gates
+  where qMap  = Map.fromList $ zip (DotQC.qubits dotqc) [0..]
         f (DotQC.Decl name params body) = DecStmt $ GateDec name [] params (qcGatesToQASM qMap body)
-        gateDecs = map f . filter ((/= "main") . DotQC.name) $ (DotQC.decls dotqc)
-        qDecs    = [DecStmt $ VarDec "qubits" $ Qreg (length $ DotQC.qubits dotqc)]
-        gates    = case find ((== "main") . DotQC.name) (DotQC.decls dotqc) of
-          Nothing  -> []
-          Just dec -> map (QStmt . GateExp) $ qcGatesToQASM qMap (DotQC.body dec)
+        stmts = map f $ DotQC.decls dotqc
