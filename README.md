@@ -19,36 +19,43 @@ library can be imported and used directly in other Haskell projects.
 The Feynman project requires GHC >=8.0.2 and Cabal >=1.24.0. Older versions of
 GHC may work but have not been tested.
 
-Feynman depends on a number of open-source packages hosted on Hackage. To
-compile the dependencies locally execute the commands
+## Installation
 
+The Feynman library and binary executables for optimization (`feynopt`) and
+verification (`feynver`) can be installed globally with
 ```
-cabal sandbox init
-cabal install --dependencies-only
+cabal install
 ```
-
-If global packages are installed or otherwise desired (not recommended!), the
-user may omit the `cabal sandbox init` command.
-
-## Building from source
-
-Once all dependencies have been met, Feynman can be built from the top-level
-directory with the command
-
+or via the slightly more fine-grain series of commands
 ```
+cabal configure
 cabal build
+cabal install
 ```
 
-This will build the Feynman library, as well as binary tools for optimizing
-(`feynopt`) and equivalence checking circuits (`feynver`), found in the 
-`dist/build/` folder.
+### Sandboxes
 
-Alternatively, a Makefile is provided which will build Feynman and copy the
-executables to the top-level directory. To compile with the makefile simply
-execute the command
+Dependency hell is a common problem in Haskell, so earlier versions of Cabal had
+the option to explicitly create a local sandbox where package dependencies would
+be installed without causes problems for other packages. To install Feynman's
+dependencies in a sandbox, before building or installing Feynman first run
 
 ```
-make
+# Cabal 1 & 2
+cabal sandbox init
+cabal install --only-dependencies
+
+# Cabal 3
+cabal v1-sandbox init
+cabal install --only-dependencies
+```
+
+### Install directory
+
+By default, Cabal installs the binaries in `~/cabal/bin/` for unix builds. To
+specify another folder, install with
+```
+cabal install --installdir=DIR
 ```
 
 ## Using feynopt
