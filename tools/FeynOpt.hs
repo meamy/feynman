@@ -1,15 +1,13 @@
 {-# LANGUAGE TupleSections #-}
 module Main (main) where
 
-import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
+import Feynman.Core (Primitive, ID)
 import Feynman.Frontend.DotQC hiding (showStats)
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
 import Feynman.Frontend.OpenQASM.Syntax (QASM,
-                                         prettyPrint,
                                          check,
                                          desugar,
                                          emit,
-                                         fromDotQC,
                                          inline,
                                          applyOpt,
                                          showStats)
@@ -21,21 +19,20 @@ import Feynman.Verification.SOP
 import System.Environment
 
 import Data.List
-
-import Data.Set (Set)
 import qualified Data.Set as Set
-
-import Data.Map (Map)
-import qualified Data.Map as Map
 
 import Control.Monad
 import System.Time
-import Control.DeepSeq
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
-import Benchmarks
+import Benchmarks (runBenchmarks,
+                   runVerSuite,
+                   benchmarksSmall,
+                   benchmarksMedium,
+                   benchmarksAll,
+                   formatFloatN)
 
 {- Toolkit passes -}
 
@@ -51,10 +48,13 @@ data Pass = Triv
 {- DotQC -}
 
 optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC -> DotQC
-optimizeDotQC f qc = qc { decls = map applyOpt $ decls qc }
-  where applyOpt decl = decl { body = wrap (f (qubits qc ++ params decl) (inp ++ params decl)) $ body decl }
-        wrap g        = fromCliffordT . g . toCliffordT
-        inp           = Set.toList $ inputs qc
+optimizeDotQC f qc = qc { decls = map go $ decls qc }
+  where go decl =
+          let circuitQubits = qubits qc ++ params decl
+              circuitInputs = (Set.toList $ inputs qc) ++ params decl
+              wrap g        = fromCliffordT . g . toCliffordT
+          in
+            decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
 dotQCPass :: Pass -> (DotQC -> DotQC)
 dotQCPass pass = case pass of
@@ -69,10 +69,10 @@ dotQCPass pass = case pass of
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheckDotQC qc qc' =
-  let gatelist      = toCliffordT . toGatelist $ qc
-      gatelist'     = toCliffordT . toGatelist $ qc'
-      primaryInputs = Set.toList $ inputs qc
-      result        = validateIsometry False (union (qubits qc) (qubits qc')) primaryInputs gatelist gatelist'
+  let circ    = toCliffordT . toGatelist $ qc
+      circ'   = toCliffordT . toGatelist $ qc'
+      pInputs = Set.toList $ inputs qc
+      result  = validateIsometry False (union (qubits qc) (qubits qc')) pInputs circ circ'
   in
     case (inputs qc == inputs qc', result) of
       (False, _)           -> Left $ "Circuits not equivalent (different inputs)"

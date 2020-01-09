@@ -78,7 +78,7 @@ instance (Eq a, Num a, Show a) => Show (Multilinear a) where
             | a == fromInteger 0    = show a
             | a == fromInteger 1    = showMono m
             | otherwise             = (show a) ++ (showMono m)
-          showMono = concat . monomialVars
+          showMono m = "[" ++ (concat . monomialVars $ m) ++ "]"
 
 degree :: (Eq a, Num a) => Multilinear a -> Int
 degree p

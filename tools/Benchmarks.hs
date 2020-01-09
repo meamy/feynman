@@ -154,7 +154,6 @@ withTiming f = do
   let t = (fromIntegral $ ends - starts)*1000 + (fromIntegral $ endp - startp)/10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
 
---runBenchmarks :: DotQCPass -> Maybe (DotQC -> DotQC -> Either String DotQC) -> [String] -> IO ()
 runBenchmarks pass verify xs =
   let runBench s = do
         src <- B.readFile $ benchmarksPath ++ s ++ ".qc"
