@@ -2,7 +2,7 @@ name:                Feynman
 version:             0.1.0.0
 synopsis:            Quantum circuit optimization and verification tools
 description:         Feynman is a toolkit for quantum circuit analysis in the path integral
-                     model of quantum mechnics. The toolkit comprises synthesis, 
+                     model of quantum mechanics. The toolkit comprises synthesis, 
                      optimization and verification methods based around representations of 
                      circuit actions as sums-over-paths.
 license:             BSD2
