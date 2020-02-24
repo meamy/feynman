@@ -26,6 +26,7 @@ library
                        FlexibleInstances
   hs-source-dirs:      src
   exposed-modules:     Feynman.Core,
+                       Feynman.Util.Unicode,
 
                        Feynman.Algebra.Base,
                        Feynman.Algebra.Matroid,
@@ -57,6 +58,9 @@ library
                        bytestring,
                        containers >= 0.5.8.1,
                        mtl,
+                       fast-digits >= 0.2.1.0,
+                       ghc-prim >= 0.5.0.0,
+                       integer-gmp >= 1.0.0.1,
                        parsec >= 3.0,
                        parsec3-numbers
   default-language:    Haskell2010

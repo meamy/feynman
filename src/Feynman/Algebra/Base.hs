@@ -1,68 +1,199 @@
-module Feynman.Algebra.Base where
+{-# LANGUAGE MagicHash #-}
 
+{-|
+Module      : Base
+Description : Various rings & other algebras
+Copyright   : (c) Matthew Amy, 2020
+Maintainer  : matt.e.amy@gmail.com
+Stability   : experimental
+Portability : portable
+-}
+
+module Feynman.Algebra.Base(
+  Abelian(..),
+  Ring(..),
+  TwoRegular(..),
+  Z2,
+  DyadicRational,
+  ProperDyadic,
+  dyadic,
+  denom,
+  properDyadic,
+  fromDyadic,
+  )
+where
+
+import Data.Bits
 import Data.Ratio
 
-{- Type classes -}
-{- For now, we'll just have numeric type classes specialize Num -}
-class Num a => Abelian a where
-  zero   :: a
-  pow    :: Integer -> a -> a
+import GHC.Integer.Logarithms
+import GHC.Types
 
-class Abelian a => Periodic a where
-  order :: a -> Integer
+import qualified Feynman.Util.Unicode as Unicode
 
+{-------------------------------
+ Groups & Rings
+ -------------------------------}
+
+-- | The Abelian group (g, +). By convention, 'order g == 0' if 'g' has
+--   infinite order. Otherwise, subject to the law
+--
+--    @'power' ('order' x) x = 'zero'@
+class Num g => Abelian g where
+  zero  :: g
+  power :: Integer -> g -> g
+  order :: g -> Integer
+
+-- | Rings
 class Abelian a => Ring a where
   one :: a
 
-class (Ring a, Fractional a) => Field a
+{-------------------------------
+ Two-regular rings (& multiplicative groups)
+ -------------------------------}
 
-{- Circle groups -}
+-- | Class of rings where 2 is a regular element
+class Num r => TwoRegular r where
+  half   :: r
+  divTwo :: r -> r
+  -- default implementations
+  half   = divTwo 1
+  divTwo = (*half)
 
-newtype Dyadic = Dy (Int, Int) deriving (Eq) -- NOTE: must be in lowest form
+instance TwoRegular Double where
+  half = 0.5
 
-instance Show Dyadic where
-  show (Dy (a,n)) = show a ++ "/2^" ++ show n
+{-------------------------------
+ Boolean field
+ -------------------------------}
 
-instance Ord Dyadic where
-  compare a b = compare (toRational a) (toRational b)
+-- | The finite field \(\mathbb{F}_2\)
+newtype Z2 = Z2 Bool deriving (Eq, Ord)
 
-instance Real Dyadic where
-  toRational (Dy (a,n)) = (toInteger a)%(2^n)
+instance Show Z2 where
+  show (Z2 False) = "0"
+  show (Z2 True)  = "1"
 
-instance Num Dyadic where
-  (Dy (a,n)) + (Dy (b,m))
-    | a == 0 = canonicalize $ Dy (b,m)
-    | b == 0 = canonicalize $ Dy (a,n)
-    | n == m = canonicalize $ Dy ((a + b) `div` 2, n-1)
-    | otherwise =
-      let n' = max n m in
-        canonicalize $ Dy (a * 2^(n' - n) + b * 2^(n' - m), n')
-  (Dy (a,n)) * (Dy (b,m)) = canonicalize $ Dy (a * b, n + m)
-  negate (Dy (a,n))       = canonicalize $ Dy (-a,n)
-  abs (Dy (a,n))          = Dy (a,n)
-  signum (Dy (a,n))       = Dy (0,0)
-  fromInteger i           = Dy (fromInteger i,0)
+instance Num Z2 where
+  (Z2 x) + (Z2 y) = Z2 $ x `xor` y
+  (Z2 x) * (Z2 y) = Z2 $ x && y
+  negate x      = x
+  abs x         = x
+  signum x      = x
+  fromInteger x
+    | x `mod` 2 == 0 = Z2 False
+    | otherwise      = Z2 True
 
-instance Abelian Dyadic where
-  zero             = Dy (0,0)
-  pow i (Dy (a,n)) = canonicalize $ Dy ((fromInteger i)*a,n)
+instance Abelian Z2 where
+  zero             = Z2 False
+  power i          = (fromInteger i *)
+  order (Z2 False) = 1
+  order (Z2 True)  = 2
 
-instance Periodic Dyadic where
-  order (Dy (a,n)) = 2^n
+instance Ring Z2 where
+  one = Z2 True
 
-instance Ring Dyadic where
-  one  = Dy (1,0)
+{-------------------------------
+ Dyadics
+ -------------------------------}
 
--- TODO: replace with fast log base 2
-canonicalize :: Dyadic -> Dyadic
-canonicalize (Dy (a,n))
-  | a == 0                  = Dy (0,0)
-  | a <  0                  = canonicalize $ Dy (2^n + a, n)
-  | a `mod` 2 == 0 && n > 0 = canonicalize $ Dy (a `div` 2, n-1)
-  | otherwise               = Dy (a `mod` 2^n, n)
+-- | Dyadic rationals
+newtype DyadicRational = D (Integer, Int) deriving (Eq)
 
-dyadic :: Int -> Int -> Dyadic
-dyadic a n = canonicalize $ Dy (a,n)
+instance Show DyadicRational where
+  show (D (a,0)) = show a
+  show (D (a,n)) = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
 
-toDouble :: Dyadic -> Double
-toDouble (Dy (a,n)) = (fromIntegral a)/2^n
+instance Ord DyadicRational where
+  compare (D (a,n)) (D (b,m))
+    | n == m    = compare a b
+    | otherwise = compare (a `shiftL` (n'-n)) (b `shiftL` (n'-m))
+      where n' = max n m
+
+-- | Inefficient, but exact representation
+instance Real DyadicRational where
+  toRational (D (a,n)) = a%(1 `shiftL` n)
+
+instance Num DyadicRational where
+  (D (a,n)) + (D (b,m))
+    | a == 0            = D (b,m)
+    | b == 0            = D (a,n)
+    | n == m            = canonicalize $ D (a + b, n)
+    | otherwise         = canonicalize $ D (a `shiftL` (n'-n) + b `shiftL` (n'-m), n')
+      where n' = max n m
+  (D (a,n)) * (D (b,m)) = canonicalize $ D (a * b, n + m)
+  negate (D (a,n))      = canonicalize $ D (-a,n)
+  abs (D (a,n))         = D (a,n)
+  signum (D (a,_n))     = D (signum a,0)
+  fromInteger i         = D (i,0)
+
+instance Abelian DyadicRational where
+  zero              = D (0,0)
+  power i (D (a,n)) = canonicalize $ D (i*a, n)
+  order _           = 0
+
+instance Ring DyadicRational where
+  one = D (1,0)
+
+instance TwoRegular DyadicRational where
+  half             = D (1,1)
+  divTwo (D (a,n)) = D (a,n+1)
+
+-- | Write in a normalized, canonical form
+canonicalize :: DyadicRational -> DyadicRational
+canonicalize (D (a,n))
+  | a == 0                  = D (0,0)
+  | n <  0                  = D (a `shiftL` (-n), 0)
+  | a `mod` 2 == 0 && n > 0 =
+    let lg = I# (integerLog2# $ a .&. complement (a-1)) in
+      if lg > n
+      then D (a `shiftR` n, 0)
+      else D (a `shiftR` lg, n-lg)
+  | otherwise               = D (a,n)
+
+-- | Construct a canonical dyadic fraction
+dyadic :: Integer -> Int -> DyadicRational
+dyadic a n = canonicalize $ D (a,n)
+
+-- | Reduce a dyadic fraction mod \(\mathbb{Z}\)
+reduce :: DyadicRational -> DyadicRational
+reduce (D (a,n)) = D (a .&. ((1 `shiftL` n) - 1), n)
+
+-- | Get the denominator of a dyadic fraction
+denom :: DyadicRational -> Integer
+denom (D (_,n)) = 1 `shiftL` n
+
+-- | Dyadic fractions between 0 and 1
+newtype ProperDyadic = PD DyadicRational deriving (Eq, Ord)
+
+instance Show ProperDyadic where
+  show (PD a) = show a
+
+instance Real ProperDyadic where
+  toRational (PD a) = toRational a
+
+-- | Note: ProperDyadic is not a ring
+instance Num ProperDyadic where
+  (PD a) + (PD a') = PD . reduce $ a + a'
+  (PD a) * (PD a') = PD $ a * a'
+  negate (PD a)    = PD . reduce $ negate a
+  abs (PD a)       = PD $ abs a
+  signum (PD a)    = PD $ signum a
+  fromInteger i    = PD . reduce $ fromInteger i
+
+instance Abelian ProperDyadic where
+  zero           = PD zero
+  power i (PD a) = PD . reduce $ power i a
+  order (PD a)   = denom a
+
+instance TwoRegular ProperDyadic where
+  half          = PD half
+  divTwo (PD a) = PD $ divTwo a
+
+-- | Construct a dyadic fraction mod \(\mathbb{Z}\)
+properDyadic :: Integer -> Int -> ProperDyadic
+properDyadic a = PD . reduce . dyadic a
+
+-- | Convert a dyadic rational to a proper fraction
+fromDyadic :: DyadicRational -> ProperDyadic
+fromDyadic = PD . reduce
