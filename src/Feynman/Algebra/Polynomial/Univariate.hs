@@ -9,9 +9,12 @@ Portability : portable
 
 module Feynman.Algebra.Polynomial.Univariate(
   Univariate,
+  Cyclotomic,
   var,
   constant,
-  (*|)
+  (*|),
+  primitiveRoot,
+  evaluate
   )
 where
 
@@ -56,30 +59,22 @@ instance (Eq r, Num r) => Num (Univariate r) where
   fromInteger 0 = Univariate Map.empty
   fromInteger i = Univariate $ Map.singleton 0 (fromInteger i)
 
-instance (Eq r, Abelian r) => Abelian (Univariate r) where
-  zero    = Univariate Map.empty
-  power i = Univariate . Map.map (power i) . getCoeffs
-  order _ = 0
-
-instance (Eq r, Ring r) => Ring (Univariate r) where
-  one = Univariate $ Map.singleton 0 1
-
 -- | Normalize a univariate polynomial
 normalize :: (Eq r, Num r) => Univariate r -> Univariate r
 normalize = Univariate . Map.filter (/=0) . getCoeffs
 
 -- | The unique univariate variable
-var :: Ring r => Univariate r
+var :: Num r => Univariate r
 var = Univariate $ Map.singleton 1 1
 
 -- | Constant polynomial
-constant :: (Eq r, Ring r) => r -> Univariate r
+constant :: (Eq r, Num r) => r -> Univariate r
 constant a
   | a == 0    = Univariate $ Map.empty
   | otherwise = Univariate $ Map.singleton 0 a
 
 -- | Multiply by a scalar
-(*|) :: (Eq r, Ring r) => r -> Univariate r -> Univariate r
+(*|) :: (Eq r, Num r) => r -> Univariate r -> Univariate r
 (*|) 0 = \_p -> zero
 (*|) a = Univariate . Map.map (a*) . getCoeffs
 
@@ -103,58 +98,36 @@ instance (Eq r, Num r, Show r) => Show (Cyclotomic r) where
 
 instance (Eq r, Num r) => Num (Cyclotomic r) where
   p + q = reduceOrder $ Cyc m (p' + q')
-    where (Cyc m p', Cyc _ q') = unify p q
+    where (Cyc m p', Cyc _ q') = unifyOrder p q
   p * q = reduceOrder $ Cyc m (p' * q')
-    where (Cyc m p', Cyc _ q') = unify p q
+    where (Cyc m p', Cyc _ q') = unifyOrder p q
   negate (Cyc m p) = Cyc m $ negate p
   abs    p = p
   signum p = p
   fromInteger i = Cyc 1 (fromInteger i)
 
 -- | Unify the order of two cyclotomics
-unify :: Cyclotomic r -> Cyclotomic r -> (Cyclotomic r, Cyclotomic r)
-unify p q = case compare n m of
-  Eq -> (p, q)
-  Lt -> (Cyc m (Map.mayKeysMonotonic (+ (m-n)) $ getPoly p), q)
-  Gt -> (p, Cyc n (Map.mayKeysMonotonic (+ (n-m)) $ getPoly q))
-  where n = getOrder p
-        m = getOrder q
+unifyOrder :: Cyclotomic r -> Cyclotomic r -> (Cyclotomic r, Cyclotomic r)
+unifyOrder (Cyc n p) (Cyc m q)
+  | n == m    = (Cyc n p, Cyc m q)
+  | otherwise = (Cyc r p', Cyc r q')
+  where r  = lcm n m
+        p' = Univariate . Map.mapKeysMonotonic ((r `div` n) *) $ getCoeffs p
+        q' = Univariate . Map.mapKeysMonotonic ((r `div` m) *) $ getCoeffs q
 
 -- | Rewrite the cyclotomic in lowest order
 reduceOrder :: (Eq r, Num r) => Cyclotomic r -> Cyclotomic r
 reduceOrder (Cyc m c) = Cyc m' c'
   where m' = m `div` d
-        c' = Map.mapKeysMonotonic (`div` d) c
-        d  = foldr gcd m $ Map.keys c
+        c' = Univariate . Map.mapKeysMonotonic (`div` d) $ getCoeffs c
+        d  = foldr gcd m . Map.keys $ getCoeffs c
 
 -- | Construct the cyclotomic polynomial \(\zeta_i\)
 primitiveRoot :: Num r => Integer -> Cyclotomic r
 primitiveRoot i = Cyc i var
 
--- | Add two cyclotomic polynomials
-add :: (Eq r, Num r) => Cyclotomic r -> Cyclotomic r -> Cyclotomic r
-add p q
-  | ord p == ord q = normalize $ Cyc (ord p) (Map.unionWith (+) (coeffs p) (coeffs q))
-  | otherwise          = add p' q'
-  where p' = Cyc m' $ Map.mapKeysMonotonic ((m' `div` (ord p)) *) (coeffs p)
-        q' = Cyc m' $ Map.mapKeysMonotonic ((m' `div` (ord q)) *) (coeffs q)
-        m' = lcm (ord p) (ord q)
-
--- | Multiply two cyclotomic polynomials
-mult :: (Eq r, Num r) => Cyclotomic r -> Cyclotomic r -> Cyclotomic r
-mult p q = normalize $ Map.foldrWithKey f zero $ coeffs p
-  where f root coeff = add (Cyc ord' $ Map.foldrWithKey (g root coeff) Map.empty (coeffs q))
-        g r c r' c'  = Map.alter (addCoeff $ c * c') ((r*multP + r'*multQ) `mod` ord')
-        ord'         = lcm (ord p) (ord q)
-        multP        = ord' `div` (ord p)
-        multQ        = ord' `div` (ord q)
-        addCoeff a b = case b of
-          Nothing -> Just a
-          Just c  -> Just $ a + c
-
 -- | Convert to a complex number
-toComplex :: (Real r, RealFloat f) => Cyclotomic r -> Complex f
-toComplex p = Map.foldrWithKey f (0.0 :+ 0.0) $ coeffs p
+evaluate :: (Real r, RealFloat f) => Cyclotomic r -> Complex f
+evaluate (Cyc m p) = Map.foldrWithKey f (0.0 :+ 0.0) $ getCoeffs p
   where f root coeff = (mkPolar (realToFrac coeff) (expnt root) +)
-        expnt root   = 2.0*pi*(fromInteger root)/(fromInteger $ ord p)
--}
+        expnt root   = 2.0*pi*(fromInteger root)/(fromInteger m)

@@ -10,12 +10,14 @@ Portability : portable
 -}
 
 module Feynman.Algebra.Base(
-  Abelian(..),
-  Ring(..),
+  ZModule(..),
+  Periodic(..),
   TwoRegular(..),
-  Z2,
+  FF2,
   DyadicRational,
   ProperDyadic,
+  zero,
+  one,
   dyadic,
   denom,
   properDyadic,
@@ -32,21 +34,33 @@ import GHC.Types
 import qualified Feynman.Util.Unicode as Unicode
 
 {-------------------------------
- Groups & Rings
+ Constants
  -------------------------------}
 
--- | The Abelian group (g, +). By convention, 'order g == 0' if 'g' has
---   infinite order. Otherwise, subject to the law
+-- | The additive ring unit
+zero :: Num a => a
+zero = fromInteger 0
+
+-- | The multiplicative ring unit
+one :: Num a => a
+one = fromInteger 1
+
+{-------------------------------
+ Z-modules
+ -------------------------------}
+
+-- | Groups (typically using addition in 'Num') with
+--   a \(\mathbb{Z}\)-action
+class Num g => ZModule g where
+  power :: Integer -> g -> g
+
+-- | Groups with computable orders. Rather than the standard
+--   notion, the group 'g' need not have a finite order for
+--   each element. In this case, 'order g == 0', and otherwise
 --
 --    @'power' ('order' x) x = 'zero'@
-class Num g => Abelian g where
-  zero  :: g
-  power :: Integer -> g -> g
+class Num g => Periodic g where
   order :: g -> Integer
-
--- | Rings
-class Abelian a => Ring a where
-  one :: a
 
 {-------------------------------
  Two-regular rings (& multiplicative groups)
@@ -68,30 +82,28 @@ instance TwoRegular Double where
  -------------------------------}
 
 -- | The finite field \(\mathbb{F}_2\)
-newtype Z2 = Z2 Bool deriving (Eq, Ord)
+newtype FF2 = FF2 Bool deriving (Eq, Ord)
 
-instance Show Z2 where
-  show (Z2 False) = "0"
-  show (Z2 True)  = "1"
+instance Show FF2 where
+  show (FF2 False) = "0"
+  show (FF2 True)  = "1"
 
-instance Num Z2 where
-  (Z2 x) + (Z2 y) = Z2 $ x `xor` y
-  (Z2 x) * (Z2 y) = Z2 $ x && y
+instance Num FF2 where
+  (FF2 x) + (FF2 y) = FF2 $ x `xor` y
+  (FF2 x) * (FF2 y) = FF2 $ x && y
   negate x      = x
   abs x         = x
   signum x      = x
   fromInteger x
-    | x `mod` 2 == 0 = Z2 False
-    | otherwise      = Z2 True
+    | x `mod` 2 == 0 = FF2 False
+    | otherwise      = FF2 True
 
-instance Abelian Z2 where
-  zero             = Z2 False
+instance ZModule FF2 where
   power i          = (fromInteger i *)
-  order (Z2 False) = 1
-  order (Z2 True)  = 2
 
-instance Ring Z2 where
-  one = Z2 True
+instance Periodic FF2 where
+  order (FF2 False) = 1
+  order (FF2 True)  = 2
 
 {-------------------------------
  Dyadics
@@ -127,13 +139,8 @@ instance Num DyadicRational where
   signum (D (a,_n))     = D (signum a,0)
   fromInteger i         = D (i,0)
 
-instance Abelian DyadicRational where
-  zero              = D (0,0)
+instance ZModule DyadicRational where
   power i (D (a,n)) = canonicalize $ D (i*a, n)
-  order _           = 0
-
-instance Ring DyadicRational where
-  one = D (1,0)
 
 instance TwoRegular DyadicRational where
   half             = D (1,1)
@@ -181,9 +188,10 @@ instance Num ProperDyadic where
   signum (PD a)    = PD $ signum a
   fromInteger i    = PD . reduce $ fromInteger i
 
-instance Abelian ProperDyadic where
-  zero           = PD zero
+instance ZModule ProperDyadic where
   power i (PD a) = PD . reduce $ power i a
+
+instance Periodic ProperDyadic where
   order (PD a)   = denom a
 
 instance TwoRegular ProperDyadic where
