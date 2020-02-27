@@ -14,7 +14,46 @@ Portability : portable
 Provides tools for working with multilinear polynomials in the
 multiplicative and additive "parity" basis.
 -}
-module Feynman.Algebra.Polynomial.Multilinear where
+
+module Feynman.Algebra.Polynomial.Multilinear(
+  Monomial,
+  Multilinear,
+  PhasePoly,
+  PseudoBool,
+  BoolPoly,
+  coefficients,
+  toTermList,
+  vars,
+  getConstant,
+  isZero,
+  isMono,
+  isConst,
+  contains,
+  constant,
+  ofVar,
+  ofMonomial,
+  ofTerm,
+  ofTermList,
+  ofTermDirect,
+  scale,
+  factorVar,
+  divVar,
+  remVar,
+  dropConstant,
+  cast,
+  castMaybe,
+  collectBy,
+  collectVar,
+  rename,
+  renameMonotonic,
+  gets,
+  substMany,
+  solveForX,
+  polyOfXor,
+  fourier,
+  invFourier,
+  canonicalize
+  ) where
 
 import Data.Kind
 import Data.Tuple
@@ -24,16 +63,15 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe
+import Data.Semigroup
 
+import Feynman.Util.Unicode as Unicode
 import Feynman.Algebra.Base
+import Feynman.Algebra.Polynomial
 
 {-----------------------------------
  Utility types
  -----------------------------------}
-
--- | Class of things that have a degree
-class Degree a where
-  degree :: a -> Int
 
 data Repr = Add | Mult
 data ReprWit :: Repr -> Type where
@@ -52,45 +90,47 @@ instance ReprC 'Mult where
 {-----------------------------------
  Monomials
  -----------------------------------}
--- | Variables in polynomials
-type Var = String
 
 -- | Monomials with graded lexicographic (grevlex) order
-newtype Monomial (repr :: Repr) = Monomial { vars :: Set Var } deriving (Eq)
+newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 
-instance Ord (Monomial repr) where
+instance Ord v => Ord (Monomial v repr) where
   compare m n = case compare (degree m) (degree n) of
-    EQ -> compare (vars m) (vars n)
+    EQ -> compare (getVars m) (getVars n)
     x  -> x
 
-instance Degree (Monomial repr) where
-  degree = Set.size . vars
+instance Degree (Monomial v repr) where
+  degree = Set.size . getVars
 
-showMonomial :: ReprWit repr -> Monomial repr -> String
+showMonomial :: Show v => ReprWit repr -> Monomial v repr -> String
 showMonomial wit = case wit of
-  WitAdd  -> intercalate "\x2295" . Set.toList . vars
-  WitMult -> concat . Set.toList . vars
+  WitAdd  -> intercalate Unicode.oplus . map show . Set.toList . getVars
+  WitMult -> concatMap show . Set.toList . getVars
 
-instance ReprC repr => Show (Monomial repr) where
+instance (Show v, ReprC repr) => Show (Monomial v repr) where
   show = showMonomial witRepr
 
-instance Semigroup (Monomial repr) where
-  m <> m' = Monomial $ Set.union (vars m) (vars m')
+instance Ord v => Semigroup (Monomial v 'Mult) where
+  m <> m' = Monomial $ Set.union (getVars m) (getVars m')
+
+instance Ord v => Monoid (Monomial v 'Mult) where
+  mempty  = Monomial Set.empty
+  mappend = (<>)
 
 {-----------------------------------
  Multilinear polynomials
  -----------------------------------}
 
--- | Multilinear polynomials over a ring /r/ with representation /repr/
-data Multilinear r (repr :: Repr) = M { terms :: !(Map (Monomial repr) r) }
+-- | Multilinear polynomials over a ring 'r' with representation 'repr'
+data Multilinear v r (repr :: Repr) = M { getTerms :: !(Map (Monomial v repr) r) }
   deriving (Eq, Ord)
 
 -- | Convenience types
-type PhasePoly r  = Multilinear r 'Add
-type PseudoBool r = Multilinear r 'Mult
-type BoolPoly     = Multilinear FF2 'Mult
+type PhasePoly v r  = Multilinear v r 'Add
+type PseudoBool v r = Multilinear v r 'Mult
+type BoolPoly v     = Multilinear v FF2 'Mult
 
-instance (Eq r, Num r, Show r, ReprC repr) => Show (Multilinear r repr) where
+instance (Show v, Eq r, Num r, Show r, ReprC repr) => Show (Multilinear v r repr) where
   show p@(M t)
     | isZero p  = "0"
     | otherwise = intercalate " + " $ map showTerm (Map.assocs t)
@@ -100,12 +140,12 @@ instance (Eq r, Num r, Show r, ReprC repr) => Show (Multilinear r repr) where
             | coeff == -1      = "-" ++ show mono
             | otherwise        = show coeff ++ show mono
 
-instance Degree (Multilinear r repr) where
+instance Degree (Multilinear v r repr) where
   degree (M t) = case Map.lookupMax t of
     Nothing      -> -1
     Just (m, _a) -> degree m
 
-instance (Eq r, Num r, ReprC repr) => Num (Multilinear r repr) where
+instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   (+) = addM
   (*) = multM witRepr
   negate (M t) = M $ Map.map negate t
@@ -117,172 +157,174 @@ instance (Eq r, Num r, ReprC repr) => Num (Multilinear r repr) where
 {- Accessors -}
 
 -- | Get a list of the coefficients in grevlex order
-coefficients :: Multilinear r repr -> [r]
-coefficients = Map.elems . terms
+coefficients :: Multilinear v r repr -> [r]
+coefficients = Map.elems . getTerms
 
 -- | Get the terms in grevlex order
-toTermList :: Multilinear r repr -> [(r, Monomial repr)]
-toTermList = map swap . Map.toList . terms
+toTermList :: Multilinear v r repr -> [(r, Monomial v repr)]
+toTermList = map swap . Map.toList . getTerms
 
 -- | Get a list of variables contained in the polynomial
-varList :: Multilinear r repr -> [Var]
-varList = Set.toList . foldr (Set.union) Set.empty . map vars . Map.keys . terms
+vars :: Ord v => Multilinear v r repr -> Set v
+vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
 
 -- | Retrieve the constant term
-getConstant :: (Eq r, Num r) => Multilinear r repr -> r
-getConstant = Map.findWithDefault 0 (Monomial Set.empty) . terms
+getConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> r
+getConstant = Map.findWithDefault 0 (Monomial Set.empty) . getTerms
 
 {- Tests -}
 
 -- | Check if the polynomial is the zero function
-isZero :: Multilinear r repr -> Bool
-isZero = Map.null . terms
+isZero :: Multilinear v r repr -> Bool
+isZero = Map.null . getTerms
 
 -- | Check if the polynomial is a monomial
-isMono :: Multilinear r repr -> Bool
-isMono = (1 >=) . Map.size . terms
+isMono :: Multilinear v r repr -> Bool
+isMono = (1 >=) . Map.size . getTerms
 
 -- | Check if the polynomial is constant
-isConst :: Multilinear r repr -> Bool
-isConst = (== [Monomial Set.empty]) . Map.keys . terms
+isConst :: Ord v => Multilinear v r repr -> Bool
+isConst = (== [Monomial Set.empty]) . Map.keys . getTerms
 
 -- | Check if a variable is used in the polynomial
-contains :: String -> Multilinear r repr -> Bool
-contains v = any (Set.member v . vars) . Map.keys . terms
+contains :: Ord v => v -> Multilinear v r repr -> Bool
+contains v = any (Set.member v . getVars) . Map.keys . getTerms
 
 {- Constructors -}
 
 -- | Constant polynomial
-constant :: (Eq r, Num r) => r -> Multilinear r repr
+constant :: (Eq r, Num r) => r -> Multilinear v r repr
 constant = normalize . M . Map.singleton (Monomial Set.empty)
 
 -- | Construct the variable polynomial /x/
-ofVar :: (Eq r, Num r) => Var -> Multilinear r repr
+ofVar :: (Eq r, Num r) => v -> Multilinear v r repr
 ofVar x = ofTerm (1, Monomial $ Set.singleton x)
 
 -- | Construct the polynomial /m/ for a monomial /m/
-ofMonomial :: (Eq r, Num r) => Monomial repr -> Multilinear r repr
+ofMonomial :: (Eq r, Num r) => Monomial v repr -> Multilinear v r repr
 ofMonomial m = ofTerm (1, m)
 
 -- | Construct the polynomial /a*m/
-ofTerm :: (Eq r, Num r) => (r, Monomial repr) -> Multilinear r repr
+ofTerm :: (Eq r, Num r) => (r, Monomial v repr) -> Multilinear v r repr
 ofTerm (a, m) = normalize . M $ Map.singleton m a
 
 -- | Construct the polynomial /a*m/
-ofTermList :: (Eq r, Num r) => [(r, Monomial repr)] -> Multilinear r repr
+ofTermList :: (Ord v, Eq r, Num r) => [(r, Monomial v repr)] -> Multilinear v r repr
 ofTermList = normalize . M . Map.fromList . map swap
 
 -- | (Internal use only) Construct the polynomial /a*m/
-ofTermDirect :: (Eq r, Num r) => (r, Monomial repr) -> Multilinear r repr
+ofTermDirect :: (Eq r, Num r) => (r, Monomial v repr) -> Multilinear v r repr
 ofTermDirect (a, m) = M $ Map.singleton m a
 
 {- Arithmetic -}
 
 -- | Scale a 
-scale :: (Eq r, Num r, ReprC repr) => r -> Multilinear r repr -> Multilinear r repr
+scale :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr -> Multilinear v r repr
 scale a p
   | a == 0    = zero
-  | otherwise = M $ Map.map (a*) $ terms p
+  | otherwise = M $ Map.map (a*) $ getTerms p
 
 -- | Add two polynomials with the same representation
-addM :: (Eq r, Num r) => Multilinear r repr -> Multilinear r repr -> Multilinear r repr
-addM p q = normalize . M $ Map.unionWith (+) (terms p) (terms q)
+addM :: (Ord v, Eq r, Num r) =>
+  Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
+addM p q = normalize . M $ Map.unionWith (+) (getTerms p) (getTerms q)
 
 -- | Multiply two polynomials with the same representation
-multM :: (Eq r, Num r) =>
-  ReprWit repr -> Multilinear r repr -> Multilinear r repr -> Multilinear r repr
+multM :: (Ord v, Eq r, Num r) =>
+  ReprWit repr -> Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
 multM wit p q = case wit of
   WitAdd  -> error "Error: multiplying additive phase polynomials"
   WitMult -> normalize $ multImpl p q
 
-multImpl :: (Eq r, Num r) => Multilinear r 'Mult -> Multilinear r 'Mult -> Multilinear r 'Mult
-multImpl p q = Map.foldlWithKey' multPolyTerm zero (terms p)
+multImpl :: (Ord v, Eq r, Num r) =>
+  Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+multImpl p q = Map.foldlWithKey' multPolyTerm zero (getTerms p)
   where multPolyTerm acc m a =
-          addM acc (M $ Map.foldlWithKey' (multTermTerm m a) Map.empty (terms q))
+          addM acc (M $ Map.foldlWithKey' (multTermTerm m a) Map.empty (getTerms q))
         multTermTerm m a acc m' a' = Map.alter (addCoeff $ a * a') (m <> m') acc
         addCoeff a b = case b of
           Nothing -> Just a
           Just c  -> Just $ a + c
 
 -- | Factorizes a polynomial /p/ as /vq + r/
-factorVar :: Var -> Multilinear r 'Mult -> (Multilinear r 'Mult, Multilinear r 'Mult)
+factorVar :: Ord v =>
+  v -> Multilinear v r 'Mult -> (Multilinear v r 'Mult, Multilinear v r 'Mult)
 factorVar v p = (M qTerms, M rTerms)
-  where (qTerms, rTerms) = Map.partitionWithKey (\m _a -> Set.member v $ vars m) $ terms p
+  where (qTerms, rTerms) = Map.partitionWithKey f $ getTerms p
+        f m _a           = Set.member v $ getVars m
 
 -- | Takes the quotient of /p\/v/
-divVar :: Var -> Multilinear r 'Mult -> Multilinear r 'Mult
-divVar v = M . Map.mapKeys (Monomial . Set.delete v . vars) . takeQuotient . terms
-  where takeQuotient = Map.filterWithKey (\m _a -> Set.member v $ vars m)
+divVar :: Ord v => v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+divVar v = M . Map.mapKeys (Monomial . Set.delete v . getVars) . takeQuotient . getTerms
+  where takeQuotient = Map.filterWithKey (\m _a -> Set.member v $ getVars m)
 
 -- | Takes the quotient of /p\/v/
-remVar :: Var -> Multilinear r 'Mult -> Multilinear r 'Mult
-remVar v = M . Map.filterWithKey (\m _a -> not $ Set.member v $ vars m) . terms
+remVar :: Ord v => v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+remVar v = M . Map.filterWithKey (\m _a -> not $ Set.member v $ getVars m) . getTerms
 
 {- Transformations -}
 
 -- | Normalize a multilinear polynomial
-normalize :: (Eq r, Num r) => Multilinear r repr -> Multilinear r repr
-normalize = M . Map.filter (0/=) . terms
+normalize :: (Eq r, Num r) => Multilinear v r repr -> Multilinear v r repr
+normalize = M . Map.filter (0/=) . getTerms
 
 -- | Drops the constant term. Useful for verification up to global phase
-dropConstant :: (Eq r, Num r) => Multilinear r repr -> Multilinear r repr
-dropConstant = M . (Map.delete (Monomial Set.empty) . terms)
+dropConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> Multilinear v r repr
+dropConstant = M . (Map.delete (Monomial Set.empty) . getTerms)
 
 -- | Cast a polynomial over ring /r/ to ring /s/
-cast :: (r -> s) -> Multilinear r repr -> Multilinear s repr
-cast f = M . Map.map f . terms
+cast :: (r -> s) -> Multilinear v r repr -> Multilinear v s repr
+cast f = M . Map.map f . getTerms
 
 -- | Attempt to cast a polynomial over ring /r/ to ring /s/ via a partial function
-castMaybe :: (r -> Maybe s) -> Multilinear r repr -> Maybe (Multilinear s repr)
-castMaybe f = fmap M . mapM f . terms
+castMaybe :: (r -> Maybe s) -> Multilinear v r repr -> Maybe (Multilinear v s repr)
+castMaybe f = fmap M . mapM f . getTerms
 
 -- | Collects just the terms of the polynomial satisfying a predicate
-collectBy :: ((r, Monomial repr) -> Bool) -> Multilinear r repr -> Multilinear r repr
-collectBy f = M . Map.filterWithKey (curry $ f . swap) . terms
+collectBy :: ((r, Monomial v repr) -> Bool) -> Multilinear v r repr -> Multilinear v r repr
+collectBy f = M . Map.filterWithKey (curry $ f . swap) . getTerms
 
 -- | Collects the terms of a polynomial containing a particular variable
-collectVar :: Var -> Multilinear r repr -> Multilinear r repr
-collectVar v = collectBy (\(_a, m) -> Set.member v $ vars m)
+collectVar :: Ord v => v -> Multilinear v r repr -> Multilinear v r repr
+collectVar v = collectBy (\(_a, m) -> Set.member v $ getVars m)
   
 {- Substitutions -}
 
 -- | Rename variables according to a variable map
-rename :: (Eq r, Num r) => Map Var Var -> Multilinear r repr -> Multilinear r repr
-rename sub = M . Map.mapKeys (Monomial . Set.map substVar . vars) . terms
-  where substVar v = Map.findWithDefault v v sub
+rename :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r repr
+rename sub = M . Map.mapKeys (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Rename variables according to a monotonic variable map
-renameMonotonic :: (Eq r, Num r) => Map Var Var -> Multilinear r repr -> Multilinear r repr
-renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map substVar . vars) . terms
-  where substVar v = Map.findWithDefault v v sub
+renameMonotonic :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r repr
+renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
-subst :: (Eq r, Num r) => Var -> Multilinear FF2 'Mult -> Multilinear r 'Mult -> Multilinear r 'Mult
-subst v p = substMany (Map.fromList [(v, p)])
+gets :: (Ord v, Eq r, ZModule r) => v -> BoolPoly v -> PseudoBool v r -> PseudoBool v r
+v `gets` p = substMany (\v' -> if v' == v then p else ofVar v)
 
 -- | Simultaneous substitution of variables with polynomials
-substMany :: (Eq r, Num r) =>
-  Map Var (Multilinear FF2 'Mult) -> Multilinear r 'Mult -> Multilinear r 'Mult
-substMany sub = normalize . Map.foldlWithKey' (\acc m a -> acc + substInMono m a) zero . terms
-  where substInMono m a = distribute a $ foldl' (*) one (map substVar . Set.toList $ vars m)
-        substVar v      = Map.findWithDefault (ofVar v) v sub
+substMany :: (Ord v, Eq r, ZModule r) => (v -> BoolPoly v) -> PseudoBool v r -> PseudoBool v r
+substMany sub = normalize . Map.foldlWithKey' (\acc m a -> acc + substInMono m a) zero . getTerms
+  where substInMono m a = distribute a $ foldl' (*) one (map sub . Set.toList $ getVars m)
 
 -- | Substitute a variable with a monomial
-substMono :: (Eq r, Num r) => Var -> Monomial repr -> Multilinear r repr -> Multilinear r repr
-substMono v m = M . Map.mapKeys  (Monomial . Set.foldl' substVar Set.empty . vars) . terms
+substMono :: (Ord v, Eq r, Num r) =>
+  v -> Monomial v repr -> Multilinear v r repr -> Multilinear v r repr
+substMono v m = M . Map.mapKeys  (Monomial . Set.foldl' substVar Set.empty . getVars) . getTerms
   where substVar acc v'
-          | v == v'   = Set.union acc $ vars m
+          | v == v'   = Set.union acc $ getVars m
           | otherwise = Set.insert v' acc
 
 -- | Return a list of solutions to
 --
--- > p = 0
+--   @p = 0@
 --
 --   Over a field
-solveForX :: (Eq r, Fractional r, ReprC repr) => Multilinear r repr -> [(Var, Multilinear r repr)]
+solveForX :: (Ord v, Eq r, Fractional r, ReprC repr) =>
+  Multilinear v r repr -> [(v, Multilinear v r repr)]
 solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermList p
   where checkTerm (a,m) =
-          let v  = Set.elemAt 0 $ vars m
+          let v  = Set.elemAt 0 $ getVars m
               p' = normalize $ p - ofTerm (a,m)
           in
             if not (contains v p')
@@ -292,64 +334,77 @@ solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermLis
 {- Pseudo-boolean specific transformations -}
 
 -- | Translate an additive monomial to a Boolean polynomial
-polyOfXor :: Monomial 'Add -> Multilinear FF2 'Mult
-polyOfXor = ofTermList . zip (repeat 1) . map (Monomial . Set.singleton) . Set.toList . vars
+polyOfXor :: Ord v => Monomial v 'Add -> BoolPoly v
+polyOfXor = ofTermList . zip (repeat 1) . map (Monomial . Set.singleton) . Set.toList . getVars
 
 -- | Distribute a ring element over a monomial according to the equation
 -- 
 -- > axy = a/2x + a/2y - a/2(x + y)
 --
-unDistribute :: (Eq r, Num r, TwoRegular r) => r -> Monomial 'Mult -> Multilinear r 'Add
-unDistribute a' = go a' . Set.toList . vars
+unDistribute :: (Ord v, Eq r, Num r, TwoRegular r) => r -> Monomial v 'Mult -> PhasePoly v r
+unDistribute a' = go a' . Set.toList . getVars
   where go 0 _        = zero
         go a []       = one
         go a [x]      = ofTerm (a, Monomial $ Set.singleton x)
         go a (x:y:xs) =
-          let recTerm = go (negate $ divTwo a) $ "-":xs
+          let recTerm = go (negate $ divTwo a) $ x:xs
               sub     = Monomial $ Set.fromList [x, y]
           in
-            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substMono "-" sub recTerm
+            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substMono x sub recTerm
 
 -- | Distribute a ring element over a Boolean polynomial according to the equation
 -- 
 -- > a(x + y) = ax + ay -2axy
 --
-distribute :: (Eq r, Num r) => r -> Multilinear FF2 'Mult -> Multilinear r 'Mult
-distribute a = go a . Map.keys . terms
+distribute :: (Ord v, Eq r, ZModule r) => r -> BoolPoly v -> PseudoBool v r
+distribute a' = go a' . Map.keys . getTerms
   where go 0 _      = zero
         go a []     = zero
-        go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (a * (-2)) $ map (m <>) xs)
+        go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
 
 -- | Perform the (pseudo-Boolean) Fourier transform
-fourier :: (Eq r, Num r, TwoRegular r) => Multilinear r 'Mult -> Multilinear r 'Add
-fourier = normalize . Map.foldlWithKey' addTerm zero . terms
+fourier :: (Ord v, Eq r, Num r, TwoRegular r) => PseudoBool v r -> PhasePoly v r
+fourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
   where addTerm acc m a = acc + unDistribute a m
 
 -- | Perform the (pseudo-Boolean) inverse Fourier transform
-invFourier :: (Eq r, Num r) => Multilinear r 'Add -> Multilinear r 'Mult
-invFourier = normalize . Map.foldlWithKey' addTerm zero . terms
+invFourier :: (Ord v, Eq r, ZModule r) => PhasePoly v r -> PseudoBool v r
+invFourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
   where addTerm acc m a = acc + distribute a (polyOfXor m)
+
+-- | Canonicalize an additive multilinear polynomial
+canonicalize :: (Ord v, Eq r, TwoRegular r, ZModule r) => PhasePoly v r -> PhasePoly v r
+canonicalize = fourier . invFourier
 
 {- Constants, for testing -}
 
-x0 = ofVar "x\x2080" :: Multilinear Double 'Mult
-x1 = ofVar "x\x2081" :: Multilinear Double 'Mult
-x2 = ofVar "x\x2082" :: Multilinear Double 'Mult
-x3 = ofVar "x\x2083" :: Multilinear Double 'Mult
-x4 = ofVar "x\x2084" :: Multilinear Double 'Mult
-x5 = ofVar "x\x2085" :: Multilinear Double 'Mult
-x6 = ofVar "x\x2086" :: Multilinear Double 'Mult
-x7 = ofVar "x\x2087" :: Multilinear Double 'Mult
-x8 = ofVar "x\x2088" :: Multilinear Double 'Mult
-x9 = ofVar "x\x2089" :: Multilinear Double 'Mult
+newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 
-y0 = ofVar "y\x2080" :: Multilinear Double 'Add
-y1 = ofVar "y\x2081" :: Multilinear Double 'Add
-y2 = ofVar "y\x2082" :: Multilinear Double 'Add
-y3 = ofVar "y\x2083" :: Multilinear Double 'Add
-y4 = ofVar "y\x2084" :: Multilinear Double 'Add
-y5 = ofVar "y\x2085" :: Multilinear Double 'Add
-y6 = ofVar "y\x2086" :: Multilinear Double 'Add
-y7 = ofVar "y\x2087" :: Multilinear Double 'Add
-y8 = ofVar "y\x2088" :: Multilinear Double 'Add
-y9 = ofVar "y\x2089" :: Multilinear Double 'Add
+instance Show IVar where
+  show (IVar (x, i)) = Unicode.sub x i
+
+x0 = ofVar (IVar ("x",0)) :: Multilinear IVar DyadicRational 'Mult
+x1 = ofVar (IVar ("x",1)) :: Multilinear IVar DyadicRational 'Mult
+x2 = ofVar (IVar ("x",2)) :: Multilinear IVar DyadicRational 'Mult
+x3 = ofVar (IVar ("x",3)) :: Multilinear IVar DyadicRational 'Mult
+x4 = ofVar (IVar ("x",4)) :: Multilinear IVar DyadicRational 'Mult
+x5 = ofVar (IVar ("x",5)) :: Multilinear IVar DyadicRational 'Mult
+x6 = ofVar (IVar ("x",6)) :: Multilinear IVar DyadicRational 'Mult
+x7 = ofVar (IVar ("x",7)) :: Multilinear IVar DyadicRational 'Mult
+x8 = ofVar (IVar ("x",8)) :: Multilinear IVar DyadicRational 'Mult
+x9 = ofVar (IVar ("x",9)) :: Multilinear IVar DyadicRational 'Mult
+
+y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DyadicRational 'Add
+y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DyadicRational 'Add
+y2 = ofVar (IVar ("y",2)) :: Multilinear IVar DyadicRational 'Add
+y3 = ofVar (IVar ("y",3)) :: Multilinear IVar DyadicRational 'Add
+y4 = ofVar (IVar ("y",4)) :: Multilinear IVar DyadicRational 'Add
+y5 = ofVar (IVar ("y",5)) :: Multilinear IVar DyadicRational 'Add
+y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DyadicRational 'Add
+y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DyadicRational 'Add
+y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DyadicRational 'Add
+y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DyadicRational 'Add
+
+y1234 :: Multilinear IVar DMod2 'Add
+y1234 = ofTerm (dMod2 1 2, Monomial $ Set.fromList xs)
+  where xs = [IVar ("y", 1), IVar ("y", 2), IVar ("y", 3), IVar ("y", 4)]

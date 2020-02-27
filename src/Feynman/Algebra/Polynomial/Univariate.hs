@@ -19,12 +19,14 @@ module Feynman.Algebra.Polynomial.Univariate(
 where
 
 import Data.List
-import Data.Map (Map)
+import Data.Map(Map)
 import qualified Data.Map as Map
 import Data.Complex
+import Data.Maybe(maybe)
 
 import qualified Feynman.Util.Unicode as Unicode
 import Feynman.Algebra.Base
+import Feynman.Algebra.Polynomial
 
 {-------------------------------
  Univariate polynomials
@@ -35,6 +37,9 @@ data Univariate r = Univariate { getCoeffs :: !(Map Integer r) } deriving (Eq, O
 
 instance (Eq r, Num r, Show r) => Show (Univariate r) where
   show = showWithName "x"
+
+instance Degree (Univariate r) where
+  degree = maybe 0 (fromIntegral . fst) . Map.lookupMax . getCoeffs
 
 -- | Print a univariate polynomial with a particular variable name
 showWithName :: (Eq r, Num r, Show r) => String -> Univariate r -> String
@@ -95,6 +100,9 @@ data Cyclotomic r = Cyc { getOrder :: !Integer, getPoly :: !(Univariate r) } der
 
 instance (Eq r, Num r, Show r) => Show (Cyclotomic r) where
   show p = showWithName (Unicode.sub Unicode.zeta (getOrder p)) $ getPoly p
+
+instance Degree (Cyclotomic r) where
+  degree = degree . getPoly
 
 instance (Eq r, Num r) => Num (Cyclotomic r) where
   p + q = reduceOrder $ Cyc m (p' + q')

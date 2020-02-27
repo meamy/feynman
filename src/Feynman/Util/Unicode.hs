@@ -18,6 +18,7 @@ module Feynman.Util.Unicode(
   oplus,
   dot,
   and,
+  mapsto,
   langle,
   rangle,
   sum,
@@ -75,9 +76,14 @@ supscriptI j = case j of
   9 -> '\x2079'
   _ -> error "Impossible"
 
+-- | Produce the digits of a number with 0
+digits' :: Integer -> [Int]
+digits' 0 = [0]
+digits' j = map fromIntegral $ digits 10 j
+
 -- | Convert an integer into a unicode subscript
 subscript :: Integer -> String
-subscript = reverse . map subscriptI . digits 10
+subscript = reverse . map subscriptI . digits'
 
 -- | Add a subscript to a string
 sub :: String -> Integer -> String
@@ -85,7 +91,7 @@ sub s j = s ++ subscript j
 
 -- | Convert an integer into a unicode superscript
 supscript :: Integer -> String
-supscript = reverse . map supscriptI . digits 10
+supscript = reverse . map supscriptI . digits'
 
 -- | Add a supscript to a string
 sup :: String -> Integer -> String
@@ -115,6 +121,9 @@ dot = "\x22C5"
 
 and :: String
 and = "\x22C0"
+
+mapsto :: String
+mapsto = "\x27FC"
 
 langle :: String
 langle = "\x27E9"

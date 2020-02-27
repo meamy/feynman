@@ -14,14 +14,13 @@ module Feynman.Algebra.Base(
   Periodic(..),
   TwoRegular(..),
   FF2,
-  DyadicRational,
-  ProperDyadic,
+  DyadicRational(..),
+  DMod2,
   zero,
   one,
   dyadic,
   denom,
-  properDyadic,
-  fromDyadic,
+  dMod2,
   )
 where
 
@@ -68,14 +67,20 @@ class Num g => Periodic g where
 
 -- | Class of rings where 2 is a regular element
 class Num r => TwoRegular r where
-  half   :: r
-  divTwo :: r -> r
+  {-# MINIMAL fromDyadic #-}
+  fromDyadic :: DyadicRational -> r
+  half       :: r
+  divTwo     :: r -> r
   -- default implementations
-  half   = divTwo 1
-  divTwo = (*half)
+  {-# INLINE half #-}
+  {-# INLINE divTwo #-}
+  half   = fromDyadic $ dyadic 1 1
+  divTwo = (* half)
 
 instance TwoRegular Double where
-  half = 0.5
+  fromDyadic (Dy a n) = (fromIntegral a) / 2^n
+  half                = 0.5
+  divTwo              = (* 0.5)
 
 {-------------------------------
  Boolean field
@@ -110,98 +115,96 @@ instance Periodic FF2 where
  -------------------------------}
 
 -- | Dyadic rationals
-newtype DyadicRational = D (Integer, Int) deriving (Eq)
+data DyadicRational = Dy {-# UNPACK #-} !Integer {-# UNPACK #-} !Int deriving (Eq)
 
 instance Show DyadicRational where
-  show (D (a,0)) = show a
-  show (D (a,n)) = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
+  show (Dy a 0) = show a
+  show (Dy a n) = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
 
 instance Ord DyadicRational where
-  compare (D (a,n)) (D (b,m))
+  compare (Dy a n) (Dy b m)
     | n == m    = compare a b
     | otherwise = compare (a `shiftL` (n'-n)) (b `shiftL` (n'-m))
       where n' = max n m
 
 -- | Inefficient, but exact representation
 instance Real DyadicRational where
-  toRational (D (a,n)) = a%(1 `shiftL` n)
+  toRational (Dy a n) = a%(1 `shiftL` n)
 
 instance Num DyadicRational where
-  (D (a,n)) + (D (b,m))
-    | a == 0            = D (b,m)
-    | b == 0            = D (a,n)
-    | n == m            = canonicalize $ D (a + b, n)
-    | otherwise         = canonicalize $ D (a `shiftL` (n'-n) + b `shiftL` (n'-m), n')
+  (Dy a n) + (Dy b m)
+    | a == 0          = Dy b m
+    | b == 0          = Dy a n
+    | n == m          = canonicalize $ Dy (a + b) n
+    | otherwise       = canonicalize $ Dy (a `shiftL` (n'-n) + b `shiftL` (n'-m)) n'
       where n' = max n m
-  (D (a,n)) * (D (b,m)) = canonicalize $ D (a * b, n + m)
-  negate (D (a,n))      = canonicalize $ D (-a,n)
-  abs (D (a,n))         = D (a,n)
-  signum (D (a,_n))     = D (signum a,0)
-  fromInteger i         = D (i,0)
+
+  (Dy a n) * (Dy b m) = canonicalize $ Dy (a * b) (n + m)
+  negate (Dy a n)     = canonicalize $ Dy (-a) n
+  abs (Dy a n)        = Dy a n
+  signum (Dy a _n)    = Dy (signum a) 0
+  fromInteger i       = Dy i 0
 
 instance ZModule DyadicRational where
-  power i (D (a,n)) = canonicalize $ D (i*a, n)
+  power i (Dy a n) = canonicalize $ Dy (i*a) n
 
 instance TwoRegular DyadicRational where
-  half             = D (1,1)
-  divTwo (D (a,n)) = D (a,n+1)
+  fromDyadic      = id
+  half            = Dy 1 1
+  divTwo (Dy a n) = Dy a (n+1)
 
 -- | Write in a normalized, canonical form
 canonicalize :: DyadicRational -> DyadicRational
-canonicalize (D (a,n))
-  | a == 0                  = D (0,0)
-  | n <  0                  = D (a `shiftL` (-n), 0)
+canonicalize (Dy a n)
+  | a == 0                  = Dy 0 0
+  | n <  0                  = Dy (a `shiftL` (-n)) 0
   | a `mod` 2 == 0 && n > 0 =
     let lg = I# (integerLog2# $ a .&. complement (a-1)) in
       if lg > n
-      then D (a `shiftR` n, 0)
-      else D (a `shiftR` lg, n-lg)
-  | otherwise               = D (a,n)
+      then Dy (a `shiftR` n) 0
+      else Dy (a `shiftR` lg) (n-lg)
+  | otherwise               = Dy a n
 
 -- | Construct a canonical dyadic fraction
 dyadic :: Integer -> Int -> DyadicRational
-dyadic a n = canonicalize $ D (a,n)
+dyadic a n = canonicalize $ Dy a n
 
--- | Reduce a dyadic fraction mod \(\mathbb{Z}\)
+-- | Reduce a dyadic fraction mod 2
 reduce :: DyadicRational -> DyadicRational
-reduce (D (a,n)) = D (a .&. ((1 `shiftL` n) - 1), n)
+reduce (Dy a n) = Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
 
 -- | Get the denominator of a dyadic fraction
 denom :: DyadicRational -> Integer
-denom (D (_,n)) = 1 `shiftL` n
+denom (Dy _ n) = 1 `shiftL` n
 
--- | Dyadic fractions between 0 and 1
-newtype ProperDyadic = PD DyadicRational deriving (Eq, Ord)
+-- | Dyadic fractions between 0 and 2
+newtype DMod2 = D2 DyadicRational deriving (Eq, Ord)
 
-instance Show ProperDyadic where
-  show (PD a) = show a
+instance Show DMod2 where
+  show (D2 a) = show a
 
-instance Real ProperDyadic where
-  toRational (PD a) = toRational a
+instance Real DMod2 where
+  toRational (D2 a) = toRational a
 
--- | Note: ProperDyadic is not a ring
-instance Num ProperDyadic where
-  (PD a) + (PD a') = PD . reduce $ a + a'
-  (PD a) * (PD a') = PD $ a * a'
-  negate (PD a)    = PD . reduce $ negate a
-  abs (PD a)       = PD $ abs a
-  signum (PD a)    = PD $ signum a
-  fromInteger i    = PD . reduce $ fromInteger i
+instance Num DMod2 where
+  (D2 a) + (D2 a') = D2 . reduce $ a + a'
+  (D2 a) * (D2 a') = D2 $ a * a'
+  negate (D2 a)    = D2 . reduce $ negate a
+  abs (D2 a)       = D2 $ abs a
+  signum (D2 a)    = D2 $ signum a
+  fromInteger i    = D2 . reduce $ fromInteger i
 
-instance ZModule ProperDyadic where
-  power i (PD a) = PD . reduce $ power i a
+instance ZModule DMod2 where
+  power i (D2 a) = D2 . reduce $ power i a
 
-instance Periodic ProperDyadic where
-  order (PD a)   = denom a
+instance Periodic DMod2 where
+  order (D2 a)   = denom a
 
-instance TwoRegular ProperDyadic where
-  half          = PD half
-  divTwo (PD a) = PD $ divTwo a
+instance TwoRegular DMod2 where
+  fromDyadic    = D2 . reduce
+  half          = D2 half
+  divTwo (D2 a) = D2 $ divTwo a
 
--- | Construct a dyadic fraction mod \(\mathbb{Z}\)
-properDyadic :: Integer -> Int -> ProperDyadic
-properDyadic a = PD . reduce . dyadic a
-
--- | Convert a dyadic rational to a proper fraction
-fromDyadic :: DyadicRational -> ProperDyadic
-fromDyadic = PD . reduce
+-- | Construct a dyadic fraction mod 2
+dMod2 :: Integer -> Int -> DMod2
+dMod2 a = D2 . reduce . dyadic a
