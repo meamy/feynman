@@ -108,6 +108,7 @@ instance Conditional v a => Conditional v (Vec n a) where
 
 class Exponential r where
   ee :: DyadicRational -> r
+
 {-----------------------------------
  Coefficient rings
  -----------------------------------}
