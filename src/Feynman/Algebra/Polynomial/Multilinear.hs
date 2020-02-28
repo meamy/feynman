@@ -49,6 +49,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   substMany,
   solveForX,
   liftMonomial,
+  lift,
   fourier,
   invFourier,
   canonicalize
@@ -353,6 +354,10 @@ liftImpl WitAdd  = ofTermList . zip (repeat 1) . Set.toList . Set.map f . getVar
 -- | Translate an additive monomial to a Boolean polynomial
 liftMonomial :: (Ord v, ReprC repr) => Monomial v repr -> SBool v
 liftMonomial = liftImpl witRepr
+
+-- | Translate a Boolean polynomial into any ring (in this case, Z-module)
+lift :: (Ord v, Eq r, ZModule r) => SBool v -> Multilinear v r 'Mult
+lift = distribute 1
 
 -- | Distribute a ring element over a monomial according to the equation
 -- 
