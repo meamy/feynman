@@ -53,6 +53,12 @@ one = fromInteger 1
 class Num g => ZModule g where
   power :: Integer -> g -> g
 
+instance ZModule Integer where
+  power = (*)
+
+instance ZModule Double where
+  power a = (fromIntegral a *)
+
 -- | Groups with computable orders. Rather than the standard
 --   notion, the group 'g' need not have a finite order for
 --   each element. In this case, 'order g == 0', and otherwise

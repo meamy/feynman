@@ -50,6 +50,8 @@ module Feynman.Algebra.Polynomial.Multilinear(
   solveForX,
   liftMonomial,
   lift,
+  excInc,
+  incExc,
   fourier,
   invFourier,
   canonicalize
@@ -163,6 +165,12 @@ instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   fromInteger 0 = M $ Map.empty
   fromInteger i = M . Map.singleton (Monomial Set.empty) $ fromInteger i
 
+instance (Ord v, Eq r, ZModule r, ReprC repr) => ZModule (Multilinear v r repr) where
+  power i = M . Map.map (power i) . getTerms
+
+instance (Ord v, Eq r, Periodic r, ReprC repr) => Periodic (Multilinear v r repr) where
+  order = Map.foldr (\a -> lcm (order a)) 1 . getTerms
+
 {- Accessors -}
 
 -- | Get a list of the coefficients in grevlex order
@@ -239,7 +247,7 @@ multM :: (Ord v, Eq r, Num r) =>
          ReprWit repr -> Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
 multM wit p q = case wit of
   WitAdd  -> error "Error: multiplying additive phase polynomials"
-  WitMult -> normalizeImpl WitMult $ multImpl p q
+  WitMult -> normalize $ multImpl p q
 
 multImpl :: (Ord v, Eq r, Num r) =>
             Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
@@ -269,14 +277,9 @@ remVar v = M . Map.filterWithKey (\m _a -> not $ Set.member v $ getVars m) . get
 
 {- Transformations -}
 
-normalizeImpl :: (Ord v, Eq r, Num r) =>
-                 ReprWit repr -> Multilinear v r repr -> Multilinear v r repr
-normalizeImpl WitAdd  = dropConstant . M . Map.filter (0/=) . getTerms
-normalizeImpl WitMult = M . Map.filter (0/=) . getTerms
-
 -- | Normalize a multilinear polynomial
-normalize :: (Ord v, Eq r, Num r, ReprC repr) => Multilinear v r repr -> Multilinear v r repr
-normalize = normalizeImpl witRepr
+normalize :: (Ord v, Eq r, Num r) => Multilinear v r repr -> Multilinear v r repr
+normalize = M . Map.filter (0/=) . getTerms
 
 -- | Drops the constant term. Useful for verification up to global phase
 dropConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> Multilinear v r repr
@@ -367,7 +370,7 @@ unDistribute :: (Ord v, Eq r, Num r, TwoRegular r) =>
                 r -> Monomial v 'Mult -> Multilinear v r 'Add
 unDistribute a' = go a' . Set.toList . getVars
   where go 0 _        = zero
-        go a []       = one
+        go a []       = constant a
         go a [x]      = ofTerm (a, Monomial $ Set.singleton x)
         go a (x:y:xs) =
           let recTerm = go (negate $ divTwo a) $ x:xs
@@ -389,7 +392,7 @@ excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.
 distribute :: (Ord v, Eq r, ZModule r) => r -> SBool v -> Multilinear v r 'Mult
 distribute a' = go a' . Map.keys . getTerms
   where go 0 _      = zero
-        go a []     = zero
+        go a []     = constant a
         go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
 
 -- | Non-recursive inclusion-exclusion formula
