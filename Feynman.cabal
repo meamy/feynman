@@ -32,6 +32,9 @@ library
                        Feynman.Algebra.Matroid,
                        Feynman.Algebra.Linear,
                        Feynman.Algebra.Polynomial,
+                       Feynman.Algebra.Polynomial.Univariate,
+                       Feynman.Algebra.Polynomial.Multilinear,
+                       Feynman.Algebra.Pathsum.Concrete,
 
                        Feynman.Synthesis.Phase,
                        Feynman.Synthesis.Reversible,
@@ -70,7 +73,7 @@ library
 
 executable feynopt
   main-is:             FeynOpt.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -Wall
   default-extensions:  GADTs,
                        ExistentialQuantification,
@@ -92,7 +95,7 @@ executable feynopt
 
 executable feynver
   main-is:             FeynVerify.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -Wall
   default-extensions:  GADTs,
                        ExistentialQuantification,

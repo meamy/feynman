@@ -204,7 +204,7 @@ instance ZModule DMod2 where
   power i (D2 a) = D2 . reduce $ power i a
 
 instance Periodic DMod2 where
-  order (D2 a)   = denom a
+  order (D2 a)   = 2 * denom a
 
 instance TwoRegular DMod2 where
   fromDyadic    = D2 . reduce

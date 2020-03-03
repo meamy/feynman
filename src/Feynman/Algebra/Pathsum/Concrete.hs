@@ -11,6 +11,10 @@ Portability : portable
 
 module Feynman.Algebra.Pathsum.Concrete where
 
+import Data.List
+import Data.Set (Set)
+import qualified Data.Set as Set
+
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
@@ -57,11 +61,11 @@ data Pathsum g = Pathsum {
   inDeg     :: !Integer,
   outDeg    :: !Integer,
   pathVars  :: !Integer,
-  phasePoly :: !PhasePolynomial Var g,
+  phasePoly :: !(PseudoBoolean Var g),
   outVals   :: ![SBool Var]
   } deriving (Eq)
 
-instance (Show g, Eq g, Periodic g) => Show (Pathsum a) where
+instance (Show g, Eq g, Periodic g, ZModule g) => Show (Pathsum g) where
   show sop = inputstr ++ scalarstr ++ sumstr ++ amplitudestr ++ statestr
     where inputstr = case inDeg sop of
             0 -> ""
@@ -70,7 +74,7 @@ instance (Show g, Eq g, Periodic g) => Show (Pathsum a) where
             j -> U.ket (ivar 0 ++ U.dots ++ ivar (j-1)) ++ " " ++ U.mapsto ++ " "
           scalarstr = case sde sop of
             0 -> ""
-            k -> U.sup ("1/(" ++ U.rttwo ++ ")") k
+            k -> U.sup ("1/(" ++ U.rt2 ++ ")") k
           sumstr = case pathVars sop of
             0 -> ""
             1 -> U.sum ++ "[" ++ pvar 0 ++ "]"
@@ -81,100 +85,102 @@ instance (Show g, Eq g, Periodic g) => Show (Pathsum a) where
             1 -> ""
             2 -> "(-1)^{" ++ show (power 2 $ phasePoly sop) ++ "}"
             4 -> U.i ++ "^{" ++ show (power 4 $ phasePoly sop) ++ "}"
-            8 -> U.omega ++ "^{" ++ show (
-                                          
+            8 -> U.omega ++ "^{" ++ show (power 8 $ phasePoly sop) ++ "}"
+            j -> U.sub U.zeta j ++ "^{" ++ show (power j $ phasePoly sop) ++ "}"
+          statestr = concatMap (U.ket . show) $ outVals sop
 
-      is = concatMap (\(v, b) -> if b then v else "0") . Map.toList $ inVals sop
-          sc = case sde sop of
-                 0 -> ""
-                 i -> "1/sqrt(2)^" ++ show i ++ " "
-          sm = case pathVars sop of
-                 [] -> ""
-                 xs -> "Sum[" ++ (intercalate "," . map (\i -> pathVar i) $ xs) ++ "] "
-          ph = case poly sop == zero of
-                 True  -> ""
-                 False -> "e^i*pi*" ++ showPoly (poly sop)
-          os = concatMap showPoly $ Map.elems $ outVals sop
-          showPoly p
-            | isMono (simplify p)  = show p
-            | otherwise = "(" ++ show p ++ ")"
+-- | Retrieve the internal path variables
+internalPaths :: Pathsum g -> [Var]
+internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
+  where outVars = Set.toList . Set.unions . map vars $ outVals sop
 
-pathVar :: Int -> ID
-pathVar i = "p" ++ show i
+{----------------------------
+ Constructors
+ ----------------------------}
 
-internalPaths :: Pathsum a -> [Int]
-internalPaths sop = filter f $ pathVars sop
-  where f i = all (not . (appearsIn $ pathVar i)) . Map.elems $ outVals sop
+-- | Construct an 'n'-qubit identity operator
+identity :: (Eq g, Num g) => Integer -> Pathsum g
+identity n = Pathsum 0 n n 0 0 [ofVar (IVar i) | i <- [0..n-1]]
 
-{- Constructors -}
+-- | Construct a ket
+ket :: (Eq g, Num g) => [FF2] -> Pathsum g
+ket xs = Pathsum 0 0 (fromIntegral $ length xs) 0 0 $ map constant xs
 
-identity0 :: Pathsum a
-identity0 = Pathsum 0 Map.empty [] zero Map.empty
-
-identity :: [ID] -> Pathsum a
-identity vars = Pathsum {
-  sde      = 0,
-  inVals   = Map.fromList $ zip vars [True | v <- vars],
-  pathVars = [],
-  poly     = zero,
-  outVals  = Map.fromList $ zip vars [ofVar v | v <- vars]
-  }
-
-identityTrans :: Map ID Bool -> Pathsum a
-identityTrans inp = Pathsum {
-  sde      = 0,
-  inVals   = inp,
-  pathVars = [],
-  poly     = zero,
-  outVals  =
-      let f v False = zero
-          f v True  = ofVar v
-      in
-        Map.mapWithKey f inp
-  }
-
-blank :: [ID] -> Pathsum a
-blank vars = Pathsum {
-  sde      = 0,
-  inVals   = Map.fromList $ zip vars [False | i <- vars],
-  pathVars = [],
-  poly     = zero,
-  outVals  = Map.fromList $ zip vars [zero | i <- vars]
-  }
-
-ofKet :: Map ID Bool -> Pathsum a
-ofKet ket = Pathsum {
-  sde      = 0,
-  inVals   = Map.map (\_ -> False) ket,
-  pathVars = [],
-  poly     = zero,
-  outVals  = Map.map constant ket
-  }
+-- | Construct a bra
+bra :: (Eq g, ZModule g) => [FF2] -> Pathsum g
+bra xs = Pathsum 2 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
+  where y = ofVar (PVar 0)
+        p = foldr (*) 1 . map valF $ zip xs [0..]
+        valF (val, i) = 1 + constant val + ofVar (IVar i)
 
 
-{- Operators -}
-compose :: (Eq a, Num a) => Pathsum a -> Pathsum a -> Pathsum a
-compose u v
-  | u == mempty = v
-  | v == mempty = u
-  | otherwise   =
-    let varShift = case null (pathVars v) of
-          True  -> 0
-          False -> maximum ([-1] ++ pathVars u) - minimum (pathVars v) + 1
-        sub =
-          let f v True  = Map.insert v $ Map.findWithDefault (ofVar v) v (outVals u)
-              f v False = error $ "Composing " ++ v ++ " with |0> on the right"
-              initMap = Map.fromList [(pathVar i, ofVar $ pathVar $ i + varShift) | i <- pathVars v]
-          in
-            Map.foldrWithKey f initMap (inVals v)
-    in Pathsum {
-      sde      = sde u + sde v,
-      inVals   = Map.union (inVals u) (inVals v),
-      pathVars = pathVars u ++ map (+ varShift) (pathVars v),
-      poly     = poly u + substMany sub (poly v),
-      outVals  = Map.union (Map.map (simplify . substMany sub) $ outVals v) (outVals u)
-      }
+-- | Initialize a fresh ancilla
+initialize :: (Eq g, Num g) => FF2 -> Pathsum g
+initialize b = ket [b]
 
+{-# INLINE initialize #-}
+
+-- | Dagger of initialize -- i.e. unnormalized post-selection
+postselect :: (Eq g, ZModule g) => FF2 -> Pathsum g
+postselect b = bra [b]
+
+{-# INLINE postselect #-}
+
+{----------------------------
+ Constants
+ ----------------------------}
+
+-- | A fresh, 0-valued ancilla
+fresh :: (Eq g, Num g) => Pathsum g
+fresh = Pathsum 0 0 1 0 0 [0]
+
+-- | X gate
+xgate :: (Eq g, Num g) => Pathsum g
+xgate = Pathsum 0 1 1 0 0 [1 + ofVar (IVar 0)]
+
+-- | Z gate
+zgate :: (Eq g, ZModule g) => Pathsum g
+zgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = lift $ ofVar (IVar 0)
+
+-- | Y gate
+ygate :: (Eq g, ZModule g, TwoRegular g) => Pathsum g
+ygate = Pathsum 0 1 1 0 p [1 + ofVar (IVar 0)]
+  where p = constant half + (lift $ ofVar (IVar 0))
+
+-- | S gate
+sgate :: (Eq g, ZModule g, TwoRegular g) => Pathsum g
+sgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale half (lift $ ofVar (IVar 0))
+
+-- | T gate
+tgate :: (Eq g, ZModule g, TwoRegular g) => Pathsum g
+tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale (half*half) (lift $ ofVar (IVar 0))
+
+-- | R_k gate
+rkgate :: (Eq g, ZModule g, TwoRegular g) => Integer -> Pathsum g
+rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
+
+-- | H gate
+hgate :: (Eq g, ZModule g, TwoRegular g) => Pathsum g
+hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
+  where p = lift $ (ofVar $ IVar 0) * (ofVar $ PVar 0)
+
+-- | CNOT gate
+cxgate :: (Eq g, Num g) => Pathsum g
+cxgate = Pathsum 0 2 2 0 0 [x0, x0+x1]
+  where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+
+-- | SWAP gate
+swapgate :: (Eq g, Num g) => Pathsum g
+swapgate = Pathsum 0 2 2 0 0 [x1, x0]
+  where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+
+{-
 restrict :: (Eq a, Num a) => Pathsum a -> Map ID Bool -> Pathsum a
 restrict sop bra = foldl' f sop $ Map.keys bra
   where f sop x =
@@ -567,3 +573,4 @@ reduce sop = go ([], sop)
 -- Fully reduces a path sum for a given input and output state
 evaluate :: (Eq a, Fin a) => Pathsum a -> Map ID Bool -> Map ID Bool -> ([Rule], Pathsum a)
 evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
+-}
