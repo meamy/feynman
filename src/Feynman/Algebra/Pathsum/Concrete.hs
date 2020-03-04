@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 
 {-|
@@ -12,11 +13,15 @@ Portability : portable
 module Feynman.Algebra.Pathsum.Concrete where
 
 import Data.List
-import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Ratio
+import Data.Semigroup
+import Control.Monad (mzero, msum)
+import Data.Maybe (maybeToList)
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
+import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear
 
 {-----------------------------------
@@ -65,16 +70,17 @@ data Pathsum g = Pathsum {
   outVals   :: ![SBool Var]
   } deriving (Eq)
 
-instance (Show g, Eq g, Periodic g, ZModule g) => Show (Pathsum g) where
+instance (Show g, Eq g, Periodic g, Real g) => Show (Pathsum g) where
   show sop = inputstr ++ scalarstr ++ sumstr ++ amplitudestr ++ statestr
     where inputstr = case inDeg sop of
             0 -> ""
             1 -> U.ket (ivar 0) ++ " " ++ U.mapsto ++ " "
             2 -> U.ket (ivar 0 ++ ivar 1) ++ " " ++ U.mapsto ++ " "
             j -> U.ket (ivar 0 ++ U.dots ++ ivar (j-1)) ++ " " ++ U.mapsto ++ " "
-          scalarstr = case sde sop of
-            0 -> ""
-            k -> U.sup ("1/(" ++ U.rt2 ++ ")") k
+          scalarstr = case compare (sde sop) 0 of
+            LT -> U.sup ("(" ++ U.rt2 ++ ")") (abs $ sde sop)
+            EQ -> ""
+            GT -> U.sup ("1/(" ++ U.rt2 ++ ")") (sde sop)
           sumstr = case pathVars sop of
             0 -> ""
             1 -> U.sum ++ "[" ++ pvar 0 ++ "]"
@@ -83,11 +89,15 @@ instance (Show g, Eq g, Periodic g, ZModule g) => Show (Pathsum g) where
           amplitudestr = case order (phasePoly sop) of
             0 -> U.e ++ "^" ++ U.i ++ U.pi ++ "{" ++ show (phasePoly sop) ++ "}"
             1 -> ""
-            2 -> "(-1)^{" ++ show (power 2 $ phasePoly sop) ++ "}"
-            4 -> U.i ++ "^{" ++ show (power 4 $ phasePoly sop) ++ "}"
-            8 -> U.omega ++ "^{" ++ show (power 8 $ phasePoly sop) ++ "}"
-            j -> U.sub U.zeta j ++ "^{" ++ show (power j $ phasePoly sop) ++ "}"
+            2 -> "(-1)^{" ++ show (makeIntegral 1 $ phasePoly sop) ++ "}"
+            4 -> U.i ++ "^{" ++ show (makeIntegral 2 $ phasePoly sop) ++ "}"
+            8 -> U.omega ++ "^{" ++ show (makeIntegral 4 $ phasePoly sop) ++ "}"
+            j -> U.sub U.zeta j ++ "^{" ++ show (makeIntegral j $ phasePoly sop) ++ "}"
           statestr = concatMap (U.ket . show) $ outVals sop
+
+-- | Convenience function for pretty printing
+makeIntegral :: Real g => Integer -> PseudoBoolean v g -> PseudoBoolean v Integer
+makeIntegral i = cast (\a -> numerator $ toRational a * toRational i)
 
 -- | Retrieve the internal path variables
 internalPaths :: Pathsum g -> [Var]
@@ -112,7 +122,6 @@ bra xs = Pathsum 2 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
   where y = ofVar (PVar 0)
         p = foldr (*) 1 . map valF $ zip xs [0..]
         valF (val, i) = 1 + constant val + ofVar (IVar i)
-
 
 -- | Initialize a fresh ancilla
 initialize :: (Eq g, Num g) => FF2 -> Pathsum g
@@ -159,7 +168,7 @@ tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale (half*half) (lift $ ofVar (IVar 0))
 
 -- | R_k gate
-rkgate :: (Eq g, ZModule g, TwoRegular g) => Integer -> Pathsum g
+rkgate :: (Eq g, ZModule g, TwoRegular g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
 
@@ -180,6 +189,231 @@ swapgate = Pathsum 0 2 2 0 0 [x1, x0]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
 
+{----------------------------
+ Composition
+ ----------------------------}
+
+-- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
+--   and the dimensions match.
+plusMaybe :: (Eq g, ZModule g) => Pathsum g -> Pathsum g -> Maybe (Pathsum g)
+plusMaybe sop sop'
+  | inDeg sop  /= inDeg sop'                                       = Nothing
+  | outDeg sop /= outDeg sop'                                      = Nothing
+  | (sde sop) + 2*(pathVars sop') /= (sde sop') + 2*(pathVars sop) = Nothing
+  | otherwise = Just $ Pathsum sde' inDeg' outDeg' pathVars' phasePoly' outVals'
+  where sde'       = (sde sop) + 2*(pathVars sop')
+        inDeg'     = inDeg sop
+        outDeg'    = outDeg sop
+        pathVars'  = (pathVars sop) + (pathVars sop') + 1
+        y          = ofVar $ PVar (pathVars' - 1)
+        phasePoly' = (lift y)*(phasePoly sop) +
+                     (lift (1+y))*(renameMonotonic shift $ phasePoly sop')
+        outVals'   = map (\(a,b) -> b + y*(a + b)) $
+                       zip (outVals sop) (map (renameMonotonic shift) $ outVals sop')
+        shift x    = case x of
+          PVar i -> PVar $ i + (pathVars sop)
+          _      -> x
+
+-- | Construct thesum of two path sums. Raises an error if the sums are incompatible
+plus :: (Eq g, ZModule g) => Pathsum g -> Pathsum g -> Pathsum g
+plus sop sop' = case plusMaybe sop sop' of
+  Nothing    -> error "Incompatible path sums"
+  Just sop'' -> sop''
+
+-- | Compose two path sums in parallel
+tensor :: (Eq g, Num g) => Pathsum g -> Pathsum g -> Pathsum g
+tensor sop sop' = Pathsum sde' inDeg' outDeg' pathVars' phasePoly' outVals'
+  where sde'       = (sde sop) + (sde sop')
+        inDeg'     = (inDeg sop) + (inDeg sop')
+        outDeg'    = (outDeg sop) + (outDeg sop')
+        pathVars'  = (pathVars sop) + (pathVars sop')
+        phasePoly' = (phasePoly sop) + (renameMonotonic shift $ phasePoly sop')
+        outVals'   = (outVals sop) ++ (map (renameMonotonic shift) $ outVals sop')
+        shift x    = case x of
+          IVar i -> IVar $ i + (inDeg sop)
+          PVar i -> PVar $ i + (pathVars sop)
+
+-- | Attempt to compose two path sums in sequence. Only succeeds if the dimensions
+--   are compatible (i.e. if the out degree of the former is the in degree of the
+--   latter)
+timesMaybe :: (Eq g, ZModule g) => Pathsum g -> Pathsum g -> Maybe (Pathsum g)
+timesMaybe sop sop'
+  | outDeg sop /= inDeg sop' = Nothing
+  | otherwise = Just $ Pathsum sde' inDeg' outDeg' pathVars' phasePoly' outVals'
+  where sde'       = (sde sop) + (sde sop')
+        inDeg'     = inDeg sop
+        outDeg'    = outDeg sop'
+        pathVars'  = (pathVars sop) + (pathVars sop')
+        phasePoly' = (phasePoly sop) +
+                     (substMany sub . renameMonotonic shift $ phasePoly sop')
+        outVals'   = (map (substMany sub . renameMonotonic shift) $ outVals sop')
+        shift x    = case x of
+          PVar i -> PVar $ i + (pathVars sop)
+          _      -> x
+        sub x      = case x of
+          IVar i -> (outVals sop)!!(fromInteger i)
+          _      -> ofVar x
+
+-- | Compose two path sums in sequence. Throws an error if the dimensions are
+--   not compatible
+times :: (Eq g, ZModule g) => Pathsum g -> Pathsum g -> Pathsum g
+times sop sop' = case timesMaybe sop sop' of
+  Nothing    -> error "Incompatible path sum dimensions"
+  Just sop'' -> sop''
+
+-- | Scale the normalization factor
+renormalize :: Integer -> Pathsum g -> Pathsum g
+renormalize k (Pathsum a b c d e f) = Pathsum (a + k) b c d e f
+
+{--------------------------
+ Type class instances
+ --------------------------}
+  
+instance (Eq g, Num g) => Semigroup (Pathsum g) where
+  (<>) = tensor
+
+instance (Eq g, Num g) => Monoid (Pathsum g) where
+  mempty  = Pathsum 0 0 0 0 0 []
+  mappend = tensor
+
+instance (Eq g, ZModule g) => Num (Pathsum g) where
+  (+)                          = plus
+  (*)                          = (flip times)
+  negate (Pathsum a b c d e f) = Pathsum a b c d (lift 1 + e) f
+  abs (Pathsum a b c d e f)    = Pathsum a b c d (dropConstant e) f
+  signum sop                   = sop
+  fromInteger                  = identity
+
+{--------------------------
+ Reduction rules
+ --------------------------}
+
+-- | Maps the order 1 and order 2 elements of a group to FF2
+injectFF2 :: Periodic g => g -> Maybe FF2
+injectFF2 a = case order a of
+  1 -> Just 0
+  2 -> Just 1
+  _ -> Nothing
+
+-- | Gives a Boolean polynomial equivalent to the current polynomial, if possible
+toBooleanPoly :: (Eq g, Periodic g) => PseudoBoolean v g -> Maybe (SBool v)
+toBooleanPoly = castMaybe injectFF2
+
+-- | Elim rule. \(\dots(\sum_y)\dots = \dots 2 \dots\)
+matchElim :: (Eq g, Periodic g) => Pathsum g -> [Var]
+matchElim sop = msum . (map go) $ internalPaths sop
+  where go v = if Set.member v (vars $ phasePoly sop) then [] else [v]
+
+-- | Generic HH rule. \(\dots(\sum_y (-1)^{y\cdot f})\dots = \dots|_{f = 0}\)
+matchHH :: (Eq g, Periodic g) => Pathsum g -> [(Var, SBool Var)]
+matchHH sop = msum . (map (maybeToList . go)) $ internalPaths sop
+  where go v = toBooleanPoly (divVar v $ phasePoly sop) >>= \p -> return (v, p)
+
+-- | Solvable instances of the HH rule.
+--   \(\dots(\sum_y (-1)^{y(z \oplus f)})\dots = \dots[z \gets f]\)
+matchHHSolve :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
+matchHHSolve sop = do
+  (v, p)   <- matchHH sop
+  (v', p') <- solveForX p
+  case v' of
+    PVar j -> return (v, v', p')
+    _      -> mzero
+
+-- | Instances of the HH rule with a linear substitution
+matchHHLinear :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
+matchHHLinear sop = do
+  (v, p)   <- filter (\(_, p) -> degree p <= 1) $ matchHH sop
+  (v', p') <- solveForX p
+  return (v, v', p')
+
+-- | Instances of the (\omega\) rule
+matchOmega :: (Eq g, Periodic g, TwoRegular g) => Pathsum g -> [(Var, SBool Var)]
+matchOmega sop = do
+  v <- internalPaths sop
+  p <- maybeToList . toBooleanPoly . addFactor v $ phasePoly sop
+  return (v, p)
+  where addFactor v p = constant (fromDyadic $ dyadic 1 1) + divVar v p
+
+{--------------------------
+ Pattern synonyms for reductions
+ --------------------------}
+
+-- | Pattern synonym for Elim
+pattern Elim :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Elim v <- (matchElim -> (v:_))
+
+-- | Pattern synonym for HH
+pattern HH :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
+pattern HH v p <- (matchHH -> (v, p):_)
+
+-- | Pattern synonym for solvable HH instances
+pattern HHSolved :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
+pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
+
+-- | Pattern synonym for linear HH instances
+pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
+pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
+
+-- | Pattern synonym for Omega instances
+pattern Omega :: (Eq g, Periodic g, TwoRegular g) => Var -> SBool Var -> Pathsum g
+pattern Omega v p <- (matchOmega -> (v, p):_)
+
+{--------------------------
+ Applying reductions
+ --------------------------}
+
+-- | Apply an elim rule. Does not check if the instance is valid
+applyElim :: Var -> Pathsum g -> Pathsum g
+applyElim (PVar i) (Pathsum a b c d e f) = Pathsum (a-2) b c (d-1) e' f'
+  where e' = renameMonotonic varShift e
+        f' = map (renameMonotonic varShift) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+
+-- | Apply a (solvable) HH rule. Does not check if the instance is valid
+applyHHSolved :: (Eq g, ZModule g) => Var -> Var -> SBool Var -> Pathsum g -> Pathsum g
+applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
+  where e' = renameMonotonic varShift . subst v p . remVar (PVar i) $ e
+        f' = map (renameMonotonic varShift . subst v p) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+
+-- | Apply an (\omega\) rule. Does not check if the instance is valid
+applyOmega :: (Eq g, ZModule g, TwoRegular g) => Var -> SBool Var -> Pathsum g -> Pathsum g
+applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
+  where e' = renameMonotonic varShift $ p' + remVar (PVar i) e
+        f' = map (renameMonotonic varShift) f
+        p' = constant (fromDyadic $ dyadic 1 2) + scale (fromDyadic $ dyadic 3 1) (lift p)
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+
+{--------------------------
+ Reduction procedures
+ --------------------------}
+
+-- | A complete normalization procedure for Clifford circuits. Originally described in
+--   the paper M. Amy,
+--   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
+grind :: (Eq g, Periodic g, ZModule g, TwoRegular g) => Pathsum g -> Pathsum g
+grind sop = case sop of
+  Elim y         -> grind $ applyElim y sop
+  HHSolved y z p -> grind $ applyHHSolved y z p sop
+  Omega y p      -> grind $ applyOmega y p sop
+  _              -> sop
+
+-- | Grinds a pathsum for a given input & output
+evaluate :: (Eq g, Periodic g, ZModule g, TwoRegular g) => [FF2] -> Pathsum g -> [FF2] -> Pathsum g
+evaluate o sop i = grind $ bra o <> sop <> ket i
+
+{--------------------------
+ Deprecated methods
+ --------------------------}
 {-
 restrict :: (Eq a, Num a) => Pathsum a -> Map ID Bool -> Pathsum a
 restrict sop bra = foldl' f sop $ Map.keys bra
@@ -232,59 +466,6 @@ instance (Eq a, Num a) => Semigroup (Pathsum a) where
 instance (Eq a, Num a) => Monoid (Pathsum a) where
   mempty  = identity0
   mappend = compose
-
-{- Implementations -}
-
-newtype Z8 = Z8 { inject :: Int } deriving (Eq)
-
-instance Show Z8 where
-  show (Z8 x) = show x
-
-instance Num Z8 where
-  (Z8 x) + (Z8 y) = Z8 $ (x + y) `mod` 8
-  (Z8 x) * (Z8 y) = Z8 $ (x * y) `mod` 8
-  negate (Z8 x)   = Z8 $ 8 - x
-  abs (Z8 x)      = Z8 $ x `mod` 8
-  signum (Z8 x)   = Z8 $ signum x
-  fromInteger i   = Z8 $ fromIntegral $ i `mod` 8
-
-toPathsumWithHints :: [ID] -> Primitive -> Pathsum Z8
-toPathsumWithHints vars gate = case gate of
-  H x      -> init { pathVars = [0],
-                     sde = s + 1,
-                     poly = p + ofTerm (fromInteger 4) [x, "p0"],
-                     outVals = Map.insert x (ofVar "p0") outv }
-  X x      -> init { outVals = Map.adjust (+ one) x outv }
-  Y x      -> init { poly = p + (constant $ fromInteger 2) + (ofTerm (fromInteger 4) [x]),
-                     outVals = Map.adjust (+ one) x outv }
-  Z x      -> init { poly = p + (ofTerm (fromInteger 4) [x]) }
-  CNOT x y -> init { outVals = Map.adjust (+ (ofVar x)) y outv }
-  S x      -> init { poly = p + (ofTerm (fromInteger 2) [x]) }
-  Sinv x   -> init { poly = p + (ofTerm (fromInteger 6) [x]) }
-  T x      -> init { poly = p + (ofTerm (fromInteger 1) [x]) }
-  Tinv x   -> init { poly = p + (ofTerm (fromInteger 7) [x]) }
-  Swap x y -> init { outVals = Map.insert x (outv!y) $ Map.insert y (outv!x) outv }
-  where init@(Pathsum s inv pathv p outv) = identity vars
-
-toPathsum :: Primitive -> Pathsum Z8
-toPathsum gate = case gate of
-  H x      -> toPathsumWithHints [x] gate
-  X x      -> toPathsumWithHints [x] gate
-  Y x      -> toPathsumWithHints [x] gate
-  Z x      -> toPathsumWithHints [x] gate
-  CNOT x y -> toPathsumWithHints [x,y] gate
-  S x      -> toPathsumWithHints [x] gate
-  Sinv x   -> toPathsumWithHints [x] gate
-  T x      -> toPathsumWithHints [x] gate
-  Tinv x   -> toPathsumWithHints [x] gate
-  Swap x y -> toPathsumWithHints [x,y] gate
-
-
-circuitPathsumWithHints :: [ID] -> [Primitive] -> Pathsum Z8
-circuitPathsumWithHints vars circuit = foldMap (toPathsumWithHints vars) circuit
-
-circuitPathsum :: [Primitive] -> Pathsum Z8
-circuitPathsum circuit = foldMap toPathsum circuit
 
 {- Simulation -}
 
@@ -419,158 +600,4 @@ amplitudes sop = foldReduceFull f g sop
   where f sop = Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
         g = Map.unionWith (+)
 
-{- Reduction -}
-
-data Rule =
-    Elim String
-  | Omega String (Multilinear Bool)
-  | HH String String (Multilinear Bool)
-  | Case String String (Multilinear Bool) String (Multilinear Bool)
-
-instance Show Rule where
-  show (Elim x)         = "[Elim] " ++ x
-  show (Omega x p)      = "[Omega] " ++ x ++ ", remainder: " ++ show p
-  show (HH x y p)       = "[HH] " ++ x ++ ", " ++ y ++ " <- "  ++ show p
-  show (Case x y p z q) = "[Case] " ++ x ++ ", " ++ y ++ " <- " ++ show p
-                                         ++ ", " ++ z ++ " <- " ++ show q
-
-class Num a => Fin a where
-  order :: a -> Int
-
-instance Fin Z8 where
-  order (Z8 x) = (lcm x 8) `div` x
-
-injectZ2 :: Fin a => a -> Maybe Bool
-injectZ2 a = case order a of
-  0 -> Just False
-  2 -> Just True
-  _ -> Nothing
-
-toBooleanPoly :: (Eq a, Fin a) => Multilinear a -> Maybe (Multilinear Bool)
-toBooleanPoly = convertMaybe injectZ2 . simplify
-
-axiomSimplify :: (Eq a, Fin a) => Pathsum a -> Maybe Int
-axiomSimplify sop = msum . (map f) $ internalPaths sop
-  where f i = if (pathVar i) `appearsIn` (poly sop) then Nothing else Just i
-
-axiomHHStrict :: (Eq a, Fin a) => Pathsum a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHStrict sop = msum . (map f) $ internalPaths sop
-  where g (x, p) = x `elem` (map pathVar $ pathVars sop)
-        f i      = do
-          p'        <- return $ factorOut (pathVar i) $ poly sop
-          p''       <- toBooleanPoly p'
-          (j, psub) <- find g $ solveForX p''
-          return (i, read $ tail j, psub)
-
-axiomHHOutputRestricted :: (Eq a, Fin a) => Pathsum a -> Maybe (Int, Int, Multilinear Bool)
-axiomHHOutputRestricted sop = msum . (map f) $ internalPaths sop
-  where g (x, p) = x `elem` (map pathVar $ pathVars sop) && degree p <= 1
-        f i      = do
-          p'        <- return $ factorOut (pathVar i) $ poly sop
-          p''       <- toBooleanPoly p'
-          (j, psub) <- find g $ solveForX p''
-          return (i, read $ tail j, psub)
-
-axiomSH3Strict :: (Eq a, Fin a) => Pathsum a -> Maybe (Int, Multilinear Bool)
-axiomSH3Strict sop = msum . (map f) $ internalPaths sop
-  where f i =
-          let p' = factorOut (pathVar i) $ (poly sop) - (ofTerm 2 [pathVar i]) in
-            toBooleanPoly p' >>= \q -> Just (i, q)
-
-axiomUnify :: (Eq a, Fin a) => Pathsum a -> Maybe (ID, Int, Multilinear Bool, Int, Multilinear Bool)
-axiomUnify sop = msum . (map f) $ internal
-  where internal   = internalPaths sop
-        findSoln i = find (\(x, _) -> x == pathVar i) . solveForX
-        f i        = do
-          p'      <- return $ factorOut (pathVar i) $ poly sop
-          (m, _)  <- find (\(m, a) -> monomialDegree m == 1 && order a == 4) . Map.toList . terms $ p'
-          x       <- find (\v -> not (v == pathVar i)) $ monomialVars m
-          p1      <- toBooleanPoly (p' - (ofTerm 2 [x]))
-          msum . (map $ g p' i x p1) $ internal \\ [i]
-        g p' i x p1 j = do
-          p''       <- return $ factorOut (pathVar j) $ poly sop
-          p2        <- toBooleanPoly (p'' - (constant (fromInteger 2)) - (ofTerm 6 [x]))
-          (_, jsub) <- findSoln j (subst x zero p1)
-          (_, isub) <- findSoln i (subst x one p2)
-          return (x, i, isub, j, jsub)
-
-axiomKill :: (Eq a, Fin a) => Pathsum a -> Maybe Int
-axiomKill sop = msum . (map f) $ internalPaths sop
-  where f i      = do
-          p'        <- return $ factorOut (pathVar i) $ poly sop
-          p''       <- toBooleanPoly p'
-          if intersect (vars p'') (map pathVar $ pathVars sop) == []
-            then Just i
-            else Nothing
-
--- Single application of an axiom
-applyRule :: (Eq a, Fin a) => Pathsum a -> Maybe (Rule, Pathsum a)
-applyRule sop = case sop of
-  (axiomSimplify -> Just rem) ->
-    let sop' = sop { sde      = sde sop - 2,
-                     pathVars = pathVars sop \\ [rem] }
-    in
-      Just (Elim $ pathVar rem, sop')
-  (axiomHHStrict -> Just (rem, sub, eq)) ->
-    let sop' = sop { sde      = sde sop - 2,
-                     pathVars = pathVars sop \\ [rem, sub],
-                     poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
-                     outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
-    in
-      Just (HH (pathVar rem) (pathVar sub) eq, sop')
-  (axiomSH3Strict -> Just (rem, eq)) ->
-    let sop' = sop { sde      = sde sop - 1,
-                     pathVars = pathVars sop \\ [rem],
-                     poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop) }
-    in
-      Just (Omega (pathVar rem) eq, sop')
-  (axiomUnify     -> Just (x, i, isub, j, jsub)) ->
-    let sop' = sop { sde      = sde sop - 2,
-                     pathVars = pathVars sop \\ [i, j],
-                     poly     =
-                       let xp = ofVar x
-                           pi = subst (pathVar j) jsub . subst x zero . removeVar (pathVar i) $ poly sop
-                           pj = subst (pathVar i) isub . subst x one  . removeVar (pathVar j) $ poly sop
-                       in
-                         simplify $ xp*pj + pi - xp*pi
-                   }
-    in
-      Just (Case x (pathVar i) isub (pathVar j) jsub, sop')
-  _ -> Nothing
-
--- Only performs linear substitutions. Useful for simplifying without increasing complexity
-applyRuleOutputRestricted :: (Eq a, Fin a) => Pathsum a -> Maybe (Rule, Pathsum a)
-applyRuleOutputRestricted sop = case sop of
-  (axiomSimplify -> Just rem) ->
-    let sop' = sop { sde      = sde sop - 2,
-                     pathVars = pathVars sop \\ [rem] }
-    in
-      Just (Elim $ pathVar rem, sop')
-  (axiomHHOutputRestricted -> Just (rem, sub, eq)) ->
-    let sop' = sop { sde      = sde sop - 2,
-                     pathVars = pathVars sop \\ [rem, sub],
-                     poly     = simplify . subst (pathVar sub) eq . removeVar (pathVar rem) $ poly sop,
-                     outVals  = Map.map (simplify . subst (pathVar sub) eq) $ outVals sop }
-    in
-      Just (HH (pathVar rem) (pathVar sub) eq, sop')
-  (axiomSH3Strict -> Just (rem, eq)) ->
-    let sop' = sop { sde      = sde sop - 1,
-                     pathVars = pathVars sop \\ [rem],
-                     poly     = simplify $ one + distribute 6 eq + removeVar (pathVar rem) (poly sop) }
-    in
-      Just (Omega (pathVar rem) eq, sop')
-  _ -> Nothing
-
-{- Strategies -}
-
--- Applies reductions until a fixpoint is reached
-reduce :: (Eq a, Fin a) => Pathsum a -> ([Rule], Pathsum a)
-reduce sop = go ([], sop)
-  where go (applied, sop) = case applyRule sop of
-          Nothing           -> (reverse applied, sop)
-          Just (rule, sop') -> go (rule:applied, sop')
-
--- Fully reduces a path sum for a given input and output state
-evaluate :: (Eq a, Fin a) => Pathsum a -> Map ID Bool -> Map ID Bool -> ([Rule], Pathsum a)
-evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 -}

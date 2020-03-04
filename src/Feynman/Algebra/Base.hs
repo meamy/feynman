@@ -116,6 +116,11 @@ instance Periodic FF2 where
   order (FF2 False) = 1
   order (FF2 True)  = 2
 
+instance Fractional FF2 where
+  (FF2 x) / (FF2 y) = FF2 $ x && y
+  recip x           = x
+  fromRational a    = (fromInteger $ numerator a) / (fromInteger $ denominator a)
+
 {-------------------------------
  Dyadics
  -------------------------------}

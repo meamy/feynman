@@ -45,7 +45,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   collectVar,
   rename,
   renameMonotonic,
-  gets,
+  subst,
   substMany,
   solveForX,
   liftMonomial,
@@ -235,7 +235,7 @@ ofTermList = normalize . M . Map.fromList . map swap
 scale :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr -> Multilinear v r repr
 scale a p
   | a == 0    = zero
-  | otherwise = M $ Map.map (a*) $ getTerms p
+  | otherwise = normalize . M $ Map.map (a*) $ getTerms p
 
 -- | Add two polynomials with the same representation
 addM :: (Ord v, Eq r, Num r, ReprC repr) =>
@@ -312,9 +312,9 @@ renameMonotonic :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r 
 renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
-gets :: (Ord v, Eq r, ZModule r) =>
-        v -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
-gets v p = substMany (\v' -> if v' == v then p else ofVar v)
+subst :: (Ord v, Eq r, ZModule r) =>
+         v -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+subst v p = substMany (\v' -> if v' == v then p else ofVar v')
 
 -- | Simultaneous substitution of variables with polynomials
 substMany :: (Ord v, Eq r, ZModule r) =>
@@ -393,6 +393,7 @@ distribute :: (Ord v, Eq r, ZModule r) => r -> SBool v -> Multilinear v r 'Mult
 distribute a' = go a' . Map.keys . getTerms
   where go 0 _      = zero
         go a []     = constant a
+        go a [m]    = ofTerm (a,m)
         go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
 
 -- | Non-recursive inclusion-exclusion formula
@@ -417,7 +418,7 @@ canonicalize :: (Ord v, Eq r, TwoRegular r, ZModule r) =>
                 Multilinear v r 'Add -> Multilinear v r 'Add
 canonicalize = fourier . invFourier
 
-{- Constants, for testing -}
+{- Constants, for testing
 
 newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 
@@ -449,3 +450,4 @@ y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DyadicRational 'Add
 y1234 :: Multilinear IVar DMod2 'Add
 y1234 = ofTerm (dMod2 1 2, Monomial $ Set.fromList xs)
   where xs = [IVar ("y", 1), IVar ("y", 2), IVar ("y", 3), IVar ("y", 4)]
+-}
