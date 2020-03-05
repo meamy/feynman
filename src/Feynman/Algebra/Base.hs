@@ -10,9 +10,9 @@ Portability : portable
 -}
 
 module Feynman.Algebra.Base(
-  ZModule(..),
+  Abelian(..),
   Periodic(..),
-  TwoRegular(..),
+  Dyadic(..),
   FF2,
   DyadicRational(..),
   DMod2,
@@ -50,13 +50,13 @@ one = fromInteger 1
 
 -- | Groups (typically using addition in 'Num') with
 --   a \(\mathbb{Z}\)-action
-class Num g => ZModule g where
+class Num g => Abelian g where
   power :: Integer -> g -> g
 
-instance ZModule Integer where
+instance Abelian Integer where
   power = (*)
 
-instance ZModule Double where
+instance Abelian Double where
   power a = (fromIntegral a *)
 
 -- | Groups with computable orders. Rather than the standard
@@ -64,7 +64,7 @@ instance ZModule Double where
 --   each element. In this case, 'order g == 0', and otherwise
 --
 --    @'power' ('order' x) x = 'zero'@
-class Num g => Periodic g where
+class Abelian g => Periodic g where
   order :: g -> Integer
 
 {-------------------------------
@@ -72,7 +72,7 @@ class Num g => Periodic g where
  -------------------------------}
 
 -- | Class of rings where 2 is a regular element
-class Num r => TwoRegular r where
+class Num r => Dyadic r where
   {-# MINIMAL fromDyadic #-}
   fromDyadic :: DyadicRational -> r
   half       :: r
@@ -83,7 +83,7 @@ class Num r => TwoRegular r where
   half   = fromDyadic $ dyadic 1 1
   divTwo = (* half)
 
-instance TwoRegular Double where
+instance Dyadic Double where
   fromDyadic (Dy a n) = (fromIntegral a) / 2^n
   half                = 0.5
   divTwo              = (* 0.5)
@@ -109,7 +109,7 @@ instance Num FF2 where
     | x `mod` 2 == 0 = FF2 False
     | otherwise      = FF2 True
 
-instance ZModule FF2 where
+instance Abelian FF2 where
   power i          = (fromInteger i *)
 
 instance Periodic FF2 where
@@ -156,10 +156,10 @@ instance Num DyadicRational where
   signum (Dy a _n)    = Dy (signum a) 0
   fromInteger i       = Dy i 0
 
-instance ZModule DyadicRational where
+instance Abelian DyadicRational where
   power i (Dy a n) = canonicalize $ Dy (i*a) n
 
-instance TwoRegular DyadicRational where
+instance Dyadic DyadicRational where
   fromDyadic      = id
   half            = Dy 1 1
   divTwo (Dy a n) = Dy a (n+1)
@@ -205,13 +205,13 @@ instance Num DMod2 where
   signum (D2 a)    = D2 $ signum a
   fromInteger i    = D2 . reduce $ fromInteger i
 
-instance ZModule DMod2 where
+instance Abelian DMod2 where
   power i (D2 a) = D2 . reduce $ power i a
 
 instance Periodic DMod2 where
   order (D2 a)   = 2 * denom a
 
-instance TwoRegular DMod2 where
+instance Dyadic DMod2 where
   fromDyadic    = D2 . reduce
   half          = D2 half
   divTwo (D2 a) = D2 $ divTwo a

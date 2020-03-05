@@ -165,7 +165,7 @@ instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   fromInteger 0 = M $ Map.empty
   fromInteger i = M . Map.singleton (Monomial Set.empty) $ fromInteger i
 
-instance (Ord v, Eq r, ZModule r, ReprC repr) => ZModule (Multilinear v r repr) where
+instance (Ord v, Eq r, Abelian r, ReprC repr) => Abelian (Multilinear v r repr) where
   power i = M . Map.map (power i) . getTerms
 
 instance (Ord v, Eq r, Periodic r, ReprC repr) => Periodic (Multilinear v r repr) where
@@ -312,12 +312,12 @@ renameMonotonic :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r 
 renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
-subst :: (Ord v, Eq r, ZModule r) =>
+subst :: (Ord v, Eq r, Abelian r) =>
          v -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 subst v p = substMany (\v' -> if v' == v then p else ofVar v')
 
 -- | Simultaneous substitution of variables with polynomials
-substMany :: (Ord v, Eq r, ZModule r) =>
+substMany :: (Ord v, Eq r, Abelian r) =>
              (v -> SBool v) -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 substMany sub = normalize . Map.foldlWithKey' (\acc m a -> acc + substInMono m a) zero . getTerms
   where substInMono m a = distribute a $ foldl' (*) one (map sub . Set.toList $ getVars m)
@@ -359,15 +359,14 @@ liftMonomial :: (Ord v, ReprC repr) => Monomial v repr -> SBool v
 liftMonomial = liftImpl witRepr
 
 -- | Translate a Boolean polynomial into any ring (in this case, Z-module)
-lift :: (Ord v, Eq r, ZModule r) => SBool v -> Multilinear v r 'Mult
+lift :: (Ord v, Eq r, Abelian r) => SBool v -> Multilinear v r 'Mult
 lift = distribute 1
 
 -- | Distribute a ring element over a monomial according to the equation
 -- 
 -- > axy = a/2x + a/2y - a/2(x + y)
 --
-unDistribute :: (Ord v, Eq r, Num r, TwoRegular r) =>
-                r -> Monomial v 'Mult -> Multilinear v r 'Add
+unDistribute :: (Ord v, Eq r, Num r, Dyadic r) => r -> Monomial v 'Mult -> Multilinear v r 'Add
 unDistribute a' = go a' . Set.toList . getVars
   where go 0 _        = zero
         go a []       = constant a
@@ -379,7 +378,7 @@ unDistribute a' = go a' . Set.toList . getVars
             go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substMono x sub recTerm
 
 -- | Non-recursive exclusion-inclusion formula
-excInc :: (Ord v, Eq r, TwoRegular r) => Monomial v 'Mult -> Multilinear v r 'Add
+excInc :: (Ord v, Eq r, Dyadic r) => Monomial v 'Mult -> Multilinear v r 'Add
 excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.powerSet s]
   where go subset =
           let n = Set.size subset in
@@ -389,7 +388,7 @@ excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.
 -- 
 -- > a(x + y) = ax + ay -2axy
 --
-distribute :: (Ord v, Eq r, ZModule r) => r -> SBool v -> Multilinear v r 'Mult
+distribute :: (Ord v, Eq r, Abelian r) => r -> SBool v -> Multilinear v r 'Mult
 distribute a' = go a' . Map.keys . getTerms
   where go 0 _      = zero
         go a []     = constant a
@@ -397,25 +396,24 @@ distribute a' = go a' . Map.keys . getTerms
         go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
 
 -- | Non-recursive inclusion-exclusion formula
-incExc :: (Ord v, Eq r, ZModule r) => Monomial v 'Add -> Multilinear v r 'Mult
+incExc :: (Ord v, Eq r, Abelian r) => Monomial v 'Add -> Multilinear v r 'Mult
 incExc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.powerSet s]
   where go subset =
           let n = Set.size subset in
             if n `mod` 2 == 0 then power (-1 `shiftL` (n-1)) 1 else power (1 `shiftL` (n-1)) 1
 
 -- | Perform the (pseudo-Boolean) Fourier transform
-fourier :: (Ord v, Eq r, TwoRegular r) => Multilinear v r 'Mult -> Multilinear v r 'Add
+fourier :: (Ord v, Eq r, Dyadic r) => Multilinear v r 'Mult -> Multilinear v r 'Add
 fourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
   where addTerm acc m a = acc + unDistribute a m
 
 -- | Perform the (pseudo-Boolean) inverse Fourier transform
-invFourier :: (Ord v, Eq r, ZModule r) => Multilinear v r 'Add -> Multilinear v r 'Mult
+invFourier :: (Ord v, Eq r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Mult
 invFourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
   where addTerm acc m a = acc + distribute a (liftMonomial m)
 
 -- | Canonicalize an additive multilinear polynomial
-canonicalize :: (Ord v, Eq r, TwoRegular r, ZModule r) =>
-                Multilinear v r 'Add -> Multilinear v r 'Add
+canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Add
 canonicalize = fourier . invFourier
 
 {- Constants, for testing
