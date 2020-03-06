@@ -35,9 +35,11 @@ module Feynman.Algebra.Polynomial.Multilinear(
   ofTerm,
   ofTermList,
   scale,
-  factorVar,
   divVar,
+  quotVar,
   remVar,
+  factorizeTrivial,
+  factorize,
   dropConstant,
   cast,
   castMaybe,
@@ -48,6 +50,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   subst,
   substMany,
   solveForX,
+  allSolutions,
   liftMonomial,
   lift,
   excInc,
@@ -259,21 +262,47 @@ multImpl p q = Map.foldlWithKey' multPolyTerm zero (getTerms p)
           Nothing -> Just a
           Just c  -> Just $ a + c
 
--- | Factorizes a polynomial /p/ as /vq + r/
-factorVar :: Ord v =>
-  v -> Multilinear v r 'Mult -> (Multilinear v r 'Mult, Multilinear v r 'Mult)
-factorVar v p = (M qTerms, M rTerms)
+-- | Performs the Euclidean division of a polynomial 'p' by a variables 'x', such that
+--
+--   @ p = 'ofVar' x * 'fst' ('varDiv' p x) + 'snd' ('varDiv' p x) @
+divVar :: Ord v => Multilinear v r 'Mult -> v -> (Multilinear v r 'Mult, Multilinear v r 'Mult)
+divVar p x = (M $ Map.mapKeys (Monomial . Set.delete x . getVars) qTerms, M rTerms)
   where (qTerms, rTerms) = Map.partitionWithKey f $ getTerms p
-        f m _a           = Set.member v $ getVars m
+        f m _a           = Set.member x $ getVars m
 
--- | Takes the quotient of /p\/v/
-divVar :: Ord v => v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
-divVar v = M . Map.mapKeys (Monomial . Set.delete v . getVars) . takeQuotient . getTerms
-  where takeQuotient = Map.filterWithKey (\m _a -> Set.member v $ getVars m)
+-- | Takes the quotient of 'p'/'x'
+quotVar :: Ord v => v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+quotVar x = M . Map.mapKeys (Monomial . Set.delete x . getVars) . takeQuotient . getTerms
+  where takeQuotient = Map.filterWithKey (\m _a -> Set.member x $ getVars m)
 
--- | Takes the quotient of /p\/v/
+-- | Takes the remainder of 'p'/'x'
 remVar :: Ord v => v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
-remVar v = M . Map.filterWithKey (\m _a -> not $ Set.member v $ getVars m) . getTerms
+remVar x = M . Map.filterWithKey (\m _a -> not $ Set.member x $ getVars m) . getTerms
+
+-- | Factors out all trivial factors
+factorizeTrivial :: (Ord v, Eq r, Num r) =>
+                    Multilinear v r 'Mult -> ([Multilinear v r 'Mult], Multilinear v r 'Mult)
+factorizeTrivial p = Set.foldr tryDiv ([], p) $ vars p
+  where tryDiv x  (acc, poly) =
+          let (q, r) = divVar poly x in
+            if isZero r then ((ofVar x):acc, q) else (acc, poly)
+
+-- | Factorize a multilinear polynomial into irreducibles. Algorithm due to
+--   A. Shpilka & I. Volkovich, /On the Relation between Polynomial Identity
+--   Testing and Finding Variable Disjoint Factors/
+factorize :: (Ord v, Eq r, Abelian r) => Multilinear v r 'Mult -> [Multilinear v r 'Mult]
+factorize p =
+  let (factors, p') = factorizeTrivial p in
+    factors ++ [p'] -- go p'
+  where dx x poly = subst x 0 poly + subst x 1 poly
+        go poly = do
+          x <- Set.toList $ vars poly
+          let g      = (subst x 0 poly) * (dx x poly)
+          let (o, s) = Set.partition (\y -> (dx y g) == 0) $ Set.delete x (vars poly)
+          if Set.null o
+            then return poly
+            else go (substMany (\y -> if Set.member y o then 1 else ofVar y) poly) ++
+                 go (substMany (\y -> if Set.member y (Set.insert x s) then 1 else ofVar y) poly)
 
 {- Transformations -}
 
@@ -304,11 +333,11 @@ collectVar v = collectBy (\(_a, m) -> Set.member v $ getVars m)
 {- Substitutions -}
 
 -- | Rename variables according to a variable map
-rename :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r repr
+rename :: (Ord v, Ord v') => (v -> v') -> Multilinear v r repr -> Multilinear v' r repr
 rename sub = M . Map.mapKeys (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Rename variables according to a monotonic variable map
-renameMonotonic :: Ord v => (v -> v) -> Multilinear v r repr -> Multilinear v r repr
+renameMonotonic :: (Ord v, Ord v') => (v -> v') -> Multilinear v r repr -> Multilinear v' r repr
 renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
@@ -345,6 +374,15 @@ solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermLis
             if not (contains v p')
             then Just (v, scale (recip a) p')
             else Nothing
+
+-- | Return a list of solutions to
+--
+--   @p = 0@
+--
+--   Over a field
+allSolutions :: (Ord v, Eq r, Fractional r, Abelian r) =>
+             Multilinear v r 'Mult -> [(v, Multilinear v r 'Mult)]
+allSolutions = concatMap solveForX . factorize
 
 {- Pseudo-boolean specific transformations -}
 

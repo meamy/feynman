@@ -3,7 +3,7 @@
 
 {-|
 Module      : Balanced
-Description : Representation of balanced path sums
+Description : Amplitude-balanced path sums
 Copyright   : (c) Matthew Amy, 2020
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
@@ -20,7 +20,7 @@ import Control.Monad (mzero, msum)
 import Data.Maybe (maybeToList)
 import Data.Complex (Complex, mkPolar)
 import Data.Bits (shiftL)
-import Data.Map (Map)
+import Data.Map (Map, (!))
 import qualified Data.Map as Map
 
 import qualified Feynman.Util.Unicode as U
@@ -36,30 +36,30 @@ import Feynman.Algebra.Polynomial.Univariate hiding (constant)
 -- | Variables are either input variables or path variables. The distinction
 --   is due to the binding structure of our pathsum representation, and moreover
 --   improves readability
-data Var = IVar !Integer | PVar !Integer deriving (Eq, Ord)
+data Var = IVar !Int | PVar !Int deriving (Eq, Ord)
 
 instance Show Var where
-  show (IVar i) = U.sub "x" i
-  show (PVar i) = U.sub "y" i
+  show (IVar i) = U.sub "x" $ fromIntegral i
+  show (PVar i) = U.sub "y" $ fromIntegral i
 
 -- | Convenience function for the string representation of the 'i'th input variable
-ivar :: Integer -> String
+ivar :: Int -> String
 ivar = show . IVar
 
 -- | Convenience function for the string representation of the 'i'th path variable
-pvar :: Integer -> String
+pvar :: Int -> String
 pvar = show . PVar
 
 -- | Construct an integer shift for input variables
-shiftI :: Integer -> (Var -> Var)
+shiftI :: Int -> (Var -> Var)
 shiftI i = shiftAll i 0
 
 -- | Construct an integer shift for path variables
-shiftP :: Integer -> (Var -> Var)
+shiftP :: Int -> (Var -> Var)
 shiftP j = shiftAll 0 j
 
 -- | General shift. Constructs a substitution from shift values for I and P
-shiftAll :: Integer -> Integer -> (Var -> Var)
+shiftAll :: Int -> Int -> (Var -> Var)
 shiftAll i j = go
   where go (IVar i') = IVar (i + i')
         go (PVar j') = PVar (j + j')
@@ -67,10 +67,10 @@ shiftAll i j = go
 -- | Path sums of the form
 --   \(\frac{1}{\sqrt{2}^k}\sum_{y\in\mathbb{Z}_2^m}e^{i\pi P(x, y)}|f(x, y)\rangle\)
 data Pathsum g = Pathsum {
-  sde       :: !Integer,
-  inDeg     :: !Integer,
-  outDeg    :: !Integer,
-  pathVars  :: !Integer,
+  sde       :: !Int,
+  inDeg     :: !Int,
+  outDeg    :: !Int,
+  pathVars  :: !Int,
   phasePoly :: !(PseudoBoolean Var g),
   outVals   :: ![SBool Var]
   } deriving (Eq)
@@ -80,12 +80,12 @@ instance (Show g, Eq g, Periodic g, Real g) => Show (Pathsum g) where
     where inputstr = case inDeg sop of
             0 -> ""
             1 -> U.ket (ivar 0) ++ " " ++ U.mapsto ++ " "
-            2 -> U.ket (ivar 0 ++ ivar 1) ++ " " ++ U.mapsto ++ " "
-            j -> U.ket (ivar 0 ++ U.dots ++ ivar (j-1)) ++ " " ++ U.mapsto ++ " "
+            2 -> U.ket (ivar 0) ++ U.ket (ivar 1) ++ " " ++ U.mapsto ++ " "
+            j -> U.ket (ivar 0) ++ U.dots ++ U.ket (ivar (j-1)) ++ " " ++ U.mapsto ++ " "
           scalarstr = case compare (sde sop) 0 of
-            LT -> U.sup ("(" ++ U.rt2 ++ ")") (abs $ sde sop)
+            LT -> U.sup ("(" ++ U.rt2 ++ ")") (fromIntegral . abs $ sde sop)
             EQ -> ""
-            GT -> U.sup ("1/(" ++ U.rt2 ++ ")") (sde sop)
+            GT -> U.sup ("1/(" ++ U.rt2 ++ ")") (fromIntegral $ sde sop)
           sumstr = case pathVars sop of
             0 -> ""
             1 -> U.sum ++ "[" ++ pvar 0 ++ "]"
@@ -114,7 +114,7 @@ internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
  ----------------------------}
 
 -- | Construct an 'n'-qubit identity operator
-identity :: (Eq g, Num g) => Integer -> Pathsum g
+identity :: (Eq g, Num g) => Int -> Pathsum g
 identity n = Pathsum 0 n n 0 0 [ofVar (IVar i) | i <- [0..n-1]]
 
 -- | Construct a ket
@@ -144,6 +144,21 @@ postselect b = bra [b]
 --controlledOn :: (Eq g, Abelian g) => FF2 -> Pathsum g
 --controlledOn b = bra [b]
 
+-- | Construct a classical transformation
+compute :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
+compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
+  where fv  = Set.unions $ map vars xs
+        sub = ((Map.fromList [(v, IVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
+
+-- | Invert a classical transformation
+uncompute :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
+uncompute xs = Pathsum 2 m n (m*n) poly [ofVar (PVar $ m + i) | i <- [0..n-1]]
+  where m    = length xs
+        n    = Set.size fv
+        fv   = Set.unions $ map vars xs
+        sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
+        poly = foldr (+) zero $ map constructTerm [0..m-1]
+        constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
 {----------------------------
  Constants
  ----------------------------}
@@ -264,7 +279,7 @@ timesMaybe sop sop'
           PVar i -> PVar $ i + (pathVars sop)
           _      -> x
         sub x      = case x of
-          IVar i -> (outVals sop)!!(fromInteger i)
+          IVar i -> (outVals sop)!!i
           _      -> ofVar x
 
 -- | Compose two path sums in sequence. Throws an error if the dimensions are
@@ -275,7 +290,7 @@ times sop sop' = case timesMaybe sop sop' of
   Just sop'' -> sop''
 
 -- | Scale the normalization factor
-renormalize :: Integer -> Pathsum g -> Pathsum g
+renormalize :: Int -> Pathsum g -> Pathsum g
 renormalize k (Pathsum a b c d e f) = Pathsum (a + k) b c d e f
 
 {--------------------------
@@ -295,7 +310,7 @@ instance (Eq g, Abelian g) => Num (Pathsum g) where
   negate (Pathsum a b c d e f) = Pathsum a b c d (lift 1 + e) f
   abs (Pathsum a b c d e f)    = Pathsum a b c d (dropConstant e) f
   signum sop                   = sop
-  fromInteger                  = identity
+  fromInteger                  = identity . fromInteger
 
 instance Functor Pathsum where
   fmap g (Pathsum a b c d e f) = Pathsum a b c d (cast g e) f
@@ -323,14 +338,14 @@ matchElim sop = msum . (map go) $ internalPaths sop
 -- | Generic HH rule. \(\dots(\sum_y (-1)^{y\cdot f})\dots = \dots|_{f = 0}\)
 matchHH :: (Eq g, Periodic g) => Pathsum g -> [(Var, SBool Var)]
 matchHH sop = msum . (map (maybeToList . go)) $ internalPaths sop
-  where go v = toBooleanPoly (divVar v $ phasePoly sop) >>= \p -> return (v, p)
+  where go v = toBooleanPoly (quotVar v $ phasePoly sop) >>= \p -> return (v, p)
 
 -- | Solvable instances of the HH rule.
 --   \(\dots(\sum_y (-1)^{y(z \oplus f)})\dots = \dots[z \gets f]\)
 matchHHSolve :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHSolve sop = do
   (v, p)   <- matchHH sop
-  (v', p') <- solveForX p
+  (v', p') <- allSolutions p
   case v' of
     PVar j -> return (v, v', p')
     _      -> mzero
@@ -348,7 +363,7 @@ matchPhase sop = do
   v <- internalPaths sop
   p <- maybeToList . toBooleanPoly . addFactor v $ phasePoly sop
   return (v, p)
-  where addFactor v p = constant (fromDyadic $ dyadic 1 1) + divVar v p
+  where addFactor v p = constant (fromDyadic $ dyadic 1 1) + quotVar v p
 
 {--------------------------
  Pattern synonyms for reductions
@@ -453,7 +468,7 @@ simulate sop i = go $ sop * ket i
         go' ps = case ps of
           (Pathsum k 0 n 0 p xs) ->
             let phase     = fromRational . toRational $ getConstant p
-                magnitude = 1.0/sqrt(fromInteger $ 1 `shiftL` (fromInteger k))
+                magnitude = 1.0/sqrt(fromInteger $ 1 `shiftL` k)
             in
               Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
           (Pathsum k 0 n i p xs) ->
@@ -472,13 +487,7 @@ amplitude o sop i = go $ bra o * sop * ket i
         go' ps = case ps of
           (Pathsum k 0 0 0 p []) ->
             let phase = fromRational . toRational $ getConstant p in
-              mkPolar (1.0/sqrt(fromInteger $ 1 `shiftL` (fromInteger k))) (pi * phase)
+              mkPolar (1.0/sqrt(fromInteger $ 1 `shiftL` k)) (pi * phase)
           (Pathsum k 0 0 i p []) -> go (Pathsum k 0 0 (i-1) (subst (PVar $ i-1) zero p) []) +
                                     go (Pathsum k 0 0 (i-1) (subst (PVar $ i-1) one p) [])
           _                      -> error "Incompatible dimensions"
-
-
-{---------------------------
- Test suite
- ---------------------------}
-
