@@ -173,10 +173,22 @@ unstate xs = Pathsum (2*m + n) m 0 (m+n) poly []
         poly = foldr (+) zero $ map constructTerm [0..m-1]
         constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
 
-test :: [SBool String] -> Pathsum DMod2
-test x = grind $ (unstate x) * (state x)
+-- | Extend a path sum by adding a given number of qubits with the specified
+--   input and output embedding
+extend :: Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
+extend (Pathsum a b c d e f) n embedIn embedOut
+  | n < 0 = error "Cannot embed path sum in smaller space!"
+  | otherwise      = Pathsum a (b+n) (c+n) d (rename sub e) output
+    where sub x   = case x of
+            (IVar i) -> IVar (embedIn i)
+            _        -> x
+          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
+          initial =
+            let go (v, i) = Map.insert (embedOut i) (rename sub v) in
+              foldr go Map.empty $ zip f [0..]
+
 {----------------------------
- Constants
+ Constants & gates
  ----------------------------}
 
 -- | \(\sqrt{2}\)
@@ -185,7 +197,7 @@ root2 = Pathsum 0 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar
 
 -- | \(e^{i\pi/4}\)
 omega :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-omega = Pathsum 0 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar 0))) []
+omega = Pathsum 0 0 0 0 (constant (half * half)) []
 
 -- | A fresh, 0-valued ancilla
 fresh :: (Eq g, Num g) => Pathsum g
@@ -230,6 +242,13 @@ cxgate :: (Eq g, Num g) => Pathsum g
 cxgate = Pathsum 0 2 2 0 0 [x0, x0+x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
+
+-- | Toffoli gate
+ccxgate :: (Eq g, Num g) => Pathsum g
+ccxgate = Pathsum 0 3 3 0 0 [x0, x1, x2 + x0*x1]
+  where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+        x2 = ofVar $ IVar 2
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g

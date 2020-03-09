@@ -34,7 +34,7 @@ library
                        Feynman.Algebra.Polynomial,
                        Feynman.Algebra.Polynomial.Univariate,
                        Feynman.Algebra.Polynomial.Multilinear,
-                       Feynman.Algebra.Pathsum.Concrete,
+                       Feynman.Algebra.Pathsum.Balanced,
 
                        Feynman.Synthesis.Phase,
                        Feynman.Synthesis.Reversible,
