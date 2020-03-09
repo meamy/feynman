@@ -429,7 +429,7 @@ excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.
 distribute :: (Ord v, Eq r, Abelian r) => r -> SBool v -> Multilinear v r 'Mult
 distribute a' = go a' . Map.keys . getTerms
   where go 0 _      = zero
-        go a []     = constant a
+        go a []     = zero
         go a [m]    = ofTerm (a,m)
         go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
 

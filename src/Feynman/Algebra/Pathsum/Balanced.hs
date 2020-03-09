@@ -27,7 +27,6 @@ import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear
-import Feynman.Algebra.Polynomial.Univariate hiding (constant)
 
 {-----------------------------------
  Variables
@@ -84,7 +83,7 @@ instance (Show g, Eq g, Periodic g, Real g) => Show (Pathsum g) where
             j -> U.ket (ivar 0) ++ U.dots ++ U.ket (ivar (j-1)) ++ " " ++ U.mapsto ++ " "
           scalarstr = case compare (sde sop) 0 of
             LT -> U.sup ("(" ++ U.rt2 ++ ")") (fromIntegral . abs $ sde sop)
-            EQ -> ""
+            EQ -> if (inDeg sop == 0 && outDeg sop == 0 && phasePoly sop == 0) then "1" else ""
             GT -> U.sup ("1/(" ++ U.rt2 ++ ")") (fromIntegral $ sde sop)
           sumstr = case pathVars sop of
             0 -> ""
@@ -123,7 +122,7 @@ ket xs = Pathsum 0 0 (fromIntegral $ length xs) 0 0 $ map constant xs
 
 -- | Construct a bra
 bra :: (Eq g, Abelian g) => [FF2] -> Pathsum g
-bra xs = Pathsum 2 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
+bra xs = Pathsum 1 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
   where y = ofVar (PVar 0)
         p = foldr (*) 1 . map valF $ zip xs [0..]
         valF (val, i) = 1 + constant val + ofVar (IVar i)
@@ -140,10 +139,6 @@ postselect b = bra [b]
 
 {-# INLINE postselect #-}
 
--- | Construct a path sum controlled on some Boolean value
---controlledOn :: (Eq g, Abelian g) => FF2 -> Pathsum g
---controlledOn b = bra [b]
-
 -- | Construct a classical transformation
 compute :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
 compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
@@ -152,16 +147,45 @@ compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
 
 -- | Invert a classical transformation
 uncompute :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
-uncompute xs = Pathsum 2 m n (m*n) poly [ofVar (PVar $ m + i) | i <- [0..n-1]]
+uncompute xs = Pathsum (2*m) m n (m+n) poly [ofVar (PVar $ m + i) | i <- [0..n-1]]
   where m    = length xs
         n    = Set.size fv
         fv   = Set.unions $ map vars xs
         sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
         poly = foldr (+) zero $ map constructTerm [0..m-1]
         constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
+
+-- | Construct a superposition of classical states of a given form
+state :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
+state xs = Pathsum k 0 n k 0 $ map (rename sub) xs
+  where n   = length xs
+        k   = Set.size fv
+        fv  = Set.unions $ map vars xs
+        sub = ((Map.fromList [(v, PVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
+
+-- | Select on a classical state of a given form
+unstate :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
+unstate xs = Pathsum (2*m + n) m 0 (m+n) poly []
+  where m    = length xs
+        n    = Set.size fv
+        fv   = Set.unions $ map vars xs
+        sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
+        poly = foldr (+) zero $ map constructTerm [0..m-1]
+        constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
+
+test :: [SBool String] -> Pathsum DMod2
+test x = grind $ (unstate x) * (state x)
 {----------------------------
  Constants
  ----------------------------}
+
+-- | \(\sqrt{2}\)
+root2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+root2 = Pathsum 0 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar 0))) []
+
+-- | \(e^{i\pi/4}\)
+omega :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+omega = Pathsum 0 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar 0))) []
 
 -- | A fresh, 0-valued ancilla
 fresh :: (Eq g, Num g) => Pathsum g
@@ -212,10 +236,6 @@ swapgate :: (Eq g, Num g) => Pathsum g
 swapgate = Pathsum 0 2 2 0 0 [x1, x0]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
-
--- | Unit with SDE 1
-idRoot2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-idRoot2 = Pathsum 1 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar 0))) []
 
 {----------------------------
  Composition
@@ -345,7 +365,7 @@ matchHH sop = msum . (map (maybeToList . go)) $ internalPaths sop
 matchHHSolve :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHSolve sop = do
   (v, p)   <- matchHH sop
-  (v', p') <- allSolutions p
+  (v', p') <- solveForX p
   case v' of
     PVar j -> return (v, v', p')
     _      -> mzero
@@ -358,8 +378,8 @@ matchHHLinear sop = do
   return (v, v', p')
 
 -- | Instances of the (\omega\) rule
-matchPhase :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
-matchPhase sop = do
+matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
+matchOmega sop = do
   v <- internalPaths sop
   p <- maybeToList . toBooleanPoly . addFactor v $ phasePoly sop
   return (v, p)
@@ -385,9 +405,9 @@ pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
 
--- | Pattern synonym for Phase instances
-pattern Phase :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
-pattern Phase v p <- (matchPhase -> (v, p):_)
+-- | Pattern synonym for Omega instances
+pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
+pattern Omega v p <- (matchOmega -> (v, p):_)
 
 {--------------------------
  Applying reductions
@@ -414,8 +434,8 @@ applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
         varShift v = v
 
 -- | Apply an (\omega\) rule. Does not check if the instance is valid
-applyPhase :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
-applyPhase (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
+applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
+applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
   where e' = renameMonotonic varShift $ p' + remVar (PVar i) e
         f' = map (renameMonotonic varShift) f
         p' = constant (fromDyadic $ dyadic 1 2) + scale (fromDyadic $ dyadic 3 1) (lift p)
@@ -425,21 +445,21 @@ applyPhase (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
         varShift v = v
 
 -- | Finds and applies the first elimination instance
-elim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
-elim sop = case sop of
+rewriteElim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
+rewriteElim sop = case sop of
   Elim v -> applyElim v sop
   _      -> sop
 
 -- | Finds and applies the first hh instance
-hh :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
-hh sop = case sop of
+rewriteHH :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
+rewriteHH sop = case sop of
   HHSolved v v' p -> applyHHSolved v v' p sop
   _               -> sop
 
--- | Finds and applies the first phase instance
-phase :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-phase sop = case sop of
-  Phase v p -> applyPhase v p sop
+-- | Finds and applies the first omega instance
+rewriteOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+rewriteOmega sop = case sop of
+  Omega v p -> applyOmega v p sop
   _         -> sop
 
 {--------------------------
@@ -453,7 +473,15 @@ grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
   Elim y         -> grind $ applyElim y sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
-  Phase y p      -> grind $ applyPhase y p sop
+  Omega y p      -> grind $ applyOmega y p sop
+  _              -> sop
+
+-- | A single step of 'grind'
+grindStep :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+grindStep sop = case sop of
+  Elim y         -> applyElim y sop
+  HHSolved y z p -> applyHHSolved y z p sop
+  Omega y p      -> applyOmega y p sop
   _              -> sop
 
 {--------------------------
@@ -468,7 +496,10 @@ simulate sop i = go $ sop * ket i
         go' ps = case ps of
           (Pathsum k 0 n 0 p xs) ->
             let phase     = fromRational . toRational $ getConstant p
-                magnitude = 1.0/sqrt(fromInteger $ 1 `shiftL` k)
+                base      = case k `mod` 2 of
+                  0 -> fromInteger $ 1 `shiftL` (abs k)
+                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (abs (k-1)))
+                magnitude = base**(fromIntegral $ signum k)
             in
               Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
           (Pathsum k 0 n i p xs) ->
@@ -482,12 +513,4 @@ simulate sop i = go $ sop * ket i
 -- | Evaluates a pathsum on a given input and output
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) =>
              [FF2] -> Pathsum g -> [FF2] -> Complex f
-amplitude o sop i = go $ bra o * sop * ket i
-  where go     = go' . grind
-        go' ps = case ps of
-          (Pathsum k 0 0 0 p []) ->
-            let phase = fromRational . toRational $ getConstant p in
-              mkPolar (1.0/sqrt(fromInteger $ 1 `shiftL` k)) (pi * phase)
-          (Pathsum k 0 0 i p []) -> go (Pathsum k 0 0 (i-1) (subst (PVar $ i-1) zero p) []) +
-                                    go (Pathsum k 0 0 (i-1) (subst (PVar $ i-1) one p) [])
-          _                      -> error "Incompatible dimensions"
+amplitude o sop i = (simulate (bra o * sop) i)![]
