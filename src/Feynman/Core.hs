@@ -11,14 +11,11 @@ import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
 
-import Text.ParserCombinators.Parsec hiding (space)
-import Control.Monad
-
 type ID = String
 type Loc = Int
 
 {- Phase angles -}
-data Angle = Discrete Dyadic | Continuous Double deriving (Eq, Ord)
+data Angle = Discrete DyadicRational | Continuous Double deriving (Eq, Ord)
 
 apply :: (forall a. Num a => a -> a) -> Angle -> Angle
 apply f (Discrete a)   = Discrete $ f a
@@ -30,6 +27,11 @@ apply2 f a b = case (a,b) of
   (Discrete a, Continuous b)   -> Continuous $ f (toDouble a) b
   (Continuous a, Discrete b)   -> Continuous $ f a (toDouble b)
   (Continuous a, Continuous b) -> Continuous $ f a b
+  where toDouble = fromRational . toRational
+
+discretize :: Angle -> DyadicRational
+discretize (Discrete a)   = a
+discretize (Continuous a) = toDyadic a
 
 instance Show Angle where
   show (Discrete a)   = "2pi*" ++ show a
@@ -45,11 +47,11 @@ instance Num Angle where
   fromInteger = Discrete . fromInteger
 
 instance Abelian Angle where
-  zero  = Discrete zero
-  pow i = (fromInteger i +)
+  power i (Discrete a)   = Discrete $ power i a
+  power i (Continuous a) = Continuous $ (fromInteger i) * a
 
 instance Periodic Angle where
-  order (Discrete a)   = order a
+  order (Discrete a)   = order . (fromDyadic :: DyadicRational -> DMod2) $ power 2 a
   order (Continuous _) = 0
 
 {- Circuits -}

@@ -1,5 +1,7 @@
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-|
 Module      : Balanced
@@ -22,6 +24,7 @@ import Data.Complex (Complex, mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import Data.String (IsString(..))
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
@@ -35,11 +38,15 @@ import Feynman.Algebra.Polynomial.Multilinear
 -- | Variables are either input variables or path variables. The distinction
 --   is due to the binding structure of our pathsum representation, and moreover
 --   improves readability
-data Var = IVar !Int | PVar !Int deriving (Eq, Ord)
+data Var = IVar !Int | PVar !Int | FVar !String deriving (Eq, Ord)
 
 instance Show Var where
   show (IVar i) = U.sub "x" $ fromIntegral i
   show (PVar i) = U.sub "y" $ fromIntegral i
+  show (FVar x) = x
+
+instance IsString Var where
+  fromString = FVar
 
 -- | Convenience function for the string representation of the 'i'th input variable
 ivar :: Int -> String
@@ -62,6 +69,29 @@ shiftAll :: Int -> Int -> (Var -> Var)
 shiftAll i j = go
   where go (IVar i') = IVar (i + i')
         go (PVar j') = PVar (j + j')
+
+-- | Check if a variable is an input
+isI :: Var -> Bool
+isI (IVar _) = True
+isI _        = False
+
+-- | Check if a variable is a path variable
+isP :: Var -> Bool
+isP (PVar _) = True
+isP _        = False
+
+-- | Check if a variable is a free variable
+isF :: Var -> Bool
+isF (FVar _) = True
+isF _        = False
+
+-- | Get the string of a free variable
+unF :: Var -> String
+unF (FVar s) = s
+unF _        = error "Not a free variable"
+{-----------------------------------
+ Path sums
+ -----------------------------------}
 
 -- | Path sums of the form
 --   \(\frac{1}{\sqrt{2}^k}\sum_{y\in\mathbb{Z}_2^m}e^{i\pi P(x, y)}|f(x, y)\rangle\)
@@ -108,6 +138,15 @@ internalPaths :: Pathsum g -> [Var]
 internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
   where outVars = Set.toList . Set.unions . map vars $ outVals sop
 
+-- | Retrieve the free variables
+freeVars :: Pathsum g -> [String]
+freeVars sop = map unF . Set.toList . Set.filter isF . foldr (Set.union) Set.empty $ xs
+  where xs = (vars $ phasePoly sop):(map vars $ outVals sop)
+
+-- | Checks if the path sum is (trivially) the identity
+isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
+isTrivial sop = sop == identity (inDeg sop)
+
 {----------------------------
  Constructors
  ----------------------------}
@@ -116,34 +155,84 @@ internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
 identity :: (Eq g, Num g) => Int -> Pathsum g
 identity n = Pathsum 0 n n 0 0 [ofVar (IVar i) | i <- [0..n-1]]
 
--- | Construct a ket
-ket :: (Eq g, Num g) => [FF2] -> Pathsum g
-ket xs = Pathsum 0 0 (fromIntegral $ length xs) 0 0 $ map constant xs
-
--- | Construct a bra
-bra :: (Eq g, Abelian g) => [FF2] -> Pathsum g
-bra xs = Pathsum 1 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
-  where y = ofVar (PVar 0)
-        p = foldr (*) 1 . map valF $ zip xs [0..]
-        valF (val, i) = 1 + constant val + ofVar (IVar i)
+-- | Construct a (symbolic) state
+ket :: (Eq g, Num g) => [SBool String] -> Pathsum g
+ket xs = Pathsum 0 0 (fromIntegral $ length xs) 0 0 $ map (rename FVar) xs
 
 -- | Initialize a fresh ancilla
 initialize :: (Eq g, Num g) => FF2 -> Pathsum g
-initialize b = ket [b]
+initialize b = ket [constant b]
 
 {-# INLINE initialize #-}
 
--- | Dagger of initialize -- i.e. unnormalized post-selection
-postselect :: (Eq g, Abelian g) => FF2 -> Pathsum g
-postselect b = bra [b]
+-- | Construct a uniform superposition of classical states of a given form
+superposition :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
+superposition xs = Pathsum k 0 n k 0 $ map (rename sub) xs
+  where n   = length xs
+        k   = Set.size fv
+        fv  = Set.unions $ map vars xs
+        sub = ((Map.fromList [(v, PVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
 
-{-# INLINE postselect #-}
-
--- | Construct a classical transformation
+-- | Construct a classical transformation from the free variables of 'xs' to 'xs'
+--   Effectively binds the free variables in 'state xs'
 compute :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
 compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
   where fv  = Set.unions $ map vars xs
         sub = ((Map.fromList [(v, IVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
+
+-- | Breaks the connection between inputs and outputs by mapping
+--   any input basis state to the maximally mixed state. Non-unitary
+disconnect :: (Eq g, Num g) => Int -> Pathsum g
+disconnect n = Pathsum n n n n 0 [ofVar $ PVar i | i <- [0..n-1]]
+
+-- | Extend a path sum by adding a given number of qubits with the specified
+--   input and output embedding
+extend :: Pathsum g -> Int -> (Int -> Int) -> Pathsum g
+extend (Pathsum a b c d e f) n embed
+  | n < 0  = error "Cannot embed path sum in smaller space!"
+  | b /= c = error "Can only extend square path sums"
+  | otherwise      = Pathsum a (b+n) (c+n) d (rename sub e) output
+    where sub x   = case x of
+            (IVar i) -> IVar (embed i)
+            _        -> x
+          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
+          initial =
+            let go (v, i) = Map.insert (embed i) (rename sub v) in
+              foldr go Map.empty $ zip f [0..]
+
+{----------------------------
+ Dual constructors
+ ----------------------------}
+
+-- | Construct a (symbolic) state destructor
+bra :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
+bra xs = Pathsum (2*m) m 0 m (lift $ p) []
+  where m         = fromIntegral $ length xs
+        p         = foldr (+) 0 . map go $ zip [0..] xs
+        go (i, v) = ofVar (PVar i) * (ofVar (IVar i) + (rename fromString v))
+
+-- | Alternate state destructor with fewer paths but a more complicated polynomial
+unstateAlt :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
+unstateAlt xs = Pathsum 2 (fromIntegral $ length xs) 0 1 (lift $ y*(1 + p)) []
+  where y = ofVar (PVar 0)
+        p = foldr (*) 1 . map valF $ zip xs [0..]
+        valF (val, i) = 1 + (rename fromString val) + ofVar (IVar i)
+
+-- | Dagger of initialize -- i.e. unnormalized post-selection
+postselect :: (Eq g, Abelian g) => FF2 -> Pathsum g
+postselect b = bra [constant b]
+
+{-# INLINE postselect #-}
+
+-- | Select on a classical state of a given form
+unsuper :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
+unsuper xs = Pathsum (2*m + n) m 0 (m+n) poly []
+  where m    = length xs
+        n    = Set.size fv
+        fv   = Set.unions $ map vars xs
+        sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
+        poly = foldr (+) zero $ map constructTerm [0..m-1]
+        constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
 
 -- | Invert a classical transformation
 uncompute :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
@@ -155,45 +244,17 @@ uncompute xs = Pathsum (2*m) m n (m+n) poly [ofVar (PVar $ m + i) | i <- [0..n-1
         poly = foldr (+) zero $ map constructTerm [0..m-1]
         constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
 
--- | Construct a superposition of classical states of a given form
-state :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
-state xs = Pathsum k 0 n k 0 $ map (rename sub) xs
-  where n   = length xs
-        k   = Set.size fv
-        fv  = Set.unions $ map vars xs
-        sub = ((Map.fromList [(v, PVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
-
--- | Select on a classical state of a given form
-unstate :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
-unstate xs = Pathsum (2*m + n) m 0 (m+n) poly []
-  where m    = length xs
-        n    = Set.size fv
-        fv   = Set.unions $ map vars xs
-        sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
-        poly = foldr (+) zero $ map constructTerm [0..m-1]
-        constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
-
--- | Extend a path sum by adding a given number of qubits with the specified
---   input and output embedding
-extend :: Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
-extend (Pathsum a b c d e f) n embedIn embedOut
-  | n < 0 = error "Cannot embed path sum in smaller space!"
-  | otherwise      = Pathsum a (b+n) (c+n) d (rename sub e) output
-    where sub x   = case x of
-            (IVar i) -> IVar (embedIn i)
-            _        -> x
-          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
-          initial =
-            let go (v, i) = Map.insert (embedOut i) (rename sub v) in
-              foldr go Map.empty $ zip f [0..]
-
 {----------------------------
  Constants & gates
  ----------------------------}
 
 -- | \(\sqrt{2}\)
 root2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-root2 = Pathsum 0 0 0 1 (constant (half * half) - scale half (lift $ ofVar (PVar 0))) []
+root2 = Pathsum 0 0 0 1 ((-constant (half * half)) - scale half (lift $ ofVar (PVar 0))) []
+
+-- | \(i\)
+iunit :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+iunit = Pathsum 0 0 0 0 (constant half) []
 
 -- | \(e^{i\pi/4}\)
 omega :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -232,6 +293,11 @@ rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
 
+-- | R_z gate
+rzgate :: (Eq g, Abelian g, Dyadic g) => DyadicRational -> Pathsum g
+rzgate theta = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale (fromDyadic theta) (lift $ ofVar (IVar 0))
+
 -- | H gate
 hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
@@ -257,8 +323,50 @@ swapgate = Pathsum 0 2 2 0 0 [x1, x0]
         x1 = ofVar $ IVar 1
 
 {----------------------------
- Composition
+ Bind and unbind
  ----------------------------}
+
+-- | Bind some collection of free variables in a path sum
+bind :: (Foldable f, Eq g, Abelian g) => f String -> Pathsum g -> Pathsum g
+bind = flip (foldr go)
+  where go x sop =
+          let v = IVar $ inDeg sop in
+            sop { inDeg = (inDeg sop) + 1,
+                  phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),
+                  outVals = map (subst (FVar x) (ofVar v)) (outVals sop) }
+
+-- | Close a path sum by binding all free variables
+close :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+close sop = bind (freeVars sop) sop
+
+-- | Unbind (instantiate) some collection of inputs
+{-
+unbind :: Foldable f => f Int -> Pathsum g -> Pathsum g
+unbind = flip (foldr go)
+  where go i (Pathsum a b c d e f)
+          | i >= b || i < 0 = error "Can't unbind " ++ show i ++ "th variable"
+          | otherwise       =
+            let inst = "#" ++ show (IVar i)
+                sub (IVar j)
+                  | j == i   = ofVar $ FVar inst
+                  | j > i     = ofVar $ IVar (j-1)
+                  | otherwise = IVar j
+            in
+              sop { inDeg = b - 1,
+                    phasePoly = substMany sub e,
+                    outVals = map (substMany sub) f }
+
+-- | Open a path sum by binding all free variables
+close :: Pathsum g -> Pathsum g
+close sop = bind (freeVars sop)
+-}
+{----------------------------
+ Operators
+ ----------------------------}
+
+-- | Take the dagger of a path sum
+--dagger :: Pathsum g -> Pathsum g
+--dagger (Pathsum a b c d e f) = Pathsum ? c b ? ? ?
 
 -- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
 --   and the dimensions match.
@@ -328,6 +436,12 @@ times sop sop' = case timesMaybe sop sop' of
   Nothing    -> error "Incompatible path sum dimensions"
   Just sop'' -> sop''
 
+-- | Left-to-right composition
+(.>) :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Pathsum g
+(.>) = times
+
+infixr 5 .>
+
 -- | Scale the normalization factor
 renormalize :: Int -> Pathsum g -> Pathsum g
 renormalize k (Pathsum a b c d e f) = Pathsum (a + k) b c d e f
@@ -358,6 +472,19 @@ instance Functor Pathsum where
  Reduction rules
  --------------------------}
 
+{-
+class RewriteRule rule g where
+  matchAll :: Pathsum g -> [rule]
+  matchOne :: Pathsum g -> rule
+  apply :: rule -> Pathsum g -> Pathsum g
+
+data E = E !Var {-# UNBOX #-}
+
+instance (Eq g, Periodic g) => RewriteRule E g where
+  match = matchElim
+  apply = applyElim
+-}
+
 -- | Maps the order 1 and order 2 elements of a group to FF2
 injectFF2 :: Periodic g => g -> Maybe FF2
 injectFF2 a = case order a of
@@ -386,7 +513,7 @@ matchHHSolve sop = do
   (v, p)   <- matchHH sop
   (v', p') <- solveForX p
   case v' of
-    PVar j -> return (v, v', p')
+    PVar _ -> return (v, v', p')
     _      -> mzero
 
 -- | Instances of the HH rule with a linear substitution
@@ -405,8 +532,12 @@ matchOmega sop = do
   where addFactor v p = constant (fromDyadic $ dyadic 1 1) + quotVar v p
 
 {--------------------------
- Pattern synonyms for reductions
+ Pattern synonyms
  --------------------------}
+
+-- | Pattern synonym for Elim
+pattern Triv :: (Eq g, Num g) => Pathsum g
+pattern Triv <- (isTrivial -> True)
 
 -- | Pattern synonym for Elim
 pattern Elim :: (Eq g, Periodic g) => Var -> Pathsum g
@@ -423,6 +554,11 @@ pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
+
+-- | Pattern synonym for HH instances where the polynomial is strictly a
+--   function of input variables
+pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
+pattern HHKill v p <- (filter (all (not . isP) . vars . snd) . matchHH -> (v, p):_)
 
 -- | Pattern synonym for Omega instances
 pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
@@ -485,6 +621,14 @@ rewriteOmega sop = case sop of
  Reduction procedures
  --------------------------}
 
+-- | Performs basic simplifications
+simplify :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+simplify sop = case sop of
+  Elim y         -> grind $ applyElim y sop
+  HHLinear y z p -> grind $ applyHHSolved y z p sop
+  Omega y p      -> grind $ applyOmega y p sop
+  _              -> sop
+
 -- | A complete normalization procedure for Clifford circuits. Originally described in
 --   the paper M. Amy,
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
@@ -510,10 +654,10 @@ grindStep sop = case sop of
 -- | Simulates a pathsum on a given input
 simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) =>
             Pathsum g -> [FF2] -> Map [FF2] (Complex f)
-simulate sop i = go $ sop * ket i
-  where go     = go' . grind
-        go' ps = case ps of
-          (Pathsum k 0 n 0 p xs) ->
+simulate sop xs = go $ sop * ket (map constant xs)
+  where go      = go' . grind
+        go' ps  = case ps of
+          (Pathsum k 0 _ 0 p xs) ->
             let phase     = fromRational . toRational $ getConstant p
                 base      = case k `mod` 2 of
                   0 -> fromInteger $ 1 `shiftL` (abs k)
@@ -532,4 +676,4 @@ simulate sop i = go $ sop * ket i
 -- | Evaluates a pathsum on a given input and output
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) =>
              [FF2] -> Pathsum g -> [FF2] -> Complex f
-amplitude o sop i = (simulate (bra o * sop) i)![]
+amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]

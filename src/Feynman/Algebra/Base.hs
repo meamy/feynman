@@ -19,6 +19,8 @@ module Feynman.Algebra.Base(
   zero,
   one,
   dyadic,
+  toDyadic,
+  numer,
   denom,
   dMod2,
   )
@@ -185,8 +187,19 @@ reduce :: DyadicRational -> DyadicRational
 reduce (Dy a n) = Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
 
 -- | Get the denominator of a dyadic fraction
+numer :: DyadicRational -> Integer
+numer (Dy a _) = a
+
+-- | Get the denominator of a dyadic fraction
 denom :: DyadicRational -> Integer
 denom (Dy _ n) = 1 `shiftL` n
+
+-- | Give the exact representation of a float as a dyadic rational
+toDyadic :: RealFloat a => a -> DyadicRational
+toDyadic x = dyadic a n
+  where a = numerator ratRepr
+        n = I# (integerLog2# $ denominator ratRepr)
+        ratRepr = toRational x
 
 -- | Dyadic fractions between 0 and 2
 newtype DMod2 = D2 DyadicRational deriving (Eq, Ord)

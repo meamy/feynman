@@ -2,6 +2,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-|
 Module      : Multilinear
@@ -51,6 +52,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   substMany,
   solveForX,
   allSolutions,
+  getSolution,
   liftMonomial,
   lift,
   excInc,
@@ -70,6 +72,7 @@ import qualified Data.Set as Set
 import Data.Maybe
 import Data.Semigroup
 import Data.Bits
+import Data.String (IsString(..))
 
 import Feynman.Util.Unicode as Unicode
 import Feynman.Algebra.Base
@@ -173,6 +176,9 @@ instance (Ord v, Eq r, Abelian r, ReprC repr) => Abelian (Multilinear v r repr) 
 
 instance (Ord v, Eq r, Periodic r, ReprC repr) => Periodic (Multilinear v r repr) where
   order = Map.foldr (\a -> lcm (order a)) 1 . getTerms
+
+instance (Ord v, IsString v, Eq r, Num r, ReprC repr) => IsString (Multilinear v r repr) where
+  fromString s = ofVar (fromString s)
 
 {- Accessors -}
 
@@ -359,11 +365,7 @@ substMono v m = M . Map.mapKeys (Set.foldl' substVar mempty . getVars) . getTerm
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
 
--- | Return a list of solutions to
---
---   @p = 0@
---
---   Over a field
+-- | Find a necessary substitution solving @p = 0@ over a field
 solveForX :: (Ord v, Eq r, Fractional r, ReprC repr) =>
              Multilinear v r repr -> [(v, Multilinear v r repr)]
 solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermList p
@@ -375,14 +377,15 @@ solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermLis
             then Just (v, scale (recip a) p')
             else Nothing
 
--- | Return a list of solutions to
---
---   @p = 0@
---
---   Over a field
+-- | Return a list of solutions to @p = 0@ over a field
 allSolutions :: (Ord v, Eq r, Fractional r, Abelian r) =>
              Multilinear v r 'Mult -> [(v, Multilinear v r 'Mult)]
 allSolutions = concatMap solveForX . factorize
+
+-- | Return a single solution to @p = 0@
+getSolution :: (Ord v, Eq r, Fractional r, Abelian r) =>
+             Multilinear v r 'Mult -> (v, Multilinear v r 'Mult)
+getSolution = head . concatMap solveForX . factorize
 
 {- Pseudo-boolean specific transformations -}
 
