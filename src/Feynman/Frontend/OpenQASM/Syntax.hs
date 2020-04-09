@@ -85,7 +85,7 @@ prettyPrintDec dec = case dec of
   VarDec x (Creg i) -> ["creg " ++ x ++ "[" ++ show i ++ "];"]
   VarDec x (Qreg i) -> ["qreg " ++ x ++ "[" ++ show i ++ "];"]
   GateDec x [] qp b ->
-    ["gate " ++ x ++ " " ++ prettyPrintIDs qp, "{"]
+    ["gate " ++ x ++ " " ++ prettyPrintIDs qp ++ " {"]
     ++ map (\uexp -> "  " ++ prettyPrintUExp uexp ++ ";") b
     ++ ["}"]
   GateDec x cp qp b ->
@@ -634,7 +634,8 @@ qcGatesToQASM :: Map ID Int -> [DotQC.Gate] -> [UExp]
 qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
 fromDotQC :: DotQC -> QASM
-fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts
-  where qMap  = Map.fromList $ zip (DotQC.qubits dotqc) [0..]
-        f (DotQC.Decl name params body) = DecStmt $ GateDec name [] params (qcGatesToQASM qMap body)
-        stmts = map f $ DotQC.decls dotqc
+fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
+  stmts = map go $ DotQC.decls dotqc
+  go (DotQC.Decl name loc body) = DecStmt $ GateDec name [] (glob ++ loc) (convert body)
+  glob = DotQC.qubits dotqc
+  convert = concatMap (qcGateToQASM Var)

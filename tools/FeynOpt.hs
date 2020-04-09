@@ -155,7 +155,7 @@ printHelp = mapM_ putStrLn lines
           "Feynman -- quantum circuit toolkit",
           "Written by Matthew Amy",
           "",
-          "Run with feyn [passes] (<circuit>.(qc | qasm) | Small | Med | All)",
+          "Run with feynopt [passes] (<circuit>.(qc | qasm) | Small | Med | All)",
           "",
           "Transformation passes:",
           "  -inline\tInline all sub-circuits",
