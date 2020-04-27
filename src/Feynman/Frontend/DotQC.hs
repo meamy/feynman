@@ -144,7 +144,7 @@ inv gate@(ParamGate g i f p) =
 simplify :: [Gate] -> [Gate]
 simplify circ =
   let circ' = zip circ [0..]
-      allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
+      erasures = snd $ foldl' f (Map.empty, Set.empty) circ'
       f (last, erasures) (gate, uid) =
         let p = case gate of
               Gate _ _ p -> p
@@ -155,12 +155,12 @@ simplify circ =
             Nothing -> (last', erasures)
             Just (gate', uid') ->
               if Just gate == (inv gate') then
-                (last', Set.insert uid $ Set.insert uid' erasures)
+                (foldr Map.delete last' p, Set.insert uid $ Set.insert uid' erasures)
               else
                 (last', erasures)
-      erasures = snd $ foldl' f (Map.empty, Set.empty) circ'
+      allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
   in
-    fst $ unzip $ filter (\(_, uid) -> not $ Set.member uid erasures) circ'
+    fst . unzip $ filter (\(_, uid) -> not $ Set.member uid erasures) circ'
 
 simplifyDotQC :: DotQC -> DotQC
 simplifyDotQC circ = circ { decls = map f $ decls circ }
