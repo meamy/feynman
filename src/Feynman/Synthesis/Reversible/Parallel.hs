@@ -63,9 +63,9 @@ synthPartition xs (circ, input) =
     (circ++perm++phase, output)
 
 -- Strictly lazy
-tpar :: Synthesizer
-tpar input output [] may   = (linearSynth input output, may)
-tpar input output must may = (circ ++ linearSynth input' output, may)
+tparLazy :: Synthesizer
+tparLazy input output [] may   = (linearSynth input output, may)
+tparLazy input output must may = (circ ++ linearSynth input' output, may)
   where terms          = [AMM x (rank . fromList $ Map.elems input) (length input) | x <- must]
         partitions     = map (map (\(AMM t _ _) -> t) . Set.toList) . partitionAll $ terms
         (circ, input') = foldr synthPartition ([], input) partitions
