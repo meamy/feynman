@@ -57,6 +57,10 @@ instance (Show a, Eq a, Num a) => Show (SOP a) where
             | isMono (simplify p)  = show p
             | otherwise = "(" ++ show p ++ ")"
 
+canonicalizeSOP :: (Num a, Eq a) => SOP a -> SOP a
+canonicalizeSOP sop = sop { poly = simplify (poly sop),
+                            outVals = Map.map simplify (outVals sop) }
+
 pathVar :: Int -> ID
 pathVar i = "p" ++ show i
 
@@ -555,8 +559,9 @@ validateIsometry global vars inputs c1 c2 =
           if global
           then (pf, sop' { poly = dropConstant $ poly sop' })
           else (pf, sop')
+      checkIt sop = canonicalizeSOP sop == canonicalizeSOP (identityTrans $ inVals sop)
   in
-    case (sop' == identityTrans (inVals sop), axiomKill sop') of
+    case (checkIt sop', axiomKill sop') of
       (True, _)       -> Identity pf
       (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i ++ " (" ++ show sop' ++ ")"
       (False, _)      -> Unknown sop'
