@@ -211,7 +211,7 @@ gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
 {- Optimization algorithms -}
 
 -- t-par: the t-par algorithm from [AMM2014]
-tpar i o = gtpar tparMaster i o
+tpar i o = pushSwaps . gtpar tparMaster i o
 
 -- minCNOT: the CNOT minimization algorithm from [AAM17]
 minCNOT = gtpar cnotMinGrayPointed

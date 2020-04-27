@@ -131,7 +131,7 @@ dagger = reverse . map daggerGate
 substGate :: (ID -> ID) -> Primitive -> Primitive
 substGate f gate = case gate of
   H x           -> H $ f x
-  X x           -> H $ f x
+  X x           -> X $ f x
   Y x           -> Y $ f x
   Z x           -> Z $ f x
   CNOT x y      -> CNOT (f x) (f y)
