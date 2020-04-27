@@ -893,7 +893,7 @@ minimalProductGate4 (c:cs) t = tmp ++ minimalProductGate4 cs t ++ dagger tmp
 
 minimalProductGate5 []     t = []
 minimalProductGate5 (c:[]) t = [CNOT c t]
-minimalProductGate5 (c:cs) t = tmp ++ minimalProductGate4 cs t ++ dagger tmp
+minimalProductGate5 (c:cs) t = tmp ++ minimalProductGate5 cs t ++ dagger tmp
   where tmp = [S t, H t, CNOT t c, Tinv c, CNOT t c] 
 
 generalProductGate []     t = []
@@ -908,6 +908,16 @@ generalProductGateN n (c:cs) t
   | n == 0    = generalProductGate (c:cs) t
   | otherwise = tmp ++ generalProductGateN (n-1) cs t ++ dagger tmp
   where tmp = [H t, CNOT t c, T t, Tinv c, CNOT t c] 
+
+rToffoli4Corrected w x y z =
+  let conj = [H z, T z, CNOT y z, Tinv z, H z]
+      corr = [T z, CNOT w z, Tinv z, CNOT x z, T z, CNOT w z, Tinv z, CNOT x z]
+  in
+    corr ++ conj ++ [CNOT w z, T z, CNOT x z, Tinv z, CNOT w z, T z, CNOT x z, Tinv z] ++ conj
+
+rToffoli5 v w x y z =
+  let conj = [H z, T z, CNOT y z, Tinv z] in
+    conj ++ rToffoli4Corrected v w x z ++ dagger conj
 
 fun0888 a b c d e anc = temp ++ [CNOT anc e] ++ dagger temp ++ [CNOT anc e]
   where temp = minimalProductGate1 [d, c, b, a] anc
