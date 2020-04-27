@@ -37,6 +37,7 @@ library
                        Feynman.Synthesis.Reversible.Parallel,
                        Feynman.Synthesis.Reversible.Gray,
 
+                       Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
                        Feynman.Optimization.TPar,
 

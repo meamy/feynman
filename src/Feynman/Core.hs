@@ -128,8 +128,8 @@ daggerGate x = case x of
 dagger :: [Primitive] -> [Primitive]
 dagger = reverse . map daggerGate
 
-substGate :: Map ID ID -> Primitive -> Primitive
-substGate sub gate = case gate of
+substGate :: (ID -> ID) -> Primitive -> Primitive
+substGate f gate = case gate of
   H x           -> H $ f x
   X x           -> H $ f x
   Y x           -> Y $ f x
@@ -144,10 +144,9 @@ substGate sub gate = case gate of
   Rx theta x    -> Rx theta (f x)
   Ry theta x    -> Ry theta (f x)
   Uninterp s xs -> Uninterp s (map f xs)
-  where f x = Map.findWithDefault x x sub
 
-subst :: Map ID ID -> [Primitive] -> [Primitive]
-subst sub = map (substGate sub)
+subst :: (ID -> ID) -> [Primitive] -> [Primitive]
+subst f = map (substGate f)
 
 ids :: [Primitive] -> [ID]
 ids = Set.toList . foldr f Set.empty

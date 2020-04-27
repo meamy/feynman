@@ -8,6 +8,7 @@ import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Reversible.Parallel
 import Feynman.Synthesis.Reversible.Gray
+import Feynman.Optimization.Swaps
 
 import Data.List hiding (transpose)
 import Data.Ord (comparing)
@@ -210,7 +211,7 @@ gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
 {- Optimization algorithms -}
 
 -- t-par: the t-par algorithm from [AMM2014]
-tpar = gtpar tparMaster
+tpar i o = gtpar tparMaster i o
 
 -- minCNOT: the CNOT minimization algorithm from [AAM17]
 minCNOT = gtpar cnotMinGrayPointed

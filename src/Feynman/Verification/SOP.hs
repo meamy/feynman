@@ -790,7 +790,7 @@ hiddenShift n alternations = do
       xTrans = map X s 
       cTrans = concat [cz (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
       sub = Map.fromList $ zip (take n2 vars) (drop n2 vars)
-      f' = (Core.subst sub g) ++ cTrans
+      f' = (Core.subst (\i -> Map.findWithDefault i i sub) g) ++ cTrans
       f  = xTrans ++ g ++ cTrans ++ xTrans
   return (hTrans ++ f ++ hTrans ++ f' ++ hTrans, s)
   where n2 = n `div` 2
@@ -803,7 +803,7 @@ hiddenShiftQuantum n alternations = do
       xTrans = [CNOT ("y" ++ show i) ("x" ++ show i) | i <- [0..n-1]]
       cTrans = concat [cz (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
       sub = Map.fromList $ zip (take n2 vars) (drop n2 vars)
-      f' = (Core.subst sub g) ++ cTrans
+      f' = (Core.subst (\i -> Map.findWithDefault i i sub) g) ++ cTrans
       f  = xTrans ++ g ++ cTrans ++ xTrans
   return $ hTrans ++ f ++ hTrans ++ f' ++ hTrans
   where n2 = n `div` 2
