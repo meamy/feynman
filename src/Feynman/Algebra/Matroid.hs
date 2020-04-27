@@ -6,8 +6,6 @@ import qualified Data.Sequence as Seq
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Debug.Trace
-
 -- Replace with a union-find-delete implementation eventually
 --data Partition a = Partition [Set a] deriving (Show)
 type Partition a = [Set a]
