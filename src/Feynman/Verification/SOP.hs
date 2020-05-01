@@ -26,8 +26,6 @@ import Data.Function
 
 import Test.QuickCheck
   
-import Debug.Trace
-
 import Data.Set (Set)
 import qualified Data.Set as Set
 

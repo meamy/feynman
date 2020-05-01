@@ -9,7 +9,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Data.Map (Map)
-import qualified Data.Map as Map
+-- import qualified Data.Map as Map
 
 import Text.ParserCombinators.Parsec hiding (space)
 import Control.Monad
