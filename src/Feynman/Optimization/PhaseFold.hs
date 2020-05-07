@@ -172,6 +172,7 @@ phaseFold vars inputs gates =
               Z x -> x
               Tinv x -> x
               Sinv x -> x
+              Rz _ x -> x
             inSet j = any (\(l, _) -> j == l) $ Set.toList locs
             g x@(gate, j) xs
               | j == i    = (zip (synthesizePhase (getTarget gate) exp') (repeat i)) ++ xs

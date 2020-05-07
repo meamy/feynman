@@ -68,6 +68,7 @@ data Primitive =
   | Rx       Angle ID
   | Ry       Angle ID
   | Uninterp ID [ID]
+  deriving (Eq)
 
 data Stmt =
     Gate Primitive

@@ -18,6 +18,7 @@ import Feynman.Algebra.Linear hiding (identity)
 import Feynman.Algebra.Polynomial
 import Feynman.Core hiding (toffoli, subst)
 import qualified Feynman.Core as Core
+import qualified Feynman.Optimization.PhaseFold as PH
 
 import Data.Ratio
 import Data.Coerce
@@ -248,57 +249,8 @@ foldPaths f g sop = case pathVars sop of
           trace ("  expanding at " ++ (pathVar x)) $
           g (foldPaths f g sop0) (foldPaths f g sop1)
 
-foldReduce :: (SOP Dyadic-> b) -> (b -> b -> b) -> SOP Dyadic -> b
-foldReduce f g sop = case pathVars sop of
-      []   -> f sop
-      x:xs ->
-        let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
-            sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) one $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
-        in
-          trace ("  expanding at " ++ (pathVar x)) $
-          g (foldReduce f g $ reduce sop0) (foldReduce f g $ reduce sop1)
-
-foldReduceFull :: (SOP Dyadic -> b) -> (b -> b -> b) -> SOP Dyadic -> b
-foldReduceFull f g sop = case (pathVars sop, vars $ poly sop) of
-      ([], []) -> f sop
-      ([], x:xs) ->
-        let sop0 = sop { poly = simplify . subst x zero $ poly sop,
-                         outVals = Map.map (simplify . subst x zero) $ outVals sop }
-            sop1 = sop { poly = simplify . subst x one $ poly sop,
-                         outVals = Map.map (simplify . subst x one) $ outVals sop }
-        in
-          trace ("  expanding basis value at " ++ x) $
-          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
-      (x:xs, _) ->
-        let sop0 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) zero $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) zero) $ outVals sop }
-            sop1 = sop { pathVars = xs,
-                         poly = simplify . subst (pathVar x) one $ poly sop,
-                         outVals = Map.map (simplify . subst (pathVar x) one) $ outVals sop }
-        in
-          trace ("  expanding at " ++ (pathVar x)) $
-          g (foldReduceFull f g $ reduce sop0) (foldReduceFull f g $ reduce sop1)
-
 expandPaths :: (Eq a, Ring a) => SOP a -> [SOP a]
 expandPaths = foldPaths (\x -> [x]) (++)
-
-amplitudesMaybe :: SOP Dyadic -> Maybe (Map (Map ID (Multilinear Z2)) DOmega)
-amplitudesMaybe sop = foldReduce f g sop
-  where f sop = if isClosed sop then
-                    Just $ Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
-                  else
-                    Nothing
-        g = liftM2 (Map.unionWith (+))
-
-amplitudes :: SOP Dyadic -> Map (Map ID (Multilinear Z2)) DOmega
-amplitudes sop = foldReduceFull f g sop
-  where f sop = Map.fromList [(outVals sop, scaledExp (sde sop) . getConstant . poly $ sop)]
-        g = Map.unionWith (+)
 
 {- Verification -}
 
@@ -415,7 +367,7 @@ evaluate sop ket bra = reduce $ restrict (ofKet ket <> sop) bra
 
 verifySpec :: SOP Dyadic -> [ID] -> [ID] -> [Primitive] -> Maybe (SOP Dyadic)
 verifySpec spec vars inputs gates =
-  let sop     = circuitSOPWithHints vars (dagger gates)
+  let sop     = circuitSOP (dagger gates)
       reduced = reduce $ (spec <> sop)
   in
     case reduced == identityTrans (inVals spec) of
@@ -431,10 +383,9 @@ validate vars inputs c1 c2 =
   in
     if reduced == identityTrans (inVals $ ket <> sop)
     then Nothing
-    else case (axiomKill reduced, all (== one) . Map.elems $ amplitudes reduced) of
-      (Just _, _) -> Just reduced
-      (_, False)  -> Just reduced
-      (_, _)      -> Nothing
+    else case axiomKill reduced of
+      Just _ -> Just reduced
+      _      -> Nothing
 
 {- Tests -}
 
@@ -706,6 +657,42 @@ qft []     = []
 qft (x:xs) = [H x] ++ concatMap f (zip [2..] xs) ++ qft xs
   where f (m, y) = controlledRm m x y
 
+controlledH x t = [S t, H t, T t, CNOT x t, Tinv t, H t, Sinv t]
+
+dirtyToffoliN [x] t _         = [CNOT x t]
+dirtyToffoliN [x,y] t _       = toffoli x y t
+dirtyToffoliN (x:xs) t (a:as) = toffoli x a t ++ go xs a as ++ toffoli x a t ++ go xs a as
+  where go [x,y] t as      = toffoli x y t
+        go (x:xs) t (a:as) = toffoli x a t ++ go xs a as ++ toffoli x a t
+
+compactToffoliN [x,y] t _ = toffoli x y t
+compactToffoliN xs t anc  = dirtyToffoliN xs' anc xs'' ++
+                            dirtyToffoliN (xs'' ++ [anc]) t xs' ++
+                            dirtyToffoliN xs' anc xs'' ++
+                            dirtyToffoliN (xs'' ++ [anc]) t xs'
+  where (xs',xs'') = splitAt ((length xs `div` 2) + 1) xs
+
+controlledZX (x:xs) t = controlledH x t ++
+                        compactToffoliN xs t x ++
+                        controlledH x t ++
+                        compactToffoliN xs t x
+
+embedCRm 2 [x,y] = [T x, T y, CNOT x y, Tinv y, CNOT x y]
+embedCRm 2 xs    = controlledZX xs "r2"
+embedCRm m xs    = embedCRm (m-1) (xs ++ [t]) ++ compactToffoliN xs t anc
+  where t   = "r" ++ show m
+        anc = "r" ++ show (m-1)
+
+rmState 2 = [H "r2", X "r2", S "r2", X "r2"]
+rmState 3 = [H "r3", X "r3", T "r3", X "r3"]
+rmState m = [H r, X r, Rz (Discrete (dyadic 1 m)) r, X r]
+  where r = "r" ++ show m
+
+qftEmbedded xs = prepare ++ go xs ++ (dagger prepare)
+  where go []     = []
+        go (x:xs) = [H x] ++ concat [embedCRm m [x,y] | (m,y) <- (zip [2..] xs)] ++ go xs
+        prepare   = concat [rmState m | m <- [2..length xs]]
+
 qftSpec :: [ID] -> SOP Dyadic
 qftSpec xs = SOP {
   sde      = length xs,
@@ -725,6 +712,16 @@ verifyQFTN n () = do
     Nothing -> putStrLn $ "  Success!"
     Just _  -> putStrLn $ "  ERROR: failed to verify"
   where inputs = take n $ map (\i -> [i]) ['a'..]
+
+verifyEmbeddedQFTN n () = do
+  putStrLn $ "Verifying embedded QFT, N=" ++ show n
+  printVerStats circ
+  case verifySpec (blank ancillas <> qftSpec inputs) inputs inputs circ of
+    Nothing -> putStrLn $ "  Success!"
+    Just _  -> putStrLn $ "  ERROR: failed to verify"
+  where inputs   = ["x" ++ show i | i <- [1..n]]
+        ancillas = ["r" ++ show i | i <- [2..n]]
+        circ     = qftEmbedded inputs
 
 {- Circuit designs -}
 
@@ -810,6 +807,7 @@ class88808080 = fun88088080
 
 -- Defined gates
 omegaHack x = [T x, X x, T x, X x]
+omega x = [S x, H x, S x, H x, S x, H x]
 
 c1 x = concat $ replicate 8 (omegaHack x)
   
