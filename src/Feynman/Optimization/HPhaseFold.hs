@@ -22,87 +22,99 @@ import Data.Bits
 
 import Debug.Trace
 
-{-- Hadamard-conjugated Phase folding -}
-{- Main idea here is to enable some propagation of
-   phases through Hadamard gates by tracking
-   conjugation contexts -}
+{-- Super-phase folding -}
+{- The idea here is to apply some [HH] reductions when possible
+   to help find extra T reductions. This should be a more
+   principled approach to Hadamard conjugation, and if we let
+   apply full [HH] reductions (i.e. not just linear ones)
+   we should be able to identify compute-uncompute patterns -}
 
 data AnalysisState = SOP {
-  dim     :: Int,
-  qvals   :: Map ID (F2Vec, Bool),
-  terms   :: Map F2Vec (Set (Loc, Bool), Angle),
-  phase   :: Angle,
-  subs    :: Map Int (F2Vec, Bool)
+  dim   :: Int,
+  ket   :: Map ID BasisSt,
+  terms :: Map Parity (Set (Loc, Bool), Angle),
+  quadr :: Map Int BasisSt,
+  phase :: Angle
 } deriving Show
 
+type Parity = F2Vec
+type BasisSt = (Parity, Bool)
 type Analysis = State AnalysisState
 
-assignFresh :: ID -> Analysis (Int, (F2Vec, Bool))
-assignFresh v = get >>= \st ->
-  let dim'   = dim st + 1
-      bv'    = (bitI dim' (dim' - 1), False)
-      qvals' = Map.insert v bv' (qvals st)
-      terms' = Map.mapKeysMonotonic (zeroExtend 1) (terms st)
-  in do
-    put $ st { dim = dim', qvals = qvals', terms = terms' }
-    return (dim' - 1, bv')
+-- Allocate a new variable
+alloc :: Analysis Int
+alloc = do
+  n <- gets dim
+  modify $ \st -> st { dim = n + 1 }
+  return n
 
-{- Get the bitvector for variable v, or otherwise allocate one -}
-getSt :: ID -> Analysis (F2Vec, Bool)
+-- Get the state of variable v
+getSt :: ID -> Analysis BasisSt
 getSt v = get >>= \st ->
-  case Map.lookup v (qvals st) of
+  case Map.lookup v (ket st) of
     Just bv -> return bv
-    Nothing -> liftM snd $ assignFresh v
+    Nothing -> do
+      n <- alloc
+      modify $ \st -> st { ket = Map.insert v (bit n, False) (ket st) }
+      return (bit n, False)
 
-{- Here we want to compute the new state if interference has occurred,
-   or otherwise assign a fresh variable with branch point the old state -}
-existsH :: ID -> Analysis ()
-existsH v = get >>= \st -> case interferenceOn v st of
-  Just bv' -> do
-    modify $ updateQval v bv'
-  Nothing -> do
-    input  <- getSt v
-    (n, _) <- assignFresh v
-    modify $ \st -> st { subs = Map.insert n input (subs st) }
+-- Set the state of a variable
+setSt :: ID -> BasisSt -> Analysis ()
+setSt v bv = modify $ \st -> st { ket = Map.insert v bv (ket st) }
 
-updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
-updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
-
-addTerm :: Loc -> (F2Vec, Bool) -> Angle -> AnalysisState -> AnalysisState
-addTerm l (bv, p) i st =
+-- Adds a mergeable phase term
+addTerm :: Angle -> Loc -> BasisSt -> Analysis ()
+addTerm theta l (bv, p) =
   case p of
-    False -> st { terms = Map.alter (f i) bv $ terms st }
-    True  ->
-      let terms' = Map.alter (f (-i)) bv $ terms st
-          phase' = phase st + i
-      in
-        st { terms = terms', phase = phase' }
-  where f i oldt = case oldt of
-          Just (s, x) -> Just (Set.insert (l, p) s, x + i)
-          Nothing     -> Just (Set.singleton (l, p), i)
+    False -> modify $ \st -> st { terms = Map.alter (f theta) bv (terms st) }
+    True  -> modify $ \st -> st { terms = Map.alter (f (-theta)) bv (terms st),
+                                  phase = (phase st) + theta }
+  where f theta' (Just (s, x)) = Just (Set.insert (l, p) s, x + theta')
+        f theta' Nothing       = Just (Set.singleton (l, p), theta')
 
-varsOfBV :: F2Vec -> [Int]
-varsOfBV bv = filter (testBit bv) [0..(width bv) - 1]
+-- Adds a quadratic (unmergeable) phase term
+addQuadTerm :: Int -> BasisSt -> Analysis ()
+addQuadTerm n bv = modify $ \st -> st { quadr = Map.insert n bv (quadr st) }
 
-bvOfMultilinear :: Multilinear Bool -> Maybe (F2Vec, Bool)
-bvOfMultilinear p
-  | degree p > 1 = Nothing
-  | otherwise    = Just $ unsafeConvert p
-    where unsafeConvert = (foldl' f (bitI 0 0, False)). Map.keys . P.terms
-          f (bv, const) m
-            | emptyMonomial m = (bv, const `xor` True)
-            | otherwise       =
-              let v = read $ firstVar m in
-                (bv `xor` (bitI (v+1) v), const)
+-- Computes the phase polynomial
+getPhasePoly :: Analysis (Multilinear Angle)
+getPhasePoly = get >>= \st -> return $ poly (terms st) + quad (quadr st) where
+  poly = foldr (+) 0 . map phaseTm . Map.toList
+  quad = distribute (Discrete $ dyadic 1 1) . foldr (+) 0 . map quadTm . Map.toList
+  phaseTm (bv, (_, theta)) = distribute theta (multilinearOfBV (bv, False))
+  quadTm (v, bv) = (ofVar $ show v) * (multilinearOfBV bv)
 
-multilinearOfBV :: (F2Vec, Bool) -> Multilinear Bool
-multilinearOfBV bv = (foldl' (+) const) . map (ofVar . show) . varsOfBV $ fst bv
-  where const = if snd bv then P.one else P.zero
+-- Finding [HH] reductions
+applyReductions :: Analysis ()
+applyReductions = do
+  poly     <- getPhasePoly
+  pathVars <- liftM (Set.map show . Set.fromList) $ gets (Map.keys . quadr)
+  outVars  <- gets (Set.unions . map (varsOfBV . fst) . Map.elems . ket)
+  case matchHHLinear poly $ Set.difference pathVars outVars of
+    Nothing         -> return ()
+    Just (x, y, bv) -> do
+      elimVar x
+      substVar y bv
+      applyReductions
 
-multilinearPP :: AnalysisState -> Multilinear Angle
-multilinearPP st = Map.foldlWithKey f (Map.foldlWithKey g P.zero $ terms st) $ subs st
-  where g poly bv (_, a) = poly + distribute a (multilinearOfBV (bv, False))
-        f poly v bv      = poly + (ofVar $ show v)*(distribute (Discrete (dyadic 1 1)) $ multilinearOfBV bv)
+-- Remove an internal variable
+elimVar :: Int -> Analysis ()
+elimVar x = modify $ \st -> st { terms = Map.filterWithKey f $ terms st,
+                                 quadr = Map.delete x $ quadr st }
+  where f parity _ = Set.notMember (show x) $ varsOfBV parity
+
+-- Substitute a variable
+substVar :: Int -> BasisSt -> Analysis ()
+substVar x bv = modify $ \st -> st { terms = Map.mapKeysWith add f $ terms st,
+                                     quadr = Map.map g $ quadr st,
+                                     ket   = Map.map g $ ket st }
+  where add (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
+        f parity = case testBit parity x of
+          False -> parity
+          True  -> clearBit parity x + (fst bv)
+        g bv     = (f $ fst bv, snd bv)
+
+{- Utilities -}
 
 injectZ2 :: Periodic a => a -> Maybe Bool
 injectZ2 a = case order a of
@@ -113,62 +125,74 @@ injectZ2 a = case order a of
 toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2 . simplify
 
-interferenceOn :: ID -> AnalysisState -> Maybe (F2Vec, Bool)
-interferenceOn v st =
-  let checkPoly v = return (factorOut (show v) poly) >>= toBooleanPoly >>= bvOfMultilinear
-      poly        = multilinearPP st
-      vars        = varsOfBV $ fst ((qvals st)!v)
-      outVars     = map varsOfBV . fst . unzip . Map.elems . Map.delete v $ qvals st
-      candidates  = filter (\v -> Map.member v (subs st)) $ foldl' (\\) vars outVars
-   in
-      msum $ map checkPoly candidates
-  
-{-- The main analysis -}
+-- Converts a bitvector into a polynomial
+multilinearOfBV :: BasisSt -> Multilinear Bool
+multilinearOfBV bv = Set.foldr (+) const . Set.map ofVar . varsOfBV $ fst bv
+  where const = if snd bv then 1 else 0
+
+-- Gets the variables in a bitvector
+varsOfBV :: Parity -> Set String
+varsOfBV bv = Set.map show . Set.fromList $ filter (testBit bv) [0..(width bv) - 1]
+
+-- Converts a linear Boolean polynomial into a bitvector
+bvOfMultilinear :: Multilinear Bool -> Maybe BasisSt
+bvOfMultilinear p
+  | degree p > 1 = Nothing
+  | otherwise    = Just $ unsafeConvert p
+    where unsafeConvert = (foldl' f (bitI 0 0, False)). Map.toList . P.terms
+          f (bv, const) (m, b)
+            | b == False      = (bv, const)
+            | emptyMonomial m = (bv, const `xor` True)
+            | otherwise       =
+              let v = read $ firstVar m in
+                (bv `xor` (bitI (v+1) v), const)
+
+-- Matches a *linear* instance of [HH]
+matchHHLinear :: Multilinear Angle -> Set String -> Maybe (Int, Int, BasisSt)
+matchHHLinear poly paths = msum . map go $ Set.toList paths where
+  go v = do
+    p'       <- toBooleanPoly $ factorOut v poly
+    (u, sub) <- find (\(u, sub) -> u `elem` paths && degree sub <= 1) $ solveForX p'
+    bv       <- bvOfMultilinear sub
+    return (read v, read u, bv)
+
+{-- The main algorithm -}
 applyGate :: (Primitive, Loc) -> Analysis ()
 applyGate (gate, l) = case gate of
-  T v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 3)
-  Tinv v   -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 7 3)
-  S v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 2)
-  Sinv v   -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 3 2)
-  Z v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 1)
+  T v    -> getSt v >>= addTerm (Discrete $ dyadic 1 3) l
+  Tinv v -> getSt v >>= addTerm (Discrete $ dyadic 7 3) l
+  S v    -> getSt v >>= addTerm (Discrete $ dyadic 1 2) l
+  Sinv v -> getSt v >>= addTerm (Discrete $ dyadic 3 2) l
+  Z v    -> getSt v >>= addTerm (Discrete $ dyadic 1 1) l
+  Rz p v -> getSt v >>= addTerm p l
   CNOT c t -> do
-    (bvc, bc) <- getSt c
-    (bvt, bt) <- getSt t
-    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+    bv  <- getSt c
+    bv' <- getSt t
+    setSt t (fst bv + fst bv', snd bv `xor` snd bv')
   X v      -> do
-    (bv, b) <- getSt v
-    modify $ updateQval v (bv, Prelude.not b)
+    bv <- getSt v
+    setSt v (fst bv, Prelude.not $ snd bv)
   H v      -> do
     bv <- getSt v
-    existsH v
+    n <- alloc
+    addQuadTerm n bv
+    setSt v (bit n, False)
+    applyReductions
   Swap u v -> do
-    bvu <- getSt u
-    bvv <- getSt v
-    modify $ updateQval u bvv
-    modify $ updateQval v bvu
-  Rz p v -> do
-    bv <- getSt v
-    modify $ addTerm l bv p
-  _      -> undefined
+    bv  <- getSt u
+    bv' <- getSt v
+    setSt u bv'
+    setSt v bv
+  _      -> error "Unsupported gate"
   
 runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
 runAnalysis vars inputs gates =
   let init = 
-        SOP { dim     = dim', 
-              qvals   = Map.fromList ivals, 
-              terms   = Map.empty,
-              phase   = 0,
-              subs    = Map.empty }
+        SOP { dim   = dim', 
+              ket   = Map.fromList ivals, 
+              terms = Map.empty,
+              quadr = Map.empty,
+              phase = 0 }
   in
     execState (mapM_ applyGate $ zip gates [2..]) init
   where dim'    = length inputs
@@ -177,7 +201,7 @@ runAnalysis vars inputs gates =
 
 hPhaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 hPhaseFold vars inputs gates =
-  let (SOP _ _ terms phase subs) = runAnalysis vars inputs gates
+  let (SOP _ _ terms quadr phase) = runAnalysis vars inputs gates
       (lmap, phase') =
         let f (lmap, phase) (locs, exp) =
               let (i, phase', exp') = case Set.findMax locs of

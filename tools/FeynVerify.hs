@@ -12,6 +12,8 @@ import Numeric
 import Data.List
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Monoid hiding ((<>))
+import Data.Semigroup
 
 import Control.Monad
 import Control.DeepSeq
@@ -41,6 +43,12 @@ equivalenceCheck options src src' = do
             if inputs qc /= inputs qc'
             then NotIdentity "Inputs don't match"
             else result
+
+getSOP src = do
+  qc  <- parseDotQC src
+  let init = blank (qubits qc \\ Set.toList (inputs qc))
+  let sop = circuitSOP . toCliffordT . toGatelist $ qc
+  return . reduce $ init <> sop 
 
 {- Main program -}
 
@@ -74,6 +82,12 @@ printResult result time = case result of
     putStrLn $ "  " ++ show sop
 
 run :: Set String -> [String] -> IO ()
+run options (x:[])
+  | (drop (length x - 3) x == ".qc") = do
+      xsrc <- B.readFile x
+      case getSOP xsrc of
+        Left l    -> putStrLn $ show l
+        Right sop -> putStrLn $ show sop
 run options (x:y:[])
   | (drop (length x - 3) x == ".qc") && (drop (length y - 3) y == ".qc") = do
       xsrc <- B.readFile x

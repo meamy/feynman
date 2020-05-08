@@ -169,6 +169,7 @@ printHelp = mapM_ putStrLn lines
           "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
           "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
+          "  -statefold\tMore powerful phase folding",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
