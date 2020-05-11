@@ -1,6 +1,6 @@
 module Feynman.Optimization.HPhaseFold where
 
-import Feynman.Core
+import Feynman.Core hiding (subst)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
 import Feynman.Algebra.Polynomial hiding (zero, one, terms)
@@ -33,13 +33,22 @@ data AnalysisState = SOP {
   dim   :: Int,
   ket   :: Map ID BasisSt,
   terms :: Map Parity (Set (Loc, Bool), Angle),
-  quadr :: Map Int BasisSt,
+  pp    :: Multilinear Angle,
+  paths :: Set Int,
   phase :: Angle
 } deriving Show
 
 type Parity = F2Vec
 type BasisSt = (Parity, Bool)
 type Analysis = State AnalysisState
+
+-- The /i/th variable
+var :: Int -> String
+var i = "v" ++ show i
+
+-- The number of a variable
+unvar :: String -> Int
+unvar = read . tail
 
 -- Allocate a new variable
 alloc :: Analysis Int
@@ -66,29 +75,24 @@ setSt v bv = modify $ \st -> st { ket = Map.insert v bv (ket st) }
 addTerm :: Angle -> Loc -> BasisSt -> Analysis ()
 addTerm theta l (bv, p) =
   case p of
-    False -> modify $ \st -> st { terms = Map.alter (f theta) bv (terms st) }
+    False -> modify $ \st -> st { terms = Map.alter (f theta) bv (terms st),
+                                  pp    = pp st + distribute theta (multilinearOfBV (bv ,p)) }
     True  -> modify $ \st -> st { terms = Map.alter (f (-theta)) bv (terms st),
+                                  pp    = pp st + distribute theta (multilinearOfBV (bv ,p)),
                                   phase = (phase st) + theta }
   where f theta' (Just (s, x)) = Just (Set.insert (l, p) s, x + theta')
         f theta' Nothing       = Just (Set.singleton (l, p), theta')
 
 -- Adds a quadratic (unmergeable) phase term
 addQuadTerm :: Int -> BasisSt -> Analysis ()
-addQuadTerm n bv = modify $ \st -> st { quadr = Map.insert n bv (quadr st) }
-
--- Computes the phase polynomial
-getPhasePoly :: Analysis (Multilinear Angle)
-getPhasePoly = get >>= \st -> return $ poly (terms st) + quad (quadr st) where
-  poly = foldr (+) 0 . map phaseTm . Map.toList
-  quad = distribute (Discrete $ dyadic 1 1) . foldr (+) 0 . map quadTm . Map.toList
-  phaseTm (bv, (_, theta)) = distribute theta (multilinearOfBV (bv, False))
-  quadTm (v, bv) = (ofVar $ show v) * (multilinearOfBV bv)
+addQuadTerm n bv = modify $ \st -> st { pp = pp st + ofVar (var n) * quad } where
+  quad = distribute (Discrete $ dyadic 1 1) (multilinearOfBV bv)
 
 -- Finding [HH] reductions
 applyReductions :: Analysis ()
 applyReductions = do
-  poly     <- getPhasePoly
-  pathVars <- liftM (Set.map show . Set.fromList) $ gets (Map.keys . quadr)
+  poly     <- gets pp
+  pathVars <- gets paths
   outVars  <- gets (Set.unions . map (varsOfBV . fst) . Map.elems . ket)
   case matchHHLinear poly $ Set.difference pathVars outVars of
     Nothing         -> return ()
@@ -99,14 +103,14 @@ applyReductions = do
 
 -- Remove an internal variable
 elimVar :: Int -> Analysis ()
-elimVar x = modify $ \st -> st { --terms = Map.filterWithKey f $ terms st,
-                                 quadr = Map.delete x $ quadr st }
-  where f parity _ = Set.notMember (show x) $ varsOfBV parity
+elimVar x = modify $ \st -> st { terms = Map.filterWithKey f $ terms st,
+                                 pp    = removeVar (var x) $ pp st }
+  where f parity _ = Set.notMember x $ varsOfBV parity
 
 -- Substitute a variable
 substVar :: Int -> BasisSt -> Analysis ()
 substVar x bv = modify $ \st -> st { terms = Map.mapKeysWith add f $ terms st,
-                                     quadr = Map.map g $ quadr st,
+                                     pp    = subst (var x) (multilinearOfBV bv) $ pp st,
                                      ket   = Map.map g $ ket st }
   where add (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
         f parity = case testBit parity x of
@@ -127,12 +131,12 @@ toBooleanPoly = convertMaybe injectZ2 . simplify
 
 -- Converts a bitvector into a polynomial
 multilinearOfBV :: BasisSt -> Multilinear Bool
-multilinearOfBV bv = Set.foldr (+) const . Set.map ofVar . varsOfBV $ fst bv
+multilinearOfBV bv = Set.foldr (+) const . Set.map (ofVar . var) . varsOfBV $ fst bv
   where const = if snd bv then 1 else 0
 
 -- Gets the variables in a bitvector
-varsOfBV :: Parity -> Set String
-varsOfBV bv = Set.map show . Set.fromList $ filter (testBit bv) [0..(width bv) - 1]
+varsOfBV :: Parity -> Set Int
+varsOfBV bv = Set.fromList $ filter (testBit bv) [0..(width bv) - 1]
 
 -- Converts a linear Boolean polynomial into a bitvector
 bvOfMultilinear :: Multilinear Bool -> Maybe BasisSt
@@ -144,17 +148,17 @@ bvOfMultilinear p
             | b == False      = (bv, const)
             | emptyMonomial m = (bv, const `xor` True)
             | otherwise       =
-              let v = read $ firstVar m in
+              let v = unvar $ firstVar m in
                 (bv `xor` (bitI (v+1) v), const)
 
 -- Matches a *linear* instance of [HH]
-matchHHLinear :: Multilinear Angle -> Set String -> Maybe (Int, Int, BasisSt)
-matchHHLinear poly paths = msum . map go $ Set.toList paths where
+matchHHLinear :: Multilinear Angle -> Set Int -> Maybe (Int, Int, BasisSt)
+matchHHLinear poly paths = msum . map (go . var) $ Set.toList paths where
   go v = do
     p'       <- toBooleanPoly $ factorOut v poly
-    (u, sub) <- find (\(u, sub) -> u `elem` paths && degree sub <= 1) $ solveForX p'
+    (u, sub) <- find (\(u, sub) -> (unvar u) `elem` paths && degree sub <= 1) $ solveForX p'
     bv       <- bvOfMultilinear sub
-    return (read v, read u, bv)
+    return (unvar v, unvar u, bv)
 
 {-- The main algorithm -}
 applyGate :: (Primitive, Loc) -> Analysis ()
@@ -175,6 +179,7 @@ applyGate (gate, l) = case gate of
   H v      -> do
     bv <- getSt v
     n <- alloc
+    modify $ \st -> st { paths = Set.insert n $ paths st }
     addQuadTerm n bv
     setSt v (bit n, False)
     applyReductions
@@ -191,7 +196,8 @@ runAnalysis vars inputs gates =
         SOP { dim   = dim', 
               ket   = Map.fromList ivals, 
               terms = Map.empty,
-              quadr = Map.empty,
+              pp    = 0,
+              paths = Set.empty,
               phase = 0 }
   in
     execState (mapM_ applyGate $ zip gates [2..]) init
@@ -201,7 +207,7 @@ runAnalysis vars inputs gates =
 
 hPhaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 hPhaseFold vars inputs gates =
-  let (SOP _ _ terms quadr phase) = runAnalysis vars inputs gates
+  let (SOP _ _ terms _ _ phase) = runAnalysis vars inputs gates
       (lmap, phase') =
         let f (lmap, phase) (locs, exp) =
               let (i, phase', exp') = case Set.findMax locs of
