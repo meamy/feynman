@@ -99,7 +99,7 @@ applyReductions = do
 
 -- Remove an internal variable
 elimVar :: Int -> Analysis ()
-elimVar x = modify $ \st -> st { terms = Map.filterWithKey f $ terms st,
+elimVar x = modify $ \st -> st { --terms = Map.filterWithKey f $ terms st,
                                  quadr = Map.delete x $ quadr st }
   where f parity _ = Set.notMember (show x) $ varsOfBV parity
 
@@ -110,8 +110,8 @@ substVar x bv = modify $ \st -> st { terms = Map.mapKeysWith add f $ terms st,
                                      ket   = Map.map g $ ket st }
   where add (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
         f parity = case testBit parity x of
-          False -> parity
-          True  -> clearBit parity x + (fst bv)
+            False -> parity
+            True  -> (complementBit parity x) + (fst bv)
         g bv     = (f $ fst bv, snd bv)
 
 {- Utilities -}
@@ -228,3 +228,5 @@ hPhaseFold vars inputs gates =
           concatMap f (zip gates [2..])
   in
     (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
+
+  

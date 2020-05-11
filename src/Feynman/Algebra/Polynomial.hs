@@ -165,7 +165,7 @@ instance (Eq a, Num a) => Num (Multilinear a) where
   negate p = p { terms = Map.map negate (terms p) }
   abs    p = p { terms = Map.map abs (terms p) }
   signum p = p
-  fromInteger _ = zero
+  fromInteger i = constant (fromInteger i)
 
 {- Substitutions -}
 

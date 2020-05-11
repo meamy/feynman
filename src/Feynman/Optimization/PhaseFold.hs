@@ -181,29 +181,6 @@ phaseFold vars inputs gates =
   in
     (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
 
-{- X rotation merging -}
-
-swapXZ :: [Primitive] -> [Primitive]
-swapXZ = simplifyPrimitive . (swapGate =<<)
-  where swapGate gate = case gate of
-          H x           -> [H x]
-          X x           -> [H x, X x, H x]
-          Y x           -> [Y x]
-          Z x           -> [H x, Z x, H x]
-          CNOT x y      -> [CNOT y x]
-          S x           -> [H x, S x, H x]
-          Sinv x        -> [H x, Sinv x, H x]
-          T x           -> [H x, T x, H x]
-          Tinv x        -> [H x, Tinv x, H x]
-          Swap x y      -> [Swap x y]
-          Rz theta x    -> [H x, Rz theta x, H x]
-          Rx theta x    -> [H x, Rx theta x, H x]
-          Ry theta x    -> [Ry theta x]
-          Uninterp s xs -> [Uninterp s xs]
-
-stateFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-stateFold vars inputs = swapXZ . phaseFold vars inputs . swapXZ
-
 {-
 -- Phase dependence analysis
 type DG = Graph.Gr Loc ()
