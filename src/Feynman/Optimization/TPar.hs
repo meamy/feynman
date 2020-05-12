@@ -22,12 +22,7 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
-import Data.Graph.Inductive as Graph
-import Data.Graph.Inductive.Query.DFS
-
 import Data.Bits
-
-import Debug.Trace
 
 {- Generalized T-par -}
 {- Soundly (by abstracting Hadamards and other

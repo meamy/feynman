@@ -40,7 +40,7 @@ library
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
                        Feynman.Optimization.TPar,
-                       Feynman.Optimization.HPhaseFold,
+                       Feynman.Optimization.StateFold,
 
                        Feynman.Verification.SOP,
 
@@ -56,12 +56,9 @@ library
                        bv, 
                        containers >= 0.5.8.1,
                        mtl, 
-                       parsec >= 3.0, parsec3-numbers,
-                       deepseq,
-                       fgl,
-                       old-time,
-                       bytestring,
-                       bimap
+                       parsec >= 3.0, 
+                       parsec3-numbers,
+                       bytestring
   default-language:    Haskell2010
   
 

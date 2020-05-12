@@ -13,7 +13,7 @@ import Feynman.Frontend.OpenQASM.Syntax (QASM,
                                          showStats)
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
-import Feynman.Optimization.HPhaseFold
+import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.SOP
 
@@ -66,7 +66,7 @@ dotQCPass pass = case pass of
   CT        -> expandAll
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
-  Statefold -> optimizeDotQC hPhaseFold
+  Statefold -> optimizeDotQC stateFold
   CNOTMin   -> optimizeDotQC minCNOT
   TPar      -> optimizeDotQC tpar
 
@@ -124,7 +124,7 @@ qasmPass pass = case pass of
   CT        -> inline
   Simplify  -> id
   Phasefold -> applyOpt phaseFold
-  Statefold -> applyOpt hPhaseFold
+  Statefold -> applyOpt stateFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
 
@@ -169,10 +169,11 @@ printHelp = mapM_ putStrLn lines
           "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
           "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
-          "  -statefold\tMore powerful phase folding",
+          "  -statefold\tSlightly more powerful phase folding",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
+          "  -O3\t\tPhase folding + state folding + simplify",
           "",
           "Verification passes:",
           "  -verify\tPerform verification algorithm of [A18] after all passes",
@@ -198,6 +199,7 @@ parseArgs passes verify (x:xs) = case x of
   "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
   "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
   "-O2"          -> parseArgs (Simplify:Phasefold:Simplify:passes) verify xs
+  "-O3"          -> parseArgs (Simplify:Phasefold:Statefold:Simplify:passes) verify xs
   "-verify"      -> parseArgs passes True xs
   "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
   "VerAlg"       -> runVerSuite
