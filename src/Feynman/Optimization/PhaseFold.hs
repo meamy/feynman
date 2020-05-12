@@ -15,9 +15,6 @@ import qualified Data.Set as Set
 
 import Control.Monad.State.Strict
 
-import Data.Graph.Inductive as Graph
-import Data.Graph.Inductive.Query.DFS
-
 import Data.Bits
 
 {-- Phase folding optimization -}
@@ -42,141 +39,113 @@ import Data.Bits
  -     Cost: num keys XORs/conditional bit flips per CNOT, 
  -           num keys bit tests per H -} 
 
-data AnalysisState = SOP {
+data Ctx = Ctx {
   dim     :: Int,
-  qvals   :: Map ID (F2Vec, Bool),
+  ket     :: Map ID (F2Vec, Bool),
   terms   :: Map F2Vec (Set (Loc, Bool), Angle),
   orphans :: [(Set (Loc, Bool), Angle)],
   phase   :: Angle
 } deriving Show
 
-type Analysis = State AnalysisState
+type AI = State Ctx
 
 {- Get the bitvector for variable v, or otherwise allocate one -}
-getSt :: ID -> Analysis (F2Vec, Bool)
-getSt v = do 
-  st <- get
-  case Map.lookup v (qvals st) of
+getSt :: ID -> AI (F2Vec, Bool)
+getSt v = get >>= \st ->
+  case Map.lookup v (ket st) of
     Just bv -> return bv
-    Nothing -> do put $ st { dim = dim', qvals = qvals' }
+    Nothing -> do put $ st { dim = dim', ket = ket' }
                   return (bv', False)
       where dim' = dim st + 1
-            bv' = bitI dim' (dim' - 1)
-            qvals' = Map.insert v (bv', False) (qvals st)
+            bv'  = bitI dim' (dim' - 1)
+            ket' = Map.insert v (bv', False) (ket st)
 
-{- exists removes a variable (existentially quantifies it) then
- - orphans all terms that are no longer in the linear span of the
- - remaining variable states and assigns the quantified variable
- - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> AnalysisState
-exists v st@(SOP dim qvals terms orphans phase) =
-  let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
+{- Existentially quantifies a variable. In particular, any term that no
+ - longer has a representative becomes an "orphan" -- a term with
+ - no current representative -}
+exists :: ID -> Ctx -> Ctx
+exists v st@(Ctx dim ket terms orphans phase) =
+  let (vars, avecs) = unzip $ Map.toList $ Map.delete v ket
       (vecs, cnsts) = unzip avecs
-      (terms', orp) = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
+      (t, o)        = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
       (dim', vecs') = addIndependent vecs
       avecs'        = zip vecs' $ cnsts ++ [False]
-      orphans'      = (snd $ unzip $ Map.toList orp) ++ orphans
-      extendTerms   = Map.mapKeysMonotonic (zeroExtend 1)
+      orphans'      = (snd $ unzip $ Map.toList o) ++ orphans
+      terms'        = if dim' > dim
+                      then Map.mapKeysMonotonic (zeroExtend 1) t
+                      else t
   in
-    if dim' > dim
-    then SOP dim' (Map.fromList $ zip (vars ++ [v]) avecs') (extendTerms terms') orphans' phase
-    else SOP dim' (Map.fromList $ zip (vars ++ [v]) avecs') terms' orphans' phase
+    Ctx dim' (Map.fromList $ zip (vars ++ [v]) avecs') terms' orphans' phase
 
-updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
-updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
+setSt :: ID -> (F2Vec, Bool) -> AI ()
+setSt v bv = modify $ \st -> st { ket = Map.insert v bv $ ket st }
 
-addTerm :: Loc -> (F2Vec, Bool) -> Angle -> AnalysisState -> AnalysisState
-addTerm l (bv, p) i st =
-  case p of
-    False -> st { terms = Map.alter (f i) bv $ terms st }
-    True  ->
-      let terms' = Map.alter (f (-i)) bv $ terms st
-          phase' = phase st + i
-      in
-        st { terms = terms', phase = phase' }
-  where f i oldt = case oldt of
-          Just (s, x) -> Just (Set.insert (l, p) s, x + i)
-          Nothing     -> Just (Set.singleton (l, p), i)
+addTerm :: Angle -> Loc -> (F2Vec, Bool) -> AI ()
+addTerm theta l (bv, parity) = modify go where
+  go st = case parity of
+    False -> st { terms = Map.alter (add theta) bv $ terms st }
+    True  -> st { terms = Map.alter (add (-theta)) bv $ terms st,
+                  phase = phase st + theta }
+  add theta t = case t of
+    Just (reps, theta') -> Just (Set.insert (l, parity) reps, theta + theta')
+    Nothing             -> Just (Set.singleton (l, parity), theta)
  
 {-- The main analysis -}
-applyGate :: (Primitive, Loc) -> Analysis ()
+applyGate :: (Primitive, Loc) -> AI ()
 applyGate (gate, l) = case gate of
-  T v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 3)
-  Tinv v   -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 7 3)
-  S v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 2)
-  Sinv v   -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 3 2)
-  Z v      -> do
-    bv <- getSt v
-    modify $ addTerm l bv (Discrete $ dyadic 1 1)
-  Rz p v -> do
-    bv <- getSt v
-    modify $ addTerm l bv p
-  X v      -> do
-    (bv, b) <- getSt v
-    modify $ updateQval v (bv, Prelude.not b)
+  T v    -> getSt v >>= addTerm (Discrete $ dyadic 1 3) l
+  Tinv v -> getSt v >>= addTerm (Discrete $ dyadic 7 3) l
+  S v    -> getSt v >>= addTerm (Discrete $ dyadic 1 2) l
+  Sinv v -> getSt v >>= addTerm (Discrete $ dyadic 3 2) l
+  Z v    -> getSt v >>= addTerm (Discrete $ dyadic 1 1) l
+  Rz p v -> getSt v >>= addTerm p l
+  X v    -> getSt v >>= \(bv, b) -> setSt v (bv, Prelude.not b)
   CNOT c t -> do
-    (bvc, bc) <- getSt c
-    (bvt, bt) <- getSt t
-    modify $ updateQval t (bvc + bvt, bc `xor` bt)
+    bv  <- getSt c
+    bv' <- getSt t
+    setSt t (fst bv + fst bv', snd bv `xor` snd bv)
   Swap u v -> do
-    bvu <- getSt u
-    bvv <- getSt v
-    modify $ updateQval u bvv
-    modify $ updateQval v bvu
+    bv  <- getSt u
+    bv' <- getSt v
+    setSt u bv'
+    setSt v bv
   _        -> do
     let args = getArgs gate
     _ <- mapM getSt args
     mapM_ (\v -> modify $ exists v) args
+
+initialState :: [ID] -> [ID] -> Ctx
+initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
+  dim = length inputs
+  ket = zip (inputs ++ (vars \\ inputs)) [(bitI dim x, False) | x <- [0..]]
   
-runAnalysis :: [ID] -> [ID] -> [Primitive] -> AnalysisState
-runAnalysis vars inputs gates =
-  let init = 
-        SOP { dim     = dim', 
-              qvals   = Map.fromList ivals, 
-              terms   = Map.empty,
-              orphans = [],
-              phase   = 0}
-  in
-    execState (mapM_ applyGate $ zip gates [2..]) init
-  where dim'    = length inputs
-        bitvecs = [(bitI dim' x, False) | x <- [0..]] 
-        ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
+run :: [Primitive] -> Ctx -> Ctx
+run circ = execState (mapM_ applyGate $ zip circ [2..])
 
 phaseFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-phaseFold vars inputs gates =
-  let (SOP _ _ terms orphans phase) = runAnalysis vars inputs gates
-      allTerms      = (snd . unzip . Map.toList $ terms) ++ orphans
-      (lmap, phase') =
-        let f (lmap, phase) (locs, exp) =
-              let (i, phase', exp') = case Set.findMax locs of
-                    (i, False) -> (i, phase, exp)
-                    (i, True)  -> (i, phase + exp, (-exp))
-              in
-                (Set.foldr (\(j, _) -> Map.insert j (if i == j then exp' else zero)) lmap locs, phase')
-        in
-          foldl' f (Map.empty, phase) allTerms
-      gates' =
-        let getTarget gate = case gate of
-              T x    -> x
-              S x    -> x
-              Z x    -> x
-              Tinv x -> x
-              Sinv x -> x
-              Rz _ x -> x
-            f (gate, i) = case Map.lookup i lmap of
-              Nothing -> [(gate, i)]
-              Just exp
-                | exp == zero -> []
-                | otherwise   -> zip (synthesizePhase (getTarget gate) exp) (repeat i)
-        in
-          concatMap f (zip gates [2..])
+phaseFold vars inputs circ =
+  let result = run circ $ initialState vars inputs
+      phases = (snd . unzip . Map.toList $ terms result) ++ (orphans result)
+      (map, gphase) = foldr go (Map.empty, phase result) phases where
+        go (locs, angle) (map, gphase) =
+          let (loc, gphase', angle') = case Set.findMin locs of
+                (l, False) -> (l, gphase, angle)
+                (l, True)  -> (l, gphase + angle, (-angle))
+              update (l,_) = Map.insert l (if loc == l then angle' else 0)
+          in
+            (Set.foldr update map locs, gphase')
+      circ' = concatMap go (zip circ [2..]) where
+        go (gate, l) = case Map.lookup l map of
+          Nothing -> [(gate, l)]
+          Just angle
+            | angle == 0 -> []
+            | otherwise  -> zip (synthesizePhase (getTarget gate) angle) [0..]
+        getTarget gate = case gate of
+          T x    -> x
+          S x    -> x
+          Z x    -> x
+          Tinv x -> x
+          Sinv x -> x
+          Rz _ x -> x
   in
-    (fst $ unzip $ gates') ++ (globalPhase (head vars) phase')
+    (fst $ unzip $ circ') ++ (globalPhase (head vars) gphase)
