@@ -153,7 +153,7 @@ bvOfMultilinear p
 
 -- Matches a *linear* instance of [HH]
 matchHHLinear :: Multilinear Angle -> Set Int -> Maybe (Int, Int, BasisSt)
-matchHHLinear poly paths = msum . map (go . var) $ Set.toList paths where
+matchHHLinear poly paths = msum . map (go . var) $ Set.toDescList paths where
   go v = do
     p'       <- toBooleanPoly $ factorOut v poly
     (u, sub) <- find (\(u, sub) -> (unvar u) `elem` paths && degree sub <= 1) $ solveForX p'
@@ -182,7 +182,6 @@ applyGate (gate, l) = case gate of
     modify $ \st -> st { paths = Set.insert n $ paths st }
     addQuadTerm n bv
     setSt v (bit n, False)
-    applyReductions
   Swap u v -> do
     bv  <- getSt u
     bv' <- getSt v
@@ -200,7 +199,7 @@ runAnalysis vars inputs gates =
               paths = Set.empty,
               phase = 0 }
   in
-    execState (mapM_ applyGate $ zip gates [2..]) init
+    execState (mapM_ applyGate (zip gates [2..]) >> applyReductions) init
   where dim'    = length inputs
         bitvecs = [(bitI dim' x, False) | x <- [0..]] 
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
