@@ -59,7 +59,7 @@ getSt v = get >>= \st ->
 
 -- Set the state of a variable
 setSt :: ID -> Multilinear Bool -> State Ctx ()
-setSt v bexp = modify $ \st -> st { ket = Map.insert v bexp (ket st) }
+setSt v bexp = modify $ \st -> st { ket = Map.insert v (simplify bexp) (ket st) }
 
 -- Adds a mergeable phase term
 addTerm :: Angle -> Loc -> Multilinear Bool -> State Ctx ()
@@ -79,31 +79,18 @@ addQuadTerm :: Int -> Multilinear Bool -> State Ctx ()
 addQuadTerm n bexp = modify $ \st -> st { pp = simplify $ pp st + poly } where
   poly = distribute (Discrete $ dyadic 1 1) $ ofVar (var n) * bexp
 
--- Finding linear [HH] reductions
-applyLinearReductions :: State Ctx ()
-applyLinearReductions = do
-  poly     <- gets pp
-  pathVars <- gets paths
-  outVars  <- gets (Set.fromList . map unvar . concatMap vars . Map.elems . ket)
-  case matchHHLinear poly (Set.difference pathVars outVars) pathVars of
-    Nothing         -> return ()
-    Just (x, y, bexp) -> do
-      elimVar x
-      substVar y bexp
-      applyLinearReductions
-
 -- Finding [HH] reductions
-applyReductions :: State Ctx ()
-applyReductions = do
+applyReductions :: Int -> State Ctx ()
+applyReductions cutoff = do
   poly     <- gets pp
   pathVars <- gets paths
   outVars  <- gets (Set.fromList . map unvar . concatMap vars . Map.elems . ket)
-  case matchHH poly (Set.difference pathVars outVars) pathVars of
+  case matchHH poly (Set.difference pathVars outVars) pathVars cutoff of
     Nothing         -> return ()
     Just (x, y, bexp) -> do
       elimVar x
       substVar y bexp
-      applyReductions
+      applyReductions cutoff
 
 -- Remove an internal variable
 elimVar :: Int -> State Ctx ()
@@ -114,7 +101,7 @@ substVar :: Int -> Multilinear Bool -> State Ctx ()
 substVar x bexp = modify go where
   go st = st { terms = Map.mapKeysWith c f $ terms st,
                pp    = simplify . P.subst (var x) bexp $ pp st,
-               ket   = Map.map (P.subst (var x) bexp) $ ket st }
+               ket   = Map.map (simplify . P.subst (var x) bexp) $ ket st }
   f = simplify . dropConstant . P.subst (var x) bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
@@ -129,23 +116,14 @@ injectZ2 a = case order a of
 toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2
 
--- Matches a *linear* instance of [HH]
-matchHHLinear :: Multilinear Angle -> Set Int -> Set Int -> Maybe (Int, Int, Multilinear Bool)
-matchHHLinear pp cand paths = msum . map (go . var) $ Set.toDescList cand where
-  go v = do
-    pp'      <- toBooleanPoly . factorOut v $ pp
-    (u, sub) <- find validSoln $ solveForX pp'
-    return (unvar v, unvar u, sub)
-  validSoln (u, sub) = (unvar u) `elem` paths && degree sub <= 1
-
 -- Matches a instance of [HH]
-matchHH :: Multilinear Angle -> Set Int -> Set Int -> Maybe (Int, Int, Multilinear Bool)
-matchHH pp cand paths = msum . map (go . var) $ Set.toDescList cand where
+matchHH :: Multilinear Angle -> Set Int -> Set Int -> Int -> Maybe (Int, Int, Multilinear Bool)
+matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   go v = do
     pp'      <- toBooleanPoly . factorOut v $ pp
     (u, sub) <- find validSoln $ solveForX pp'
     return (unvar v, unvar u, sub)
-  validSoln (u, sub) = (unvar u) `elem` paths
+  validSoln (u, sub) = Set.member (unvar u) paths && degree sub <= cutoff
 
 {- The Super phase folding analysis -}
 applyGate :: (Primitive, Loc) -> State Ctx ()
@@ -178,8 +156,10 @@ applyGate (gate, l) = case gate of
 
 {- Run the analysis on a circuit and state -}
 runCircuit :: [Primitive] -> Ctx -> Ctx
-runCircuit circ = execState go where
-  go = mapM_ applyGate (zip circ [2..]) >> applyLinearReductions
+runCircuit circ = execState $ do
+  mapM_ applyGate (zip circ [2..])
+  applyReductions 1 -- linear reductions
+  applyReductions 2 -- quadratic reductions
 
 {- Generates an initial state -}
 initialState :: [ID] -> [ID] -> Ctx
