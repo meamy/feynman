@@ -64,13 +64,15 @@ setSt v bexp = modify $ \st -> st { ket = Map.insert v bexp (ket st) }
 -- Adds a mergeable phase term
 addTerm :: Angle -> Loc -> Multilinear Bool -> State Ctx ()
 addTerm theta loc bexp = modify go where
-  go st = st { terms = Map.alter (add theta) (dropConstant bexp) (terms st),
+  go st = st { terms = Map.alter (add theta') bexp' (terms st),
                pp    = simplify $ pp st + distribute theta bexp,
                phase = phase st + (if parity then theta else 0) }
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, parity) reps, theta + theta')
     Nothing             -> Just (Set.singleton (loc, parity), theta)
   parity = getConstant bexp
+  theta' = if parity then (-theta) else theta
+  bexp'  = simplify . dropConstant $ bexp
 
 -- Adds a quadratic phase term
 addQuadTerm :: Int -> Multilinear Bool -> State Ctx ()
@@ -110,20 +112,11 @@ elimVar x = modify $ \st -> st { pp = simplify . removeVar (var x) $ pp st }
 -- Substitute a variable
 substVar :: Int -> Multilinear Bool -> State Ctx ()
 substVar x bexp = modify go where
-  go st = st { terms = Map.foldrWithKey f Map.empty $ terms st,
+  go st = st { terms = Map.mapKeysWith c f $ terms st,
                pp    = simplify . P.subst (var x) bexp $ pp st,
                ket   = Map.map (P.subst (var x) bexp) $ ket st }
-  f sub val =
-    let bexp' = P.subst (var x) bexp sub
-        locs  = if getConstant bexp' then
-                  Set.map (\(locs,parity) -> (locs,Prelude.not parity)) $ fst val
-                else
-                  fst val
-        add (s1, a1) t = case t of
-          Just (s2, a2) -> Just (Set.union s1 s2, a1 + a2)
-          Nothing       -> Just (s1, a1)
-    in
-      Map.alter (add (locs, snd val)) (dropConstant bexp')
+  f = simplify . dropConstant . P.subst (var x) bexp
+  c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
 {- Utilities -}
 
