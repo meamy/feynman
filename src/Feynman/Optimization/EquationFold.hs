@@ -59,7 +59,8 @@ getSt v = get >>= \st ->
       modify $ \st -> st { ket = Map.insert v (bit n, False) (ket st) }
       return (bit n, False)
 
--- Set the state of a variable
+
+  -- Set the state of a variable
 setSt :: ID -> (F2Vec, Bool) -> State Ctx ()
 setSt v bv = modify $ \st -> st { ket = Map.insert v bv (ket st) }
 
@@ -235,7 +236,24 @@ reachableEqns' poly cand = go ([], cand) [(poly, cand)] where
       in
         case matches of
           [] -> go (acc, xs) ps
-          ((eqn,x,p'):_) -> go (eqn:acc, xs\\[x]) (p':p:ps)
+          ((eqn,x,p'):_) -> go (eqn:acc, xs\\[x]) ((p:ps) ++ [p'])
+
+-- Memoized
+reachableEqns'' :: Multilinear Angle -> [Int] -> [Multilinear Bool]
+reachableEqns'' poly cand = fst $ go ([],[]) poly cand where
+  go (acc,seen) poly cand
+    | poly == 0        = (acc,seen)
+    | poly `elem` seen = (acc,seen)
+    | otherwise        =
+      let expand v (acc,seen) = fromMaybe (acc,seen) $ do
+            eqn <- toBooleanPoly $ factorOut (var v) poly
+            guard $ (not (eqn == 0) && not (elem eqn acc))
+            (u, sub) <- find (\_ -> True) $ solveForX eqn
+            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
+            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
+            return $ go (eqn:acc,seen) poly' (cand \\ (v:deps))
+      in
+        foldr expand (acc,poly:seen) cand
 
 -- Computes a matrix for a list of affine parities
 matrixify :: [(F2Vec, Bool)] -> State Ctx F2Mat
@@ -270,7 +288,9 @@ applyReductions = do
   paths   <- gets $ Map.keys . quad
   outVars <- gets $ concatMap (varsOfBV . fst) . Map.elems . ket
   cand    <- gets $ \st -> paths \\ outVars
-  let eqns = nub . filter ((1 >=) . degree) $ reachableEqns poly cand
+  let e   = nub $ reachableEqns'' poly cand
+  trace ("Reachable equations: " ++ show e) $ return ()
+  let eqns = nub . filter ((1 >=) . degree) $ e --reachableEqns' poly cand
   trace ("Generated equations: " ++ show eqns) $ return ()
   subs    <- canonicalSubs eqns
   trace ("Canonicalized equations: " ++ show subs) $ return ()
