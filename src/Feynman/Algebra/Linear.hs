@@ -45,11 +45,20 @@ zeroExtend i v = coerce $ BitVector.zeroExtend i (coerce v)
 width :: F2Vec -> Int
 width = coerce BitVector.width
 
+fromBool :: Bool -> F2Vec
+fromBool = coerce BitVector.fromBool
+
 fromBits :: [Bool] -> F2Vec
 fromBits = coerce BitVector.fromBits
 
 toBits :: F2Vec -> [Bool]
 toBits = coerce BitVector.toBits
+
+(#) :: F2Vec -> F2Vec -> F2Vec
+(#) u v = coerce $ (BitVector.#) (coerce u) (coerce v)
+
+lsb1 :: F2Vec -> Int
+lsb1 = coerce BitVector.lsb1
 
 {- Little-endian -}
 instance Show F2Vec where

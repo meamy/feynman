@@ -49,6 +49,7 @@ library
                        Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
                        Feynman.Optimization.Clifford,
+                       Feynman.Optimization.EquationFold,
 
                        Feynman.Verification.Symbolic,
 

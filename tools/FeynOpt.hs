@@ -14,6 +14,7 @@ import Feynman.Frontend.OpenQASM.Syntax (QASM,
 import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
+import Feynman.Optimization.EquationFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
@@ -80,7 +81,7 @@ dotQCPass pass = case pass of
   CT        -> expandAll
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
-  Statefold -> optimizeDotQC stateFold
+  Statefold -> optimizeDotQC equationFold
   CNOTMin   -> optimizeDotQC minCNOT
   TPar      -> optimizeDotQC tpar
   Cliff     -> optimizeDotQC (\_ _ -> simplifyCliffords)
@@ -141,7 +142,7 @@ qasmPass pass = case pass of
   CT        -> inline
   Simplify  -> id
   Phasefold -> applyOpt phaseFold
-  Statefold -> applyOpt stateFold
+  Statefold -> applyOpt equationFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
   Cliff     -> applyOpt (\_ _ -> simplifyCliffords)
