@@ -195,7 +195,6 @@ generateEquations poly cand
   | otherwise = do
       v        <- cand
       eqn      <- maybeToList . toBooleanPoly . factorOut (var v) $ poly
-      trace ("(" ++ show poly ++ "): found equality " ++ show eqn ++ " = 0") $ return ()
       (u, sub) <- maybeToList $ find (\(u, sub) -> True) $ solveForX eqn
       let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
       let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
@@ -255,6 +254,32 @@ reachableEqns'' poly cand = fst $ go ([],[]) poly cand where
       in
         foldr expand (acc,poly:seen) cand
 
+-- Fixed search depth
+reachableEqns''' :: Int -> Multilinear Angle -> [Int] -> [Multilinear Bool]
+reachableEqns''' depth = go depth [] where
+  go depth acc poly cand
+    | poly == 0  = acc
+    | depth == 0 =
+      let expand v = do
+            eqn <- toBooleanPoly $ factorOut (var v) poly
+            guard $ (not (eqn == 0) && not (elem eqn acc))
+            (u, sub) <- find (\_ -> True) $ solveForX eqn
+            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
+            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
+            return $ go 0 (eqn:acc) poly' (cand \\ (v:deps))
+      in
+        fromMaybe acc . msum . map expand $ cand
+    | otherwise  =
+      let expand v acc = fromMaybe acc $ do
+            eqn <- toBooleanPoly $ factorOut (var v) poly
+            guard $ (not (eqn == 0) && not (elem eqn acc))
+            (u, sub) <- find (\_ -> True) $ solveForX eqn
+            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
+            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
+            return $ go (depth-1) (eqn:acc) poly' (cand \\ (v:deps))
+      in
+        foldr expand acc cand
+
 -- Computes a matrix for a list of affine parities
 matrixify :: [(F2Vec, Bool)] -> State Ctx F2Mat
 matrixify bvs = gets dim >>= return . fromList . go where
@@ -288,7 +313,7 @@ applyReductions = do
   paths   <- gets $ Map.keys . quad
   outVars <- gets $ concatMap (varsOfBV . fst) . Map.elems . ket
   cand    <- gets $ \st -> paths \\ outVars
-  let e   = nub $ reachableEqns'' poly cand
+  let e   = nub $ generateEquations poly cand
   trace ("Reachable equations: " ++ show e) $ return ()
   let eqns = nub . filter ((1 >=) . degree) $ e --reachableEqns' poly cand
   trace ("Generated equations: " ++ show eqns) $ return ()
