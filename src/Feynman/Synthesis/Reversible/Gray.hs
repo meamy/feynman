@@ -16,6 +16,8 @@ import qualified Data.Set as Set
 
 import Data.Ord (comparing)
 
+import Data.Maybe
+
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
@@ -83,6 +85,7 @@ graySynthesis ids out (x:xs) may = case x of
       graySynthesis ids out (xzero:xone:xs) may
 
 -- Pointed
+{-
 cnotMinGrayPointed0 :: Synthesizer
 cnotMinGrayPointed0 input output [] may = (linearSynth input output, may)
 cnotMinGrayPointed0 input output xs may =
@@ -97,6 +100,22 @@ cnotMinGrayPointed0 input output xs may =
             ((o, m), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt may
         in
           (g ++ linearSynth o output, m)
+-}
+
+cnotMinGrayPointed0 :: Synthesizer
+cnotMinGrayPointed0 input output [] may = (linearSynth input output, may)
+cnotMinGrayPointed0 input output xs may =
+  let ivecs    = Map.toList input
+      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+      f (v, i) = solver v >>= \v' -> Just (v', i)
+  in
+    case mapM f xs of
+      Nothing  -> error "Fatal: something bad happened"
+      Just xs' ->
+        let (circ, mat) = graySynth (fst $ unzip ivecs) xs'
+            tmp         = linearSynth input (liftMatOp (flip mult $ mat) output)
+        in
+          (circ ++ linearSynth input (liftMatOp (flip mult $ mat) output), may)
 
 -- non-pointed synthesis
 cnotMinGrayOpen0 :: OpenSynthesizer
@@ -144,6 +163,28 @@ cnotMinGrayOpen input xs =
   in
     minimumBy (comparing countc) [gates, gates']
 
+{- Recursive gray-synth -}
+graySynth :: [ID] -> [Phase] -> ([Primitive], F2Mat)
+graySynth ids xs = runState (go [0..n-1] Nothing xs) (identity n) where
+  n = length ids
+  go _  _        []  = return []
+  go [] (Just t) [x] = return $ synthesizePhase (ids!!t) (snd x)
+  go [] Nothing  _   = return []
+  go cs target   xs  = do
+    a <- get
+    let xs' = map (\(xor,angle) -> (multRow xor a, angle)) xs
+    let (zeros, pivot, cs', ones) = findBestSplitMono cs xs'
+    put $ identity n
+    lcirc <- go cs' target zeros
+    case ones of
+      [] -> modify (mult a) >> return lcirc
+      _  -> do
+        modify $ fromMaybe id (fmap (addRow pivot) target)
+        let gate = fmap (\t -> [CNOT (ids!!pivot) (ids!!t)]) target
+        rcirc <- go cs' (mplus target $ Just pivot) ones
+        modify $ mult a
+        return $ lcirc ++ (fromMaybe [] gate) ++ rcirc
+    
 {- Brute force synthesis -}
 
 maximalSkeleton :: [ID] -> LinearTrans -> [Primitive] -> Set F2Vec
@@ -181,3 +222,20 @@ bruteForceASkeleton ids vals out = find (verify . maximalASkeleton ids st) $ all
 
 genInitSt :: [ID] -> LinearTrans
 genInitSt ids = Map.fromList $ map (\(id, i) -> (id, bitI (length ids) i)) $ zip ids [0..]
+
+-- Test case
+
+i = ["a", "b", "c", "d"]
+a = bitI 4 0
+b = bitI 4 1
+c = bitI 4 2
+d = bitI 4 3
+t = Discrete $ dyadic 1 3
+vecs = [(a, t), (a `xor` b, t), (a `xor` c, t), (a `xor` b `xor` c, t)]
+vecs' = [(a, t), (a `xor` b, t), (a `xor` c, t), (a `xor` b `xor` c, t), (d `xor` c, t), (c `xor` b `xor` d, t), (a `xor` d, t), (b `xor` c, t)]
+
+liftMultLeft :: F2Mat -> LinearTrans -> LinearTrans
+liftMultLeft mat = liftMatOp (mult mat)
+
+liftMultRight :: F2Mat -> LinearTrans -> LinearTrans
+liftMultRight mat = liftMatOp (flip mult $ mat)

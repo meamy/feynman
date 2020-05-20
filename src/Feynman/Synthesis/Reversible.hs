@@ -70,6 +70,9 @@ linearSynth input output =
       then error "Fatal: map keys not equal"
       else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
+liftMatOp :: (F2Mat -> F2Mat) -> LinearTrans -> LinearTrans
+liftMatOp f = Map.fromList . uncurry zip . go . unzip . Map.toList where
+  go (ids,vecs) = (ids, toList . f . fromList $ vecs)
 
 {- Deprecated CNOT minimizing CNOT-dihedral synthesis -}
 synthVec :: [(ID, F2Vec)] -> F2Vec -> Maybe ((ID, F2Vec), [Primitive])
