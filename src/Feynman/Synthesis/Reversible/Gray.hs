@@ -22,6 +22,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
 import Data.Bits
+import Debug.Trace
 
 {- Gray code synthesis -}
 data Pt = Pt {
@@ -84,24 +85,18 @@ graySynthesis ids out (x:xs) may = case x of
     in
       graySynthesis ids out (xzero:xone:xs) may
 
--- Pointed
-{-
-cnotMinGrayPointed0 :: Synthesizer
-cnotMinGrayPointed0 input output [] may = (linearSynth input output, may)
-cnotMinGrayPointed0 input output xs may =
-  let ivecs    = Map.toList input
-      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
-      f (v, i) = solver v >>= \v' -> Just (v', i)
-  in
-    case mapM f xs of
-      Nothing  -> error "Fatal: something bad happened"
-      Just xs' ->
-        let initPt      = [Pt [0..length ivecs - 1] Nothing Nothing xs']
-            ((o, m), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt may
-        in
-          (g ++ linearSynth o output, m)
--}
+-- Optionally adds "may" phases whenever possible
+addMay :: LinearTrans -> [Phase] -> [Primitive] -> ([Primitive], [Phase])
+addMay st phases = (\(a,b) -> (reverse a,b)) . snd . foldl' go (st,([],phases)) where
+  go (st,(circ,may)) gate@(CNOT c t) =
+    let tmp = (st!t) + (st!c) in
+      case partition (\phase -> fst phase == tmp) may of
+        ([], may')      -> (Map.insert t tmp st, (gate:circ, may'))
+        ([phase], may') -> trace "HELLO" $ (Map.insert t tmp st, (circ', may')) where
+          circ' = synthesizePhase t (snd phase) ++ (gate:circ)
+  go (st,(circ,may)) gate = (st,(gate:circ,may))
 
+-- Pointed
 cnotMinGrayPointed0 :: Synthesizer
 cnotMinGrayPointed0 input output [] may = (linearSynth input output, may)
 cnotMinGrayPointed0 input output xs may =
@@ -112,10 +107,11 @@ cnotMinGrayPointed0 input output xs may =
     case mapM f xs of
       Nothing  -> error "Fatal: something bad happened"
       Just xs' ->
-        let (circ, mat) = graySynth (fst $ unzip ivecs) xs'
-            tmp         = linearSynth input (liftMatOp (flip mult $ mat) output)
+        let initPt       = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            ((o, []), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt []
+            (g',m')      = addMay input may g
         in
-          (circ ++ linearSynth input (liftMatOp (flip mult $ mat) output), may)
+          (g' ++ linearSynth o output, m')
 
 -- non-pointed synthesis
 cnotMinGrayOpen0 :: OpenSynthesizer
@@ -163,7 +159,7 @@ cnotMinGrayOpen input xs =
   in
     minimumBy (comparing countc) [gates, gates']
 
-{- Recursive gray-synth -}
+{- Recursive gray-synth (slower) -}
 graySynth :: [ID] -> [Phase] -> ([Primitive], F2Mat)
 graySynth ids xs = runState (go [0..n-1] Nothing xs) (identity n) where
   n = length ids
@@ -222,20 +218,3 @@ bruteForceASkeleton ids vals out = find (verify . maximalASkeleton ids st) $ all
 
 genInitSt :: [ID] -> LinearTrans
 genInitSt ids = Map.fromList $ map (\(id, i) -> (id, bitI (length ids) i)) $ zip ids [0..]
-
--- Test case
-
-i = ["a", "b", "c", "d"]
-a = bitI 4 0
-b = bitI 4 1
-c = bitI 4 2
-d = bitI 4 3
-t = Discrete $ dyadic 1 3
-vecs = [(a, t), (a `xor` b, t), (a `xor` c, t), (a `xor` b `xor` c, t)]
-vecs' = [(a, t), (a `xor` b, t), (a `xor` c, t), (a `xor` b `xor` c, t), (d `xor` c, t), (c `xor` b `xor` d, t), (a `xor` d, t), (b `xor` c, t)]
-
-liftMultLeft :: F2Mat -> LinearTrans -> LinearTrans
-liftMultLeft mat = liftMatOp (mult mat)
-
-liftMultRight :: F2Mat -> LinearTrans -> LinearTrans
-liftMultRight mat = liftMatOp (flip mult $ mat)
