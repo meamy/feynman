@@ -80,7 +80,7 @@ addQuadTerm n bexp = modify $ \st -> st { pp = simplify $ pp st + poly } where
   poly = distribute (Discrete $ dyadic 1 1) $ ofVar (var n) * bexp
 
 -- Finding [HH] reductions
-applyReductions :: Int -> State Ctx ()
+applyReductions :: Maybe Int -> State Ctx ()
 applyReductions cutoff = do
   poly     <- gets pp
   pathVars <- gets paths
@@ -117,13 +117,15 @@ toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
 toBooleanPoly = convertMaybe injectZ2
 
 -- Matches a instance of [HH]
-matchHH :: Multilinear Angle -> Set Int -> Set Int -> Int -> Maybe (Int, Int, Multilinear Bool)
+matchHH :: Multilinear Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, Multilinear Bool)
 matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   go v = do
     pp'      <- toBooleanPoly . factorOut v $ pp
     (u, sub) <- find validSoln $ solveForX pp'
     return (unvar v, unvar u, sub)
-  validSoln (u, sub) = Set.member (unvar u) paths && degree sub <= cutoff
+  validSoln (u, sub) = case cutoff of
+    Just d  -> degree sub <= d && Set.member (unvar u) paths
+    Nothing -> Set.member (unvar u) paths
 
 {- The Super phase folding analysis -}
 applyGate :: (Primitive, Loc) -> State Ctx ()
@@ -158,8 +160,9 @@ applyGate (gate, l) = case gate of
 runCircuit :: [Primitive] -> Ctx -> Ctx
 runCircuit circ = execState $ do
   mapM_ applyGate (zip circ [2..])
-  applyReductions 1 -- linear reductions
-  applyReductions 2 -- quadratic reductions
+  applyReductions (Just 1) -- linear reductions
+  applyReductions (Just 2) -- quadratic reductions
+  applyReductions Nothing -- all other reductions
 
 {- Generates an initial state -}
 initialState :: [ID] -> [ID] -> Ctx
