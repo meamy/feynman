@@ -19,6 +19,7 @@ import Feynman.Algebra.Linear hiding (identity)
 import Feynman.Algebra.Polynomial
 import Feynman.Core hiding (toffoli, subst)
 import qualified Feynman.Core as Core
+import Feynman.Optimization.PhaseFold (phaseFold)
 
 import Data.Ratio
 import Data.Coerce
@@ -549,6 +550,18 @@ verifySpec spec vars inputs gates =
       True  -> Identity pf
       False -> Unknown sop'
 
+verifyPermutation :: SOP Z8 -> [Primitive] -> VerificationResult Z8
+verifyPermutation spec gates =
+  let sop         = circuitSOP (dagger gates)
+      bra         = Map.mapWithKey (\v b -> if b then ofVar v else zero) $ inVals spec
+      (pf, sop')  = reduce $ restrictGeneral (spec <> sop) bra
+      checkIt sop = pathVars sop == [] && sde sop == 0
+  in
+    case (checkIt sop', axiomKill sop') of
+      (True, _)       -> Identity pf
+      (False, Just i) -> NotIdentity $ "No valid substitution for " ++ pathVar i ++ " (" ++ show sop' ++ ")"
+      (False, _)      -> Unknown sop'
+
 validateIsometry :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> VerificationResult Z8
 validateIsometry global vars inputs c1 c2 =
   let sop     = circuitSOPWithHints vars (c1 ++ dagger c2)
@@ -663,6 +676,30 @@ toffoliN = go 0
           in
             subproduct ++ go (i+1) (anc:xs) ++ dagger subproduct
 
+barencoTof :: [ID] -> ID -> [ID] -> [Primitive]
+barencoTof [] t _          = []
+barencoTof (c:[]) t _      = [CNOT c t]
+barencoTof (c:c':[]) t _   = toffoli c c' t
+barencoTof (c:cs) t (d:ds) = go (c:cs) t (d:ds) ++ go cs d ds
+  where go (c:c':[]) t _   = toffoli c c' t
+        go (c:cs) t (d:ds) = toffoli c d t ++ go cs d ds ++ toffoli c d t
+
+barencoOne :: [ID] -> ID -> ID -> [Primitive]
+barencoOne [] t anc        = []
+barencoOne (c:[]) t anc    = [CNOT c t]
+barencoOne (c:c':[]) t anc = toffoli c c' t
+barencoOne cs t anc        = circ ++ circ where
+  circ       = barencoTof cs'' anc cs' ++ barencoTof (cs' ++ [anc]) t cs''
+  (cs',cs'') = splitAt (length cs `div` 2) cs
+
+nielsenOne :: [ID] -> ID -> ID -> [Primitive]
+nielsenOne [] t anc        = []
+nielsenOne (c:[]) t anc    = [CNOT c t]
+nielsenOne (c:c':[]) t anc = toffoli c c' t
+nielsenOne cs t anc        = circ ++ barencoTof (cs' ++ [anc]) t cs'' ++ circ where
+  circ       = barencoTof cs'' anc cs'
+  (cs',cs'') = splitAt (length cs `div` 2) cs
+
 toffoliNSpec :: [ID] -> SOP Z8
 toffoliNSpec xs = SOP {
   sde      = 0,
@@ -685,6 +722,8 @@ verifyToffoliN n () = do
         vars   = inputs ++ ["_anc" ++ show i | i <- [0..n-4]]
 
 -- General product gates
+rToffoli x y z = [H z, Tinv z, CNOT y z, T z, CNOT x z, Tinv z, CNOT y z, T z, CNOT x z, H z]
+
 rToffoli4 w x y z =
   let conj = [H z, T z, CNOT y z, Tinv z, H z] in
     conj ++ [CNOT w z, T z, CNOT x z, Tinv z, CNOT w z, T z, CNOT x z, Tinv z] ++ conj
@@ -879,10 +918,10 @@ minimalProductGate1 (c:cs)     t = tmp ++ minimalProductGate1 cs t ++ dagger tmp
 minimalProductGate2 []         t = []
 minimalProductGate2 (c:[])     t = [CNOT c t]
 minimalProductGate2 (c1:c2:[]) t =
-  [S t, H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t,
-   CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t, Sinv t]
+  [Sinv t, H t, CNOT t c1, T t, Tinv c1, CNOT t c1, CNOT c2 t,
+   CNOT t c1, T c1, Tinv t, CNOT t c1, CNOT c2 t, H t, S t]
 minimalProductGate2 (c:cs)     t = tmp ++ minimalProductGate2 cs t ++ dagger tmp
-  where tmp = [S t, H t, CNOT t c, T t, Tinv c, CNOT t c] 
+  where tmp = [Sinv t, H t, CNOT t c, T t, Tinv c, CNOT t c] 
 
 minimalProductGate3 []         t = []
 minimalProductGate3 (c:[])     t = [CNOT c t]
@@ -924,6 +963,9 @@ rToffoli5 v w x y z =
   let conj = [H z, T z, CNOT y z, Tinv z] in
     conj ++ rToffoli4Corrected v w x z ++ dagger conj
 
+rToffoli5' v w x y z anc =
+  [H z] ++ toffoli z y anc ++ [H anc] ++ rToffoli4 v w x anc ++ [H anc] ++ toffoli z y anc ++ [H z]
+
 fun0888 a b c d e anc = temp ++ [CNOT anc e] ++ dagger temp ++ [CNOT anc e]
   where temp = minimalProductGate1 [d, c, b, a] anc
 
@@ -950,6 +992,321 @@ classa8808000 = fun88a22a2a
 fun80088820   = classa8808000
 
 class88808080 = fun88088080
+
+countT = foldr (+) 0 . map f where
+  f (T _)    = 1
+  f (Tinv _) = 1
+  f _        = 0
+
+-- Recurrences for constructions
+
+-- T-count of the barenco toffoli
+barencoT :: Int -> Int
+barencoT 0 = 0
+barencoT 1 = 0
+barencoT 2 = 7
+barencoT n = 16 + 12*(n-3)
+
+crTGS :: Int -> Int
+crTGS 0 = 0
+crTGS 1 = 0
+crTGS n = 4 + case n `mod` 2 of
+  0 -> 4*(barencoT $ n `div` 2)
+  1 -> 2*(barencoT $ n `div` 2) + 2*(barencoT $ 1 + (n `div` 2))
+
+crTi :: Int -> Int
+crTi 0 = 0
+crTi 1 = 0
+crTi n = 4 + case n `mod` 2 of
+  0 -> 4*(crTi $ n `div` 2)
+  1 -> 2*(crTi $ n `div` 2) + 2*(crTi $ 1 + (n `div` 2))
+
+-- T-count of the balanced construction
+cr1TMemo :: (Int -> (Int,Int)) -> Int -> (Int, Int)
+cr1TMemo memo 0 = (0,0)
+cr1TMemo memo 1 = (1,0)
+cr1TMemo memo n = (k,4+2*(snd $ memo k)+2*(snd $ memo (n-k))) where
+  k = n `div` 2
+
+-- T-count of the unbalanced construction
+cr2TMemo :: (Int -> (Int,Int)) -> Int -> (Int, Int)
+cr2TMemo memo 0 = (0,0)
+cr2TMemo memo 1 = (1,0)
+cr2TMemo memo n = (k,4+t) where
+  (k,t) = minimumBy (\(_,t1) (_,t2) -> compare t1 t2) $ map f $ reverse [1..n-1]
+  f k   = (k, (snd $ cr1TMemo memo k) + 2*(snd $ memo (n-k)))
+
+memoize :: (Int -> a) -> Int -> a
+memoize f = (map f [0..] !!)
+
+cr2T :: Int -> (Int,Int)
+cr2T = fix (memoize . cr2TMemo)
+
+cr1T :: Int -> (Int,Int)
+cr1T = cr1TMemo cr2T
+
+bestSplit :: Int -> Int
+bestSplit = fst . cr2T
+
+-- Circuit constructions
+controllediXGS []     t = []
+controllediXGS (c:[]) t = [CNOT c t]
+controllediXGS cs     t = [H t, Tinv t] ++
+                          barencoTof cs' t cs'' ++
+                          [T t] ++
+                          barencoTof cs'' t cs' ++
+                          [Tinv t] ++
+                          barencoTof cs' t cs'' ++
+                          [T t] ++
+                          barencoTof cs'' t cs' ++
+                          [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controllediX []     t = []
+controllediX (c:[]) t = [CNOT c t]
+controllediX cs     t = [H t, Tinv t] ++
+                          controllediX' cs' t ++
+                          [T t] ++
+                          controllediX' cs'' t ++
+                          [Tinv t] ++
+                          dagger (controllediX' cs' t) ++
+                          [T t] ++
+                          dagger (controllediX' cs'' t) ++
+                          [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controllediX' []     t = []
+controllediX' (c:[]) t = [CNOT c t]
+controllediX' cs     t = [H t, Tinv t] ++
+                        controlledXBullet cs'' t ++
+                        [T t] ++
+                        controlledXBullet cs' t ++
+                        [Tinv t] ++
+                        dagger (controlledXBullet cs'' t) ++
+                        [T t] ++
+                        dagger (controlledXBullet cs' t) ++
+                        [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controlledZX' cs t = [S t] ++ controllediX' cs t ++ [Sinv t]
+
+controlledXBullet []     t = []
+controlledXBullet (c:[]) t = [CNOT c t]
+controlledXBullet cs     t = [H t, Tinv t] ++
+                             controlledXStar cs'' t ++
+                             [T t] ++
+                             controlledXStar cs' t ++
+                             [Tinv t] ++
+                             dagger (controlledXStar cs'' t) ++
+                             [T t] ++
+                             dagger (controlledXStar cs' t) ++
+                             [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controlledXStar []     t = []
+controlledXStar (c:[]) t = [CNOT c t]
+controlledXStar cs     t = [H t, T t] ++
+                           controlledXStar cs'' t ++
+                           [Tinv t] ++
+                           controlledXBullet cs' t ++
+                           [T t] ++
+                           dagger (controlledXStar cs'' t) ++
+                           [Tinv t] ++
+                           [H t]
+  where (cs', cs'') = splitAt (bestSplit $ length cs) cs
+
+controllediXClean []         t anc = []
+controllediXClean (c:[])     t anc = [CNOT c t]
+controllediXClean (c1:c2:[]) t anc = toffoli c1 c2 t
+controllediXClean cs         t anc = controlledXStar cs'' anc ++
+                                     [H t, T t] ++
+                                     controlledXBullet cs' t ++
+                                     [Tinv t, CNOT anc t, T t] ++
+                                     dagger (controlledXBullet cs' t) ++
+                                     [Tinv t, CNOT anc t, H t] ++
+                                     dagger (controlledXStar cs'' anc)
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controlledXClean []         t anc = []
+controlledXClean (c:[])     t anc = [CNOT c t]
+controlledXClean (c1:c2:[]) t anc = toffoli c1 c2 t
+controlledXClean cs         t anc = controlledXStar cs anc ++
+                                    [CNOT anc t] ++
+                                    dagger (controlledXStar cs anc)
+
+controlledXDirty []         t anc = []
+controlledXDirty (c:[])     t anc = [CNOT c t]
+controlledXDirty (c1:c2:[]) t anc = toffoli c1 c2 t
+controlledXDirty cs         t anc = controlledXStar cs anc ++
+                                    [CNOT anc t] ++
+                                    dagger (controlledXStar cs anc) ++
+                                    [CNOT anc t]
+
+partialPhase :: [ID] -> [ID] -> [Primitive]
+partialPhase []         _    = []
+partialPhase (a:[])     _    = [Z a]
+partialPhase (a:b:[])   _    = [S a, CNOT b a, Sinv a, CNOT b a]
+partialPhase (a:b:c:[]) _    = [T a, CNOT b a, Tinv a, CNOT c a, T a, CNOT b a, Tinv a, CNOT c a]
+partialPhase (x:y:xs) (z:ys) = partialTof ++ partialPhase (z:xs) ys ++ dagger (partialTof) where
+  partialTof = [H z] ++ partialPhase [z,x,y] [] ++ [H z]
+
+barencoRTof :: [ID] -> ID -> [ID] -> [Primitive]
+barencoRTof xs y ys = [H y] ++ partialPhase (y:xs) ys ++ [H y]
+
+barencoRTofBullet :: [ID] -> ID -> [ID] -> [Primitive]
+barencoRTofBullet (x:xs) y ys
+  | xs == []  = [H y] ++ partialPhase (y:x:xs) ys ++ [H y]
+  | otherwise =  [H y, Tinv y, CNOT x y, T y] ++ barencoRTof xs y ys ++ [Tinv y, CNOT x y, T y, H y]
+
+barencoThrees :: [ID] -> ID -> [ID] -> [Primitive]
+barencoThrees xs t ys = [H t] ++ go xs t ys ++ [H t] where
+  go [] t _            = [Z t]
+  go (x:[]) t _        = [Sinv t, CNOT x t, S t, CNOT x t]
+  go (x:y:[]) t _      = [Tinv t, CNOT x t, T t, CNOT y t, Tinv t, CNOT x t, T t, CNOT y t]
+  go (x:y:xs) t (z:ys)
+    | length xs >= 2 = rToffoli4 x y t z ++ go xs z ys ++ (dagger $ rToffoli4 x y t z)
+    | otherwise      = rToffoli x t z ++ go (y:xs) z ys ++ (dagger $ rToffoli x t z)
+
+
+controllediXLinear []     t = []
+controllediXLinear (c:[]) t = [CNOT c t]
+controllediXLinear cs     t = [H t, Tinv t] ++
+                          barencoRTof cs' t cs'' ++
+                          [T t] ++
+                          barencoRTof cs'' t cs' ++
+                          [Tinv t] ++
+                          dagger (barencoRTof cs' t cs'') ++
+                          [T t] ++
+                          dagger (barencoRTof cs'' t cs') ++
+                          [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controlledXBulletLinear []     t = []
+controlledXBulletLinear (c:[]) t = [CNOT c t]
+controlledXBulletLinear cs     t = [H t, Tinv t] ++
+                          barencoRTofBullet cs' t cs'' ++
+                          [T t] ++
+                          barencoRTofBullet cs'' t cs' ++
+                          [Tinv t] ++
+                          dagger (barencoRTofBullet cs' t cs'') ++
+                          [T t] ++
+                          dagger (barencoRTofBullet cs'' t cs') ++
+                          [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controlledXStarLinear []     t = []
+controlledXStarLinear (c:[]) t = [CNOT c t]
+controlledXStarLinear cs     t = [H t, T t] ++
+                                  barencoRTofBullet cs'' t cs' ++
+                                  [Tinv t] ++
+                                  barencoRTof cs' t cs'' ++
+                                  [T t] ++
+                                  dagger (barencoRTofBullet cs'' t cs') ++
+                                  [Tinv t, H t]
+  where (cs', cs'') = splitAt ((length cs + 2) `div` 2) cs
+
+controlledXStarStar []     t = []
+controlledXStarStar (c:[]) t = [CNOT c t]
+controlledXStarStar (c:cs) t = [H t, T t] ++
+                               [CNOT c t] ++
+                               [Tinv t] ++
+                               controllediXLinear cs t ++
+                               [T t] ++
+                               [CNOT c t] ++
+                               [Tinv t, H t]
+
+controlledXStarUlt []     t = []
+controlledXStarUlt (c:[]) t = [CNOT c t]
+controlledXStarUlt cs     t = [H t, T t] ++
+                              barencoRTofBullet cs'' t cs' ++
+                              [Tinv t] ++
+                              barencoThrees cs' t cs'' ++
+                              [T t] ++
+                              dagger (barencoRTofBullet cs'' t cs') ++
+                              [Tinv t, H t]
+  where (cs', cs'') = splitAt (bestSplit $ length cs) cs
+        bestSplit k = fromMaybe k . find (f k) . reverse $ [0..k]
+        f k i       = floor (fromIntegral i / 2.0) <= (k-i)
+
+costC1 :: Int -> Int
+costC1 0 = 0
+costC1 1 = 0
+costC1 2 = 4
+costC1 3 = 12
+costC1 4 = 20
+costC1 5 = 28
+costC1 6 = 36
+costC1 k = 52 + 16*(k-7)
+
+costC2 :: Int -> Int
+costC2 0 = 0
+costC2 1 = 0
+costC2 2 = 4
+costC2 3 = 8
+costC2 4 = 16
+costC2 5 = 24
+costC2 6 = 32
+costC2 7 = 40
+costC2 8 = 48
+costC2 k
+  | k `mod` 2 == 0 = costC2 (k-1) + 8
+  | otherwise      = costC2 (k-1) + 16
+
+costC3 :: Int -> Int
+costC3 0 = 0
+costC3 1 = 0
+costC3 2 = 4
+costC3 3 = 8
+costC3 4 = 16
+costC3 5 = 24
+costC3 6 = 32
+costC3 7 = 40
+costC3 8 = 48
+costC3 9 = 56
+costC3 10 = 64
+costC3 k
+  | (k-11) `mod` 3 == 0 = costC3 (k-1) + 16
+  | otherwise           = costC3 (k-1) + 8
+
+toffoliPermSpec :: [ID] -> ID -> SOP Z8
+toffoliPermSpec xs y = SOP {
+  sde      = 0,
+  inVals   = i,
+  pathVars = [],
+  poly     = zero,
+  outVals  = o
+  }
+  where i = Map.fromList $ [(x, True) | x <- y:xs]
+        o = Map.fromList $ [(x, ofVar x) | x <- xs] ++ [(y, ofVar y + ofTerm True xs)]
+
+verifyC1 n () = do
+  putStrLn $ "Verifying relative phase Toffoli, N=" ++ show n
+  printVerStats (controlledXBulletLinear inputs "y")
+  case verifyPermutation (toffoliPermSpec inputs "y") (controlledXBulletLinear inputs "y") of
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
+  where inputs = take n $ ["x" ++ show i | i <- [0..]]
+
+verifyC2 n () = do
+  putStrLn $ "Verifying relative phase Toffoli, N=" ++ show n
+  printVerStats (controlledXStarLinear inputs "y")
+  case verifyPermutation (toffoliPermSpec inputs "y") (controlledXStarLinear inputs "y") of
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
+  where inputs = take n $ ["x" ++ show i | i <- [0..]]
+
+verifyC3 n () = do
+  putStrLn $ "Verifying relative phase Toffoli, N=" ++ show n
+  printVerStats (controlledXStarUlt inputs "y")
+  case verifyPermutation (toffoliPermSpec inputs "y") (controlledXStarUlt inputs "y") of
+    Identity _ -> putStrLn $ "  Success!"
+    _          -> putStrLn $ "  ERROR: failed to verify"
+  where inputs = take n $ ["x" ++ show i | i <- [0..]]
+
+testGate a b c d = dagger g ++ [CNOT c d] ++ dagger g ++ toffoli a b d ++ g ++ [CNOT c d] ++ g where
+  g = [S d, H d, T d, H d, Sinv d]
+
+-- T-count of the unbalanced construction
 
 {- Clifford identities -}
 

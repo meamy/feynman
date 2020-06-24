@@ -150,8 +150,12 @@ isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
 isTrivial sop = sop == identity (inDeg sop)
 
 -- | (To be deprecated) Drops constant term from the phase polynomial
+dropGlobalPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
+dropGlobalPhase sop = sop { phasePoly = dropConstant $ phasePoly sop }
+
+-- | (To be deprecated) Drops the phase polynomial
 dropPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
-dropPhase sop = sop { phasePoly = dropConstant $ phasePoly sop }
+dropPhase sop = sop { phasePoly = 0 }
 
 -- | (To be deprecated) Drops normalization
 dropAmplitude :: Pathsum g -> Pathsum g
@@ -320,7 +324,7 @@ sgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
 -- | S* gate
 sdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (3*half) (lift $ ofVar (IVar 0))
+  where p = scale (-half) (lift $ ofVar (IVar 0))
 
 -- | T gate
 tgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -330,7 +334,7 @@ tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
 -- | T* gate
 tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (7*half*half) (lift $ ofVar (IVar 0))
+  where p = scale (-half*half) (lift $ ofVar (IVar 0))
 
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
@@ -802,6 +806,12 @@ grindStep sop = case sop of
 {--------------------------
  Simulation
  --------------------------}
+
+-- Gets the cofactors
+expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
+expand (Pathsum a b c d e f) v = (p0, p1) where
+  p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
+  p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
 
 -- | Simulates a pathsum on a given input
 simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)

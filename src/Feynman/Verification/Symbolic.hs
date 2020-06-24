@@ -38,9 +38,9 @@ primitiveAction gate = case gate of
   Z _           -> zgate
   CNOT _ _      -> cxgate
   S _           -> sgate
-  Sinv _        -> rzgate $ dyadic 3 1
+  Sinv _        -> sdggate
   T _           -> tgate
-  Tinv _        -> rzgate $ dyadic 7 2
+  Tinv _        -> tdggate
   Swap _ _      -> swapgate
   Rz theta _    -> rzgate $ discretize theta
   Rx theta _    -> hgate * rzgate (discretize theta) * hgate
@@ -129,7 +129,7 @@ validate global vars inputs c1 c2 =
         action <- computeAction $ c1 ++ dagger c2
         return $ ket st .> action .> bra st
       sop = f . grind $ evalState sopWithContext Map.empty where
-        f = if global then dropPhase else id
+        f = if global then dropGlobalPhase else id
   in
     case sop of
       Triv       -> Identity
@@ -154,7 +154,7 @@ validateWithPost global vars inputs c1 c2 =
         post <- postselectAll (vars \\ inputs)
         return $ ket st .> action .> post
       sop = f . dropAmplitude . grind $ evalState sopWithContext Map.empty where
-        f = if global then dropPhase else id
+        f = if global then dropGlobalPhase else id
   in
     if sop == ket (map ofVar . filter (`elem` inputs) $ vars)
     then Identity

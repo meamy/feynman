@@ -122,3 +122,14 @@ executable qc2qasm
                        base,
                        bytestring
   default-language:    Haskell2010
+
+executable ar21
+  main-is:             ar21.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.5.8.1
+  default-language:    Haskell2010

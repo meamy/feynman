@@ -483,29 +483,26 @@ newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 instance Show IVar where
   show (IVar (x, i)) = Unicode.sub x i
 
-x0 = ofVar (IVar ("x",0)) :: Multilinear IVar DyadicRational 'Mult
-x1 = ofVar (IVar ("x",1)) :: Multilinear IVar DyadicRational 'Mult
-x2 = ofVar (IVar ("x",2)) :: Multilinear IVar DyadicRational 'Mult
-x3 = ofVar (IVar ("x",3)) :: Multilinear IVar DyadicRational 'Mult
-x4 = ofVar (IVar ("x",4)) :: Multilinear IVar DyadicRational 'Mult
-x5 = ofVar (IVar ("x",5)) :: Multilinear IVar DyadicRational 'Mult
-x6 = ofVar (IVar ("x",6)) :: Multilinear IVar DyadicRational 'Mult
-x7 = ofVar (IVar ("x",7)) :: Multilinear IVar DyadicRational 'Mult
-x8 = ofVar (IVar ("x",8)) :: Multilinear IVar DyadicRational 'Mult
-x9 = ofVar (IVar ("x",9)) :: Multilinear IVar DyadicRational 'Mult
+x0 = ofVar (IVar ("x",0)) :: Multilinear IVar DMod2 'Mult
+x1 = ofVar (IVar ("x",1)) :: Multilinear IVar DMod2 'Mult
+x2 = ofVar (IVar ("x",2)) :: Multilinear IVar DMod2 'Mult
+x3 = ofVar (IVar ("x",3)) :: Multilinear IVar DMod2 'Mult
+x4 = ofVar (IVar ("x",4)) :: Multilinear IVar DMod2 'Mult
+x5 = ofVar (IVar ("x",5)) :: Multilinear IVar DMod2 'Mult
+x6 = ofVar (IVar ("x",6)) :: Multilinear IVar DMod2 'Mult
+x7 = ofVar (IVar ("x",7)) :: Multilinear IVar DMod2 'Mult
+x8 = ofVar (IVar ("x",8)) :: Multilinear IVar DMod2 'Mult
+x9 = ofVar (IVar ("x",9)) :: Multilinear IVar DMod2 'Mult
 
-y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DyadicRational 'Add
-y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DyadicRational 'Add
-y2 = ofVar (IVar ("y",2)) :: Multilinear IVar DyadicRational 'Add
-y3 = ofVar (IVar ("y",3)) :: Multilinear IVar DyadicRational 'Add
-y4 = ofVar (IVar ("y",4)) :: Multilinear IVar DyadicRational 'Add
-y5 = ofVar (IVar ("y",5)) :: Multilinear IVar DyadicRational 'Add
-y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DyadicRational 'Add
-y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DyadicRational 'Add
-y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DyadicRational 'Add
-y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DyadicRational 'Add
+y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DMod2 'Mult
+y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DMod2 'Mult
+y2 = ofVar (IVar ("y",2)) :: Multilinear IVar DMod2 'Mult
+y3 = ofVar (IVar ("y",3)) :: Multilinear IVar DMod2 'Mult
+y4 = ofVar (IVar ("y",4)) :: Multilinear IVar DMod2 'Mult
+y5 = ofVar (IVar ("y",5)) :: Multilinear IVar DMod2 'Mult
+y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DMod2 'Mult
+y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DMod2 'Mult
+y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DMod2 'Mult
+y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DMod2 'Mult
 
-y1234 :: Multilinear IVar DMod2 'Add
-y1234 = ofTerm (dMod2 1 2, Monomial $ Set.fromList xs)
-  where xs = [IVar ("y", 1), IVar ("y", 2), IVar ("y", 3), IVar ("y", 4)]
 -}
