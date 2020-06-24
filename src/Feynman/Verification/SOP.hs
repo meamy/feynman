@@ -17,6 +17,7 @@ import Feynman.Algebra.Linear hiding (identity)
 import Feynman.Algebra.Polynomial
 import Feynman.Core hiding (toffoli, subst)
 import qualified Feynman.Core as Core
+import Feynman.Optimization.PhaseFold (phaseFold)
 
 import Data.Ratio
 import Data.Coerce
@@ -661,6 +662,14 @@ toffoliN = go 0
           in
             subproduct ++ go (i+1) (anc:xs) ++ dagger subproduct
 
+barencoTof :: [ID] -> ID -> [ID] -> [Primitive]
+barencoTof [] t _          = []
+barencoTof (c:[]) t _      = [CNOT c t]
+barencoTof (c:c':[]) t _   = toffoli c c' t
+barencoTof (c:cs) t (d:ds) = go (c:cs) t (d:ds) ++ go cs d ds
+  where go (c:c':[]) t _   = toffoli c c' t
+        go (c:cs) t (d:ds) = toffoli c d t ++ go cs d ds ++ toffoli c d t
+
 toffoliNSpec :: [ID] -> SOP Z8
 toffoliNSpec xs = SOP {
   sde      = 0,
@@ -948,6 +957,43 @@ classa8808000 = fun88a22a2a
 fun80088820   = classa8808000
 
 class88808080 = fun88088080
+
+controllediXGS []     t = []
+controllediXGS (c:[]) t = [CNOT c t]
+controllediXGS cs     t = [H t, Tinv t] ++ barencoTof cs' t cs'' ++ [T t]
+                        ++ barencoTof cs'' t cs' ++ [Tinv t] ++ barencoTof cs' t cs''
+                        ++ [T t] ++ barencoTof cs'' t cs' ++ [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controllediX []     t = []
+controllediX (c:[]) t = [CNOT c t]
+controllediX cs     t = [H t, Tinv t] ++
+                        controllediZX cs' t ++
+                        [T t] ++
+                        controllediZX cs'' t ++
+                        [Tinv t] ++
+                        dagger (controllediZX cs' t) ++
+                        [T t] ++
+                        dagger (controllediZX cs'' t) ++
+                        [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+controllediZX []     t = []
+controllediZX (c:[]) t = [CNOT c t]
+controllediZX cs     t = [H t, Tinv t] ++
+                         controllediZX cs' t ++
+                         [T t] ++
+                         controllediX cs'' t ++
+                         [Tinv t] ++
+                         dagger (controllediZX cs' t) ++
+                         [T t] ++
+                         [H t]
+  where (cs', cs'') = splitAt (length cs `div` 2) cs
+
+countT = foldr (+) 0 . map f where
+  f (T _)    = 1
+  f (Tinv _) = 1
+  f _        = 0
 
 {- Clifford identities -}
 
