@@ -45,6 +45,8 @@ library
                        Feynman.Optimization.PhaseFold,
                        Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
+                       Feynman.Optimization.ReedMuller,
+                       Feynman.Optimization.Gadgetize,
 
                        Feynman.Verification.Symbolic,
 

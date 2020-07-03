@@ -66,7 +66,7 @@ dotQCPass pass = case pass of
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
   Statefold -> optimizeDotQC stateFold
-  CNOTMin   -> optimizeDotQC minCNOT
+  CNOTMin   -> optimizeDotQC rmOpt
   TPar      -> optimizeDotQC tpar
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC

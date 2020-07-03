@@ -9,6 +9,8 @@ import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Reversible.Parallel
 import Feynman.Synthesis.Reversible.Gray
 import Feynman.Optimization.Swaps
+import Feynman.Optimization.ReedMuller
+import Feynman.Optimization.Gadgetize
 
 import Data.List hiding (transpose)
 import Data.Ord (comparing)
@@ -35,7 +37,7 @@ import Data.Bits
        
 {- TODO: Merge with phase folding eventually -}
 
-type PhasePoly = Map F2Vec Angle
+--type PhasePoly = Map F2Vec Angle
 
 data AnalysisState = SOP {
   dim     :: Int,
@@ -55,11 +57,14 @@ data Chunk =
 
 {- Get the bitvector for variable v -}
 getSt :: ID -> Analysis (F2Vec, Bool)
-getSt v = do 
-  st <- get
+getSt v = get >>= \st ->
   case Map.lookup v (qvals st) of
     Just bv -> return bv
-    Nothing -> error $ "No qubit \"" ++ v ++ "\" found in t-par"
+    Nothing -> do put $ st { ivals = ivals', qvals = qvals' }
+                  return bv
+      where bv     = (bitVec (dim st) 0, False)
+            ivals' = Map.insert v bv (ivals st)
+            qvals' = Map.insert v bv (qvals st)
 
 {- existentially quantifies a variable then
  - orphans all terms that are no longer in the linear span of the
@@ -210,6 +215,9 @@ tpar i o = pushSwaps . gtpar tparMaster i o
 
 -- minCNOT: the CNOT minimization algorithm from [AAM17]
 minCNOT = gtpar cnotMinGrayPointed
+
+-- rmOpt: Gray-Synth + RM optimization [AM19]
+rmOpt = \i o -> gtpar (rmWrap cnotMinGrayPointed) i o . postselectAll
 
 {- Open synthesis -}
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
