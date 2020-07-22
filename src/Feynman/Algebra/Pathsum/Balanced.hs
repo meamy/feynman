@@ -283,10 +283,20 @@ sgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale half (lift $ ofVar (IVar 0))
 
+-- | S* gate
+sdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+sdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale (3*half) (lift $ ofVar (IVar 0))
+
 -- | T gate
 tgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale (half*half) (lift $ ofVar (IVar 0))
+
+-- | T* gate
+tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
+  where p = scale (7*half*half) (lift $ ofVar (IVar 0))
 
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
@@ -302,6 +312,14 @@ rzgate theta = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
 hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
   where p = lift $ (ofVar $ IVar 0) * (ofVar $ PVar 0)
+
+-- | CH gate
+chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
+  where p = lift $ x1 * x2 * y
+        x1 = ofVar $ IVar 0
+        x2 = ofVar $ IVar 1
+        y = ofVar $ PVar 0
 
 -- | CNOT gate
 cxgate :: (Eq g, Num g) => Pathsum g
@@ -389,7 +407,7 @@ plusMaybe sop sop'
           PVar i -> PVar $ i + (pathVars sop)
           _      -> x
 
--- | Construct thesum of two path sums. Raises an error if the sums are incompatible
+-- | Construct the sum of two path sums. Raises an error if the sums are incompatible
 plus :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Pathsum g
 plus sop sop' = case plusMaybe sop sop' of
   Nothing    -> error "Incompatible path sums"
