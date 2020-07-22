@@ -39,6 +39,12 @@ data Ctx = Ctx {
   phase :: Angle
 } deriving Show
 
+data PathState = PathState {
+  pvars :: [Int],
+  pp    :: Multilinear Angle,
+  state :: [Multilinear Bool]
+} deriving Show
+
 ----------------------------------------------------------------------
 {- The initial phase analysis -}
 
@@ -189,16 +195,22 @@ fromPolynomial p
                 (bv `xor` (bitI (v+1) v), const)
 
 -- Lazily generates a tree of equations
-generateEquations :: Multilinear Angle -> [Int] -> [Multilinear Bool]
-generateEquations poly cand
-  | poly == 0 = []
+generateEquationsPretty :: Int -> PathState -> [Multilinear Bool]
+generateEquationsPretty level ps@(PathState paths pp state)
+  | pp == 0   = []
   | otherwise = do
-      v        <- cand
-      eqn      <- maybeToList . toBooleanPoly . factorOut (var v) $ poly
-      (u, sub) <- maybeToList $ find (\(u, sub) -> True) $ solveForX eqn
-      let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
-      let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
-      eqn:(generateEquations poly' (cand \\ (v:deps)))
+      trace ([' ' | i <- [0..level]] ++ [if i == 0 then '|' else '-' | i <- [0..level]] ++ show ps) $ return []
+      v        <- paths \\ (map unvar $ concatMap vars state)
+      eqn      <- maybeToList . toBooleanPoly . factorOut (var v) $ pp
+      (u, sub) <- maybeToList $ find (\(u, sub) -> unvar u `elem` paths) $ solveForX eqn
+      let paths' = paths \\ [v]
+      let pp'    = simplify . P.subst u sub . removeVar (var v) $ pp
+      let state' = map (simplify . P.subst u sub) state
+      trace ([' ' | i <- [0..2*level]] ++ "|") $ return []
+      trace ([' ' | i <- [0..2*level]] ++ "|" ++ "(" ++ var v ++ " | " ++ u ++ " <- " ++ show sub ++ ")") $ return []
+      trace ([' ' | i <- [0..2*level]] ++ "|") $ return []
+      let xs     = generateEquationsPretty (level+1) $ PathState paths' pp' state'
+      eqn:xs
 
 -- Cycle detecting version
 reachableEqns :: Multilinear Angle -> [Int] -> [Multilinear Bool]
@@ -313,7 +325,9 @@ applyReductions = do
   paths   <- gets $ Map.keys . quad
   outVars <- gets $ concatMap (varsOfBV . fst) . Map.elems . ket
   cand    <- gets $ \st -> paths \\ outVars
-  let e   = nub $ generateEquations poly cand
+  state   <- gets $ map toPolynomial . Map.elems . ket
+  trace ("Pathstate: " ++ show (PathState paths poly state)) $ return ()
+  let e   = nub . generateEquationsPretty 0 $ PathState paths poly state
   trace ("Reachable equations: " ++ show e) $ return ()
   let eqns = nub . filter ((1 >=) . degree) $ e --reachableEqns' poly cand
   trace ("Generated equations: " ++ show eqns) $ return ()
