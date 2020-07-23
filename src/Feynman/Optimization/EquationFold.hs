@@ -9,6 +9,7 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Control.Monad.Writer
 import Data.Bits
+import Data.Function (fix)
 
 import Debug.Trace
 
@@ -42,8 +43,8 @@ data Ctx = Ctx {
 data PathState = PathState {
   pvars :: [Int],
   pp    :: Multilinear Angle,
-  state :: [Multilinear Bool]
-} deriving Show
+  st    :: [Multilinear Bool]
+} deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------
 {- The initial phase analysis -}
@@ -194,23 +195,86 @@ fromPolynomial p
               let v = unvar $ firstVar m in
                 (bv `xor` (bitI (v+1) v), const)
 
--- Lazily generates a tree of equations
-generateEquationsPretty :: Int -> PathState -> [Multilinear Bool]
-generateEquationsPretty level ps@(PathState paths pp state)
+---------------------
+-- Reduction trees --
+---------------------
+
+-- Synonym for contractions of the form \i/ j <- p
+type Contraction = (Int, Int, Multilinear Bool)
+
+-- Gets all depth-1 contractions
+allContractions :: PathState -> [Contraction]
+allContractions ps@(PathState paths pp st)
   | pp == 0   = []
   | otherwise = do
-      trace ([' ' | i <- [0..level]] ++ [if i == 0 then '|' else '-' | i <- [0..level]] ++ show ps) $ return []
-      v        <- paths \\ (map unvar $ concatMap vars state)
+      v        <- paths \\ (map unvar $ concatMap vars st)
       eqn      <- maybeToList . toBooleanPoly . factorOut (var v) $ pp
-      (u, sub) <- maybeToList $ find (\(u, sub) -> unvar u `elem` paths) $ solveForX eqn
-      let paths' = paths \\ [v]
-      let pp'    = simplify . P.subst u sub . removeVar (var v) $ pp
-      let state' = map (simplify . P.subst u sub) state
-      trace ([' ' | i <- [0..2*level]] ++ "|") $ return []
-      trace ([' ' | i <- [0..2*level]] ++ "|" ++ "(" ++ var v ++ " | " ++ u ++ " <- " ++ show sub ++ ")") $ return []
-      trace ([' ' | i <- [0..2*level]] ++ "|") $ return []
-      let xs     = generateEquationsPretty (level+1) $ PathState paths' pp' state'
-      eqn:xs
+      (u, sub) <- filter (\(u, sub) -> unvar u `elem` paths) $ solveForX eqn
+      return (v, unvar u, sub)
+
+-- Applies a contraction
+applyContraction :: PathState -> Contraction -> PathState
+applyContraction ps (v, u, sub) = PathState pvars' pp' st' where
+  pvars' = pvars ps \\ [v,u]
+  pp'    = simplify . P.subst (var u) sub . removeVar (var v) $ pp ps
+  st'    = map (simplify . P.subst (var u) sub) $ st ps
+
+-- Generalizes a contraction to an equation
+generalize :: Contraction -> Multilinear Bool
+generalize (_, u, sub) = ofVar (var u) + sub
+
+-- Groups non-conflicting contractions
+groupContractions :: [Contraction] -> [[Contraction]]
+groupContractions []     = []
+groupContractions (x:xs) = part:groupContractions xs' where
+  (part,xs')     = foldr f ([x],[]) xs
+  f x (part, xs) = case all (check x) part of
+    True -> (x:part,xs)
+    False -> (part,x:xs)
+  check (v,u,_) (v',u',_) = intersect [v,u] [v',u'] == []
+
+-- Pretty prints a reduction tree
+ppReductionTree :: PathState -> [String]
+ppReductionTree = go "" Nothing where
+  go pref con ps = pref:root:subtrees where
+    root = case con of
+      Nothing  -> pref ++ "--" ++ show ps
+      Just con -> pref ++ "--(" ++ show con ++ ")" ++ show ps
+    subtrees = concatMap f $ allContractions ps where
+      f con = go (pref ++ "    |") (Just con) $ applyContraction ps con
+
+-- Collects all equations in the reduction tree
+generateEquations :: PathState -> [Multilinear Bool]
+generateEquations ps = nub (map generalize eqns) ++ concatMap g eqns where
+  eqns = allContractions ps
+  g    = generateEquations . applyContraction ps
+
+-- Memoized over intermediary path states
+generateEquationsMemo :: PathState -> [Multilinear Bool]
+generateEquationsMemo = snd . go Set.empty where
+  go seen ps
+    | Set.member ps seen = (seen, [])
+    | otherwise          = (Set.insert ps seen', eqns') where
+        eqns'            = nub (map generalize eqns) ++ subtree
+        eqns             = allContractions ps
+        (seen', subtree) = foldr g (seen, []) eqns
+        g con (seen, xs) =
+          let (seen', eqs) = go seen (applyContraction ps con) in
+            (seen', eqs ++ xs)
+
+-- Groups into independent contractions and applies each set together
+generateEquationsGrouped :: PathState -> [Multilinear Bool]
+generateEquationsGrouped ps = nub (map generalize eqns) ++ concatMap g grps where
+  eqns = allContractions ps
+  grps = groupContractions eqns
+  g    = generateEquations . foldr (flip applyContraction) ps
+
+-- Groups into independent contractions and applies each set together
+generateEquationsDirected :: PathState -> [Multilinear Bool]
+generateEquationsDirected ps = nub (map generalize eqns) ++ concatMap g grps where
+  eqns = allContractions ps
+  grps = groupContractions eqns
+  g    = generateEquations . applyContraction ps . head
 
 -- Cycle detecting version
 reachableEqns :: Multilinear Angle -> [Int] -> [Multilinear Bool]
@@ -321,18 +385,11 @@ canonicalSubs eqns = do
 -- Finding [HH] reductions
 applyReductions :: State Ctx ()
 applyReductions = do
-  poly    <- gets computePP
-  paths   <- gets $ Map.keys . quad
-  outVars <- gets $ concatMap (varsOfBV . fst) . Map.elems . ket
-  cand    <- gets $ \st -> paths \\ outVars
-  state   <- gets $ map toPolynomial . Map.elems . ket
-  trace ("Pathstate: " ++ show (PathState paths poly state)) $ return ()
-  let e   = nub . generateEquationsPretty 0 $ PathState paths poly state
-  trace ("Reachable equations: " ++ show e) $ return ()
-  let eqns = nub . filter ((1 >=) . degree) $ e --reachableEqns' poly cand
-  trace ("Generated equations: " ++ show eqns) $ return ()
-  subs    <- canonicalSubs eqns
-  trace ("Canonicalized equations: " ++ show subs) $ return ()
+  paths    <- gets $ Map.keys . quad
+  poly     <- gets computePP
+  state    <- gets $ map toPolynomial . Map.elems . ket
+  let eqns = nub . generateEquationsDirected $ PathState paths poly state
+  subs     <- canonicalSubs . nub . filter ((1 >=) . degree) $ eqns
   mapM_ (\(v, sub) -> substVar v sub) subs
   return ()
 
