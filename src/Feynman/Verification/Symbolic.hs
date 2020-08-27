@@ -86,10 +86,11 @@ makeInitial vars inputs = fmap Map.elems $ foldM go Map.empty vars
 -- | The return type of verification queries
 data Result =
     Identity
-  | NotIdentity (Var, SBool Var)
+  | NotIdentity String
   | Inconclusive (Pathsum DMod2)
   deriving (Show)
 
+-- | Check if a circuit is the identity
 isIdentity :: [ID] -> [ID] -> [Primitive] -> Result
 isIdentity vars inputs circuit =
   let sopWithContext = do
@@ -100,5 +101,7 @@ isIdentity vars inputs circuit =
   in
     case sop of
       Triv       -> Identity
-      HHKill _ p -> NotIdentity $ getSolution p
+      HHKill _ p -> NotIdentity . show $ getSolution p
       _          -> Inconclusive sop
+
+

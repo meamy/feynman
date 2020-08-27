@@ -128,7 +128,7 @@ instance Fractional FF2 where
  -------------------------------}
 
 -- | Dyadic rationals
-data DyadicRational = Dy {-# UNPACK #-} !Integer {-# UNPACK #-} !Int deriving (Eq)
+data DyadicRational = Dy !Integer {-# UNPACK #-} !Int deriving (Eq)
 
 instance Show DyadicRational where
   show (Dy a 0) = show a

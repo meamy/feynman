@@ -5,7 +5,7 @@ import Feynman.Algebra.Base
 
 synthesizePhase :: ID -> Angle -> [Primitive]
 synthesizePhase x theta@(Continuous _) = [Rz theta x]
-synthesizePhase x theta@(Discrete (Dy (a,n)))
+synthesizePhase x theta@(Discrete (Dy a n))
   | a == 0 || n == 0 = []
   | n == 1           = [Z x]
   | n == 2 = case a `mod` 4 of
@@ -20,7 +20,7 @@ synthesizePhase x theta@(Discrete (Dy (a,n)))
 
 globalPhase :: ID -> Angle -> [Primitive]
 globalPhase x theta@(Continuous _) = [Rz theta x, X x, Rz theta x, X x]
-globalPhase x theta@(Discrete (Dy (a,n)))
+globalPhase x theta@(Discrete (Dy a n))
   | a == 0 || n == 0 = []
   | n == 1           = [Z x, X x, Z x, X x]
   | n == 2 = case a `mod` 4 of

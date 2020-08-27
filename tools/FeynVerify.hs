@@ -16,9 +16,10 @@ import qualified Data.Set as Set
 
 import Feynman.Core hiding (inputs, qubits, getArgs)
 import Feynman.Frontend.DotQC
-import Feynman.Verification.SOP
+import Feynman.Verification.Symbolic
 
 -- | Check whether two .qc files are equivalent
+{-
 checkEquivalence :: Set String -> (DotQC, DotQC) -> VerificationResult Z8
 checkEquivalence options (qc, qc') =
   let gates  = toCliffordT . toGatelist $ qc
@@ -32,6 +33,18 @@ checkEquivalence options (qc, qc') =
         else if Set.member "Postselect" options
           then validateToScale ignore vars ins gates gates'
           else validateIsometry ignore vars ins gates gates'
+  in
+    if inputs qc /= inputs qc'
+    then NotIdentity "Inputs don't match"
+    else result
+-}
+checkEquivalence :: Set String -> (DotQC, DotQC) -> VerificationResult Z8
+checkEquivalence options (qc, qc') =
+  let gates  = toCliffordT . toGatelist $ qc
+      gates' = toCliffordT . toGatelist $ qc'
+      vars   = union (qubits qc) (qubits qc')
+      ins    = Set.toList $ inputs qc
+      result = isIdentity vars ins (gates ++ dagger gates')
   in
     if inputs qc /= inputs qc'
     then NotIdentity "Inputs don't match"
@@ -66,7 +79,7 @@ printHelp = mapM_ putStrLn lines
 -- | Format the verification result
 formatResult :: VerificationResult Z8 -> Double -> String
 formatResult result time = case result of
-  Identity _pf    -> printf "Equal (took %.3fs)" time
+  Identity        -> printf "Equal (took %.3fs)" time
   NotIdentity _ce -> printf "Not equal (took %.3fs)" time
   Unknown sop     -> printf "Inconclusive (took %.3fs)" time ++
                      "\nReduced form: \n" ++ show sop

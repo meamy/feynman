@@ -1,15 +1,15 @@
 {-# LANGUAGE Rank2Types #-}
 module Feynman.Core where
 
-import Feynman.Algebra.Base
-
 import Data.List
-
+import Control.Monad
 import Data.Set (Set)
 import qualified Data.Set as Set
-
 import Data.Map (Map)
 import qualified Data.Map as Map
+
+import Feynman.Algebra.Base
+
 
 type ID = String
 type Loc = Int
