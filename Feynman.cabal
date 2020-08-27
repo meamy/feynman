@@ -120,5 +120,18 @@ executable qc2qasm
   hs-source-dirs:      tools
   build-depends:       Feynman,
                        base,
-                       bytestring
+                       bytestring,
+                       matplotlib >= 0.7.5
+  default-language:    Haskell2010
+
+executable circuitdesign
+  main-is:             CircuitDesign.hs
+  buildable:           True
+  ghc-options:         -Wall
+  hs-source-dirs:      tools
+  build-depends:       Feynman,
+                       base,
+                       bytestring,
+                       matplotlib,
+                       matplotlib >= 0.7.5
   default-language:    Haskell2010
