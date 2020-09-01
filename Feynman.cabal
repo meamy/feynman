@@ -50,15 +50,15 @@ library
                        Feynman.Frontend.OpenQASM.Parser
 
   build-tools:         alex, happy
-  build-depends:       QuickCheck >= 2.8.2, 
-                       array >= 0.5.1.0, 
+  build-depends:       QuickCheck >= 2.8.2,
+                       array >= 0.5.1.0,
                        base >= 4.9 && < 4.13,
-                       bv, 
+                       bv,
+                       bytestring,
                        containers >= 0.5.8.1,
-                       mtl, 
-                       parsec >= 3.0, 
-                       parsec3-numbers,
-                       bytestring
+                       mtl,
+                       parsec >= 3.0,
+                       parsec3-numbers
   default-language:    Haskell2010
   
 
@@ -73,14 +73,14 @@ executable feynopt
   hs-source-dirs:      tools
   other-modules:       Benchmarks
   build-depends:       Feynman,
-                       base, 
-                       containers >= 0.5.8.1,
-                       array >= 0.5.1.0, 
-                       bv, 
-                       QuickCheck >= 2.8.2, 
-                       deepseq,
+                       QuickCheck >= 2.8.2,
                        ansi-terminal,
+                       array >= 0.5.1.0,
+                       base,
+                       bv,
                        bytestring,
+                       containers >= 0.5.8.1,
+                       deepseq,
                        old-time
   default-language:    Haskell2010
 
@@ -94,15 +94,15 @@ executable feynver
                        FlexibleInstances
   hs-source-dirs:      tools
   build-depends:       Feynman,
-                       base, 
-                       containers >= 0.5.8.1,
-                       array >= 0.5.1.0, 
-                       bv, 
-                       QuickCheck >= 2.8.2, 
-                       deepseq,
+                       QuickCheck >= 2.8.2,
                        ansi-terminal,
+                       array >= 0.5.1.0,
+                       base,
+                       bv,
                        bytestring,
-                       old-time
+                       containers >= 0.5.8.1,
+                       parsec >= 3.0,
+                       transformers >= 0.5.2.0
   default-language:    Haskell2010
 
 executable qc2qasm

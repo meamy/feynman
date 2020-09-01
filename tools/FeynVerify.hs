@@ -1,57 +1,53 @@
 {-# LANGUAGE TupleSections #-}
 module Main (main) where
 
-import Feynman.Core (Primitive(CNOT, T, Tinv), ID)
+import Control.Monad.Trans.Class  (lift)
+import Control.Monad.Trans.Except (ExceptT(..), runExceptT, except)
+import System.Environment         (getArgs)
+import System.CPUTime             (getCPUTime)
+import Data.List                  (takeWhile, union, (\\))
+import Data.Set                   (Set)
+import Data.Semigroup             ((<>))
+import Text.Printf                (printf)
+import Text.Parsec                (ParseError)
+
+import qualified Data.ByteString as B
+import qualified Data.Set as Set
+
+import Feynman.Core hiding (inputs, qubits, getArgs)
 import Feynman.Frontend.DotQC
 import Feynman.Verification.SOP
 
-import System.Environment
-import System.Time
-import Numeric
+-- | Check whether two .qc files are equivalent
+checkEquivalence :: Set String -> (DotQC, DotQC) -> VerificationResult Z8
+checkEquivalence options (qc, qc') =
+  let gates  = toCliffordT . toGatelist $ qc
+      gates' = toCliffordT . toGatelist $ qc'
+      vars   = union (qubits qc) (qubits qc')
+      ins    = Set.toList $ inputs qc
+      ignore = Set.member "IgnoreGlobal" options
+      result =
+        if Set.member "IgnoreGarbage" options
+        then validateOnInputs ignore vars ins gates gates'
+        else if Set.member "Postselect" options
+          then validateToScale ignore vars ins gates gates'
+          else validateIsometry ignore vars ins gates gates'
+  in
+    if inputs qc /= inputs qc'
+    then NotIdentity "Inputs don't match"
+    else result
+  
+-- | Get the (reduced) path sum of a DotQC circuit
+getSOP :: DotQC -> SOP Z8
+getSOP qc = snd . reduce $ init <> sop where
+  init = blank $ qubits qc \\ Set.toList (inputs qc)
+  sop  = circuitSOP . toCliffordT . toGatelist $ qc
 
-import Data.List
-import Data.Set (Set)
-import qualified Data.Set as Set
-import Data.Monoid hiding ((<>))
-import Data.Semigroup
+-- | Get the extension of a filename
+extension :: String -> String
+extension = reverse . takeWhile (/= '.') . reverse
 
-import Control.Monad
-import Control.DeepSeq
-
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-
-formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
-
-equivalenceCheck options src src' = do
-  qc  <- parseDotQC src
-  qc' <- parseDotQC src'
-  return $ ver qc qc'
-  where ver qc qc' =
-          let gates  = toCliffordT . toGatelist $ qc
-              gates' = toCliffordT . toGatelist $ qc'
-              vars   = union (qubits qc) (qubits qc')
-              ins    = Set.toList $ inputs qc
-              ignore = Set.member "IgnoreGlobal" options
-              result =
-                if Set.member "IgnoreGarbage" options
-                then validateOnInputs ignore vars ins gates gates'
-                else if Set.member "Postselect" options
-                  then validateToScale ignore vars ins gates gates'
-                  else validateIsometry ignore vars ins gates gates'
-          in
-            if inputs qc /= inputs qc'
-            then NotIdentity "Inputs don't match"
-            else result
-
-getSOP src = do
-  qc  <- parseDotQC src
-  let init = blank (qubits qc \\ Set.toList (inputs qc))
-  let sop = circuitSOP . toCliffordT . toGatelist $ qc
-  return . reduce $ init <> sop 
-
-{- Main program -}
-
+-- | Print the menu
 printHelp :: IO ()
 printHelp = mapM_ putStrLn lines
   where lines = [
@@ -67,45 +63,52 @@ printHelp = mapM_ putStrLn lines
           ""
           ]
 
-printResult result time = case result of
-  Identity pf -> do
-    putStrLn $ "Equal (took " ++ formatFloatN time 3 ++ "ms)"
-    putStrLn $ "Proof:"
-    mapM_ (\rl -> putStrLn $ "  " ++  show rl) pf
-  NotIdentity ce -> do
-    putStrLn $ "Not equal (took " ++ formatFloatN time 3 ++ "ms)"
-    putStrLn $ "Reason:"
-    putStrLn $ "  " ++ ce
-  Unknown sop -> do
-    putStrLn $ "Inconclusive (took " ++ formatFloatN time 3 ++ "ms)"
-    putStrLn $ "Residual path sum:"
-    putStrLn $ "  " ++ show sop
+-- | Format the verification result
+formatResult :: VerificationResult Z8 -> Double -> String
+formatResult result time = case result of
+  Identity _pf    -> printf "Equal (took %.3fs)" time
+  NotIdentity _ce -> printf "Not equal (took %.3fs)" time
+  Unknown sop     -> printf "Inconclusive (took %.3fs)" time ++
+                     "\nReduced form: \n" ++ show sop
 
-run :: Set String -> [String] -> IO ()
-run options (x:[])
-  | (drop (length x - 3) x == ".qc") = do
-      xsrc <- B.readFile x
-      case getSOP xsrc of
-        Left l    -> putStrLn $ show l
-        Right sop -> putStrLn $ show sop
-run options (x:y:[])
-  | (drop (length x - 3) x == ".qc") && (drop (length y - 3) y == ".qc") = do
-      xsrc <- B.readFile x
-      ysrc <- B.readFile y
-      TOD starts startp <- getClockTime
-      let result        = equivalenceCheck options xsrc ysrc
-      TOD ends endp     <- result `seq` getClockTime
-      let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
-      case result of
-        Left l         -> putStrLn $ show l
-        Right (result) -> printResult result time
-run options (x:xs)
-  | x == "-ignore-global-phase" = run (Set.insert "IgnoreGlobal" options) xs
-  | x == "-ignore-ancillas"     = run (Set.insert "IgnoreGarbage" options) xs
-  | x == "-postselect-ancillas" = run (Set.insert "Postselect" options) xs
-run _ _ = do
-      putStrLn "Invalid argument(s)"
-      printHelp
+-- | Time a computation
+withTiming :: (a -> b) -> a -> IO (b, Double)
+withTiming f a = do
+  start <- getCPUTime
+  let res = f a
+  res `seq` return ()
+  end   <- getCPUTime
+  return (res, (fromIntegral $ end - start) / 10^12)
+
+-- | Print an Either
+printError :: Either ParseError String -> IO ()
+printError (Left err) = print err
+printError (Right st) = putStrLn st
+
+-- | Main program
+run :: Set String -> [String] -> ExceptT ParseError IO String
+run options xs = case xs of
+  [x]    | extension x == "qc" -> do
+             xsrc <- lift $ B.readFile x
+             qc <- ExceptT $ return $ parseDotQC xsrc
+             return . show $ getSOP qc
+  [x,y]  | extension x == "qc" && extension y == "qc" -> do
+             xsrc <- lift $ B.readFile x
+             ysrc <- lift $ B.readFile y
+             qc   <- ExceptT $ return $ parseDotQC xsrc
+             qc'  <- ExceptT $ return $ parseDotQC ysrc
+             (res, time) <- lift $ withTiming (checkEquivalence options) (qc,qc')
+             return $ formatResult res time
+  (x:xs) | x == "-ignore-global-phase" -> run (Set.insert "IgnoreGlobal" options) xs
+         | x == "-ignore-ancillas"     -> run (Set.insert "IgnoreGarbage" options) xs
+         | x == "-postselect-ancillas" -> run (Set.insert "PostSelect" options) xs
+  _ -> do
+    lift $ putStrLn "Invalid argument(s)"
+    lift $ printHelp
+    return ""
 
 main :: IO ()
-main = getArgs >>= run Set.empty
+main = do
+  args   <- getArgs
+  result <- runExceptT $ run Set.empty args
+  printError result
