@@ -10,6 +10,8 @@ import Control.Monad.State.Strict
 import Control.Monad.Writer
 import Data.Bits
 import Data.Function (fix)
+import System.IO.Unsafe
+import System.Random
 
 import Debug.Trace
 
@@ -244,12 +246,15 @@ ppReductionTree = go "" Nothing where
       f con = go (pref ++ "    |") (Just con) $ applyContraction ps con
 
 -- Collects all equations in the reduction tree
+-- Most general
 generateEquations :: PathState -> [Multilinear Bool]
-generateEquations ps = nub (map generalize eqns) ++ concatMap g eqns where
-  eqns = allContractions ps
-  g    = generateEquations . applyContraction ps
+generateEquations = nub . go where
+  go ps =
+    let eqns = allContractions ps in
+      (map generalize eqns) ++ concatMap (go . applyContraction ps) eqns
 
 -- Memoized over intermediary path states
+-- High memory usage
 generateEquationsMemo :: PathState -> [Multilinear Bool]
 generateEquationsMemo = snd . go Set.empty where
   go seen ps
@@ -263,98 +268,46 @@ generateEquationsMemo = snd . go Set.empty where
             (seen', eqs ++ xs)
 
 -- Groups into independent contractions and applies each set together
+-- Doesn't get all contractions
 generateEquationsGrouped :: PathState -> [Multilinear Bool]
-generateEquationsGrouped ps = nub (map generalize eqns) ++ concatMap g grps where
-  eqns = allContractions ps
-  grps = groupContractions eqns
-  g    = generateEquations . foldr (flip applyContraction) ps
+generateEquationsGrouped = nub . go where
+  go ps =
+    let eqns = allContractions ps
+        grps = groupContractions eqns
+        go'  = go . foldr (flip applyContraction) ps
+    in
+      (map generalize eqns) ++ concatMap go' grps
 
--- Groups into independent contractions and applies each set together
+-- Groups into independent contractions and applies one representative from each set
+-- Not great
 generateEquationsDirected :: PathState -> [Multilinear Bool]
-generateEquationsDirected ps = nub (map generalize eqns) ++ concatMap g grps where
-  eqns = allContractions ps
-  grps = groupContractions eqns
-  g    = generateEquations . applyContraction ps . head
+generateEquationsDirected = nub . go where
+  go ps =
+    let eqns = allContractions ps
+        grps = groupContractions eqns
+    in
+      (map generalize eqns) ++ concatMap (go . applyContraction ps . head) grps
 
--- Cycle detecting version
-reachableEqns :: Multilinear Angle -> [Int] -> [Multilinear Bool]
-reachableEqns = go [] where
-  go acc poly cand
-    | poly == 0 = acc
-    | otherwise =
-      let expand v acc = fromMaybe acc $ do
-            eqn <- toBooleanPoly $ factorOut (var v) poly
-            guard $ (not (eqn == 0) && not (elem eqn acc))
-            (u, sub) <- find (\_ -> True) $ solveForX eqn
-            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
-            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
-            return $ go (eqn:acc) poly' (cand \\ (v:deps))
-      in
-        foldr expand acc cand
+-- Fixed tree depth
+generateEquationsFixed :: Int -> PathState -> [Multilinear Bool]
+generateEquationsFixed k = nub . go k where
+  go k ps =
+    let eqns = allContractions ps in
+      if k <= 0 then
+        (map generalize eqns) ++ concatMap (go k . applyContraction ps) (take 1 eqns)
+      else
+        (map generalize eqns) ++ concatMap (go (k-1) . applyContraction ps) eqns
 
--- Only contracts on each candidate once
-reachableEqns' :: Multilinear Angle -> [Int] -> [Multilinear Bool]
-reachableEqns' poly cand = go ([], cand) [(poly, cand)] where
-  go (acc, []) _      = acc
-  go (acc, xs) []     = acc
-  go (acc, xs) (p:ps)
-    | fst p == 0      = go (acc, xs) ps
-    | otherwise       =
-      let matches = do
-            v       <- intersect xs (snd p)
-            eqn     <- maybeToList . toBooleanPoly . factorOut (var v) $ fst p
-            guard   $ (not (eqn == 0) && not (elem eqn acc))
-            (u,sub) <- take 1 $ solveForX eqn
-            let p'  = simplify . P.subst u sub . removeVar (var v) $ fst p
-            let dps = if elem (unvar u) (snd p) then [] else map unvar $ vars sub
-            return (eqn, v, (p',(snd p)\\(v:dps)))
+-- Randomizes the search. Uses unsafe IO
+generateEquationsRandom :: PathState -> [Multilinear Bool]
+generateEquationsRandom ps = nub $ unsafePerformIO (fmap (go ps) $ getStdGen) where
+  go ps gen = case allContractions ps of
+    [] -> []
+    xs ->
+      let eqns      = allContractions ps
+          (i, gen') = randomR (0, length eqns - 1) gen
       in
-        case matches of
-          [] -> go (acc, xs) ps
-          ((eqn,x,p'):_) -> go (eqn:acc, xs\\[x]) ((p:ps) ++ [p'])
-
--- Memoized
-reachableEqns'' :: Multilinear Angle -> [Int] -> [Multilinear Bool]
-reachableEqns'' poly cand = fst $ go ([],[]) poly cand where
-  go (acc,seen) poly cand
-    | poly == 0        = (acc,seen)
-    | poly `elem` seen = (acc,seen)
-    | otherwise        =
-      let expand v (acc,seen) = fromMaybe (acc,seen) $ do
-            eqn <- toBooleanPoly $ factorOut (var v) poly
-            guard $ (not (eqn == 0) && not (elem eqn acc))
-            (u, sub) <- find (\_ -> True) $ solveForX eqn
-            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
-            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
-            return $ go (eqn:acc,seen) poly' (cand \\ (v:deps))
-      in
-        foldr expand (acc,poly:seen) cand
-
--- Fixed search depth
-reachableEqns''' :: Int -> Multilinear Angle -> [Int] -> [Multilinear Bool]
-reachableEqns''' depth = go depth [] where
-  go depth acc poly cand
-    | poly == 0  = acc
-    | depth == 0 =
-      let expand v = do
-            eqn <- toBooleanPoly $ factorOut (var v) poly
-            guard $ (not (eqn == 0) && not (elem eqn acc))
-            (u, sub) <- find (\_ -> True) $ solveForX eqn
-            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
-            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
-            return $ go 0 (eqn:acc) poly' (cand \\ (v:deps))
-      in
-        fromMaybe acc . msum . map expand $ cand
-    | otherwise  =
-      let expand v acc = fromMaybe acc $ do
-            eqn <- toBooleanPoly $ factorOut (var v) poly
-            guard $ (not (eqn == 0) && not (elem eqn acc))
-            (u, sub) <- find (\_ -> True) $ solveForX eqn
-            let poly' = simplify . P.subst u sub . removeVar (var v) $ poly
-            let deps  = if elem (unvar u) cand then [] else map unvar $ vars sub
-            return $ go (depth-1) (eqn:acc) poly' (cand \\ (v:deps))
-      in
-        foldr expand acc cand
+        (map generalize eqns) ++ go (applyContraction ps $ eqns!!i) gen'
 
 -- Computes a matrix for a list of affine parities
 matrixify :: [(F2Vec, Bool)] -> State Ctx F2Mat
@@ -388,7 +341,7 @@ applyReductions = do
   paths    <- gets $ Map.keys . quad
   poly     <- gets computePP
   state    <- gets $ map toPolynomial . Map.elems . ket
-  let eqns = nub . generateEquationsDirected $ PathState paths poly state
+  let eqns = generateEquationsRandom $ PathState paths poly state
   subs     <- canonicalSubs . nub . filter ((1 >=) . degree) $ eqns
   mapM_ (\(v, sub) -> substVar v sub) subs
   return ()
