@@ -58,9 +58,10 @@ exists v st@(Ctx dim ket terms orphans phase) =
 {- Adds a mergeable phase term -}
 addTerm :: Angle -> Loc -> (F2Vec, Bool) -> State Ctx ()
 addTerm theta loc (bv, parity) = modify go where
+  theta' = if bv == 0 then 0 else theta
   go st = case parity of
-    False -> st { terms = Map.alter (add theta) bv $ terms st }
-    True  -> st { terms = Map.alter (add (-theta)) bv $ terms st,
+    False -> st { terms = Map.alter (add theta') bv $ terms st }
+    True  -> st { terms = Map.alter (add (-theta')) bv $ terms st,
                   phase = phase st + theta }
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, parity) reps, theta + theta')
