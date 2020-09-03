@@ -7,7 +7,6 @@ import System.Environment         (getArgs)
 import System.CPUTime             (getCPUTime)
 import Data.List                  (takeWhile, union, (\\))
 import Data.Set                   (Set)
-import Data.Semigroup             ((<>))
 import Text.Printf                (printf)
 import Text.Parsec                (ParseError)
 
@@ -16,11 +15,13 @@ import qualified Data.Set as Set
 
 import Feynman.Core hiding (inputs, qubits, getArgs)
 import Feynman.Frontend.DotQC
+import Feynman.Algebra.Base (DMod2)
+import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>))
 import Feynman.Verification.Symbolic
 
 -- | Check whether two .qc files are equivalent
 {-
-checkEquivalence :: Set String -> (DotQC, DotQC) -> VerificationResult Z8
+checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
 checkEquivalence options (qc, qc') =
   let gates  = toCliffordT . toGatelist $ qc
       gates' = toCliffordT . toGatelist $ qc'
@@ -38,7 +39,7 @@ checkEquivalence options (qc, qc') =
     then NotIdentity "Inputs don't match"
     else result
 -}
-checkEquivalence :: Set String -> (DotQC, DotQC) -> VerificationResult Z8
+checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
 checkEquivalence options (qc, qc') =
   let gates  = toCliffordT . toGatelist $ qc
       gates' = toCliffordT . toGatelist $ qc'
@@ -51,10 +52,11 @@ checkEquivalence options (qc, qc') =
     else result
   
 -- | Get the (reduced) path sum of a DotQC circuit
-getSOP :: DotQC -> SOP Z8
-getSOP qc = snd . reduce $ init <> sop where
-  init = blank $ qubits qc \\ Set.toList (inputs qc)
-  sop  = circuitSOP . toCliffordT . toGatelist $ qc
+getSOP :: DotQC -> Pathsum DMod2
+getSOP qc = grind $ complexAction vars inpts circ where
+  vars  = qubits qc
+  inpts = Set.toList (inputs qc)
+  circ  = toCliffordT $ toGatelist qc
 
 -- | Get the extension of a filename
 extension :: String -> String
@@ -77,12 +79,12 @@ printHelp = mapM_ putStrLn lines
           ]
 
 -- | Format the verification result
-formatResult :: VerificationResult Z8 -> Double -> String
+formatResult :: Result -> Double -> String
 formatResult result time = case result of
-  Identity        -> printf "Equal (took %.3fs)" time
-  NotIdentity _ce -> printf "Not equal (took %.3fs)" time
-  Unknown sop     -> printf "Inconclusive (took %.3fs)" time ++
-                     "\nReduced form: \n" ++ show sop
+  Identity         -> printf "Equal (took %.3fs)" time
+  NotIdentity _ce  -> printf "Not equal (took %.3fs)" time
+  Inconclusive sop -> printf "Inconclusive (took %.3fs)" time ++
+                      "\nReduced form: \n" ++ show sop
 
 -- | Time a computation
 withTiming :: (a -> b) -> a -> IO (b, Double)

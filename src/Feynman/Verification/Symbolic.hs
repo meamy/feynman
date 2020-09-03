@@ -44,7 +44,7 @@ primitiveAction gate = case gate of
   Rz theta _    -> rzgate $ discretize theta
   Rx theta _    -> hgate * rzgate (discretize theta) * hgate
   Ry theta _    -> rzgate (discretize theta) * hgate * rzgate (discretize theta) * hgate
-  Uninterp _ _  -> error "Uninterpreted gates currently not supported"
+  Uninterp _ _  -> error "Uninterpreted gates not supported"
 
 -- | Find the relevant index or allocate one for the given qubit
 findOrAlloc :: ID -> State Context Int
@@ -54,21 +54,17 @@ findOrAlloc x = do
     Just i  -> return i
     Nothing -> gets Map.size >>= \i -> modify (Map.insert x i) >> return i
 
--- | Compute the path sum action of a primitive circuit
-computeAction :: [Primitive] -> State Context (Pathsum DMod2)
-computeAction = foldM absorbGate (identity 0)
+-- | Apply a circuit to a state
+applyCircuit :: Pathsum DMod2 -> [Primitive] -> State Context (Pathsum DMod2)
+applyCircuit = foldM absorbGate
   where absorbGate sop gate = do
           args <- mapM findOrAlloc $ getArgs gate
           nOut <- gets Map.size
-          let sop' = sop <> identity (nOut - inDeg sop)
+          let sop' = sop <> identity (nOut - outDeg sop)
           let g    = extend (primitiveAction gate)
                             (nOut - length args)
                             ((Map.fromList $ zip [0..] args)!)
           return $ sop' .> g
-
--- | Shortcut for computing an action in the empty context
-simpleAction :: [Primitive] -> Pathsum DMod2
-simpleAction = (flip evalState) Map.empty . computeAction
 
 -- | Create an initial state given a set of variables and inputs
 makeInitial :: [ID] -> [ID] -> State Context ([SBool ID])
@@ -78,6 +74,22 @@ makeInitial vars inputs = fmap Map.elems $ foldM go Map.empty vars
           if elem x inputs
             then return $ Map.insert i (ofVar x) st
             else return $ Map.insert i 0 st
+
+-- | Compute the path sum action of a primitive circuit
+computeAction :: [Primitive] -> State Context (Pathsum DMod2)
+computeAction = applyCircuit (identity 0)
+
+-- | Shortcut for computing an action in the empty context
+simpleAction :: [Primitive] -> Pathsum DMod2
+simpleAction = (flip evalState) Map.empty . computeAction
+
+-- | Shortcut for computing an action given a set of variables and inputs
+complexAction :: [ID] -> [ID] -> [Primitive] -> Pathsum DMod2
+complexAction vars inputs circ = evalState st Map.empty where
+  st = do
+    init <- makeInitial vars inputs
+    action <- computeAction circ
+    return $ ket init .> action
 
 {------------------------------------
  Verification methods
