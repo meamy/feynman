@@ -67,6 +67,7 @@ import Data.Tuple
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Map.Merge.Strict
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Maybe
@@ -109,7 +110,9 @@ instance Ord v => Ord (Monomial v repr) where
     x  -> x
 
 instance Degree (Monomial v repr) where
+  {-# INLINABLE degree #-}
   degree = Set.size . getVars
+
 
 showImpl :: Show v => ReprWit repr -> Monomial v repr -> String
 showImpl WitAdd  = intercalate Unicode.oplus . map show . Set.toList . getVars
@@ -220,7 +223,8 @@ contains v = any (Set.member v . getVars) . Map.keys . getTerms
 
 -- | Constant polynomial
 constant :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr
-constant = normalize . M . Map.singleton (Monomial Set.empty)
+constant 0 = M $ Map.empty
+constant a = M $ Map.singleton (Monomial Set.empty) a
 
 -- | Construct the variable polynomial /x/
 ofVar :: (Ord v, Eq r, Num r, ReprC repr) => v -> Multilinear v r repr
@@ -232,11 +236,12 @@ ofMonomial m = ofTerm (1, m)
 
 -- | Construct the polynomial /a*m/
 ofTerm :: (Ord v, Eq r, Num r, ReprC repr) => (r, Monomial v repr) -> Multilinear v r repr
-ofTerm (a, m) = normalize . M $ Map.singleton m a
+ofTerm (0, _) = M $ Map.empty
+ofTerm (a, m) = M $ Map.singleton m a
 
 -- | Construct the polynomial /a*m/
 ofTermList :: (Ord v, Eq r, Num r, ReprC repr) => [(r, Monomial v repr)] -> Multilinear v r repr
-ofTermList = normalize . M . Map.fromList . map swap
+ofTermList = M . Map.fromList . filter ((/= 0) . snd) . map swap
 
 {- Arithmetic -}
 
@@ -244,19 +249,23 @@ ofTermList = normalize . M . Map.fromList . map swap
 scale :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr -> Multilinear v r repr
 scale a p
   | a == 0    = zero
-  | otherwise = normalize . M $ Map.map (a*) $ getTerms p
+  | otherwise = M $ Map.map (a*) $ getTerms p
 
 -- | Add two polynomials with the same representation
 addM :: (Ord v, Eq r, Num r, ReprC repr) =>
         Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
-addM p q = normalize . M $ Map.unionWith (+) (getTerms p) (getTerms q)
+addM p q = M $ unionN (getTerms p) (getTerms q) where
+  unionN = merge preserveMissing preserveMissing (zipWithMaybeMatched f)
+  f m a1 a2 = case (a1 + a2) of
+    0  -> Nothing
+    a3 -> Just a3
 
 -- | Multiply two polynomials with the same representation
 multM :: (Ord v, Eq r, Num r) =>
          ReprWit repr -> Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
 multM wit p q = case wit of
   WitAdd  -> error "Error: multiplying additive phase polynomials"
-  WitMult -> normalize $ multImpl p q
+  WitMult -> multImpl p q
 
 multImpl :: (Ord v, Eq r, Num r) =>
             Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
