@@ -9,6 +9,7 @@ Portability : portable
 
 module Feynman.Verification.Symbolic where
 
+import Data.List
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Control.Monad.State.Lazy
@@ -61,9 +62,10 @@ applyCircuit = foldM absorbGate
           args <- mapM findOrAlloc $ getArgs gate
           nOut <- gets Map.size
           let sop' = sop <> identity (nOut - outDeg sop)
-          let g    = extend (primitiveAction gate)
-                            (nOut - length args)
-                            ((Map.fromList $ zip [0..] args)!)
+          let g    = embed (primitiveAction gate)
+                           (nOut - length args)
+                           ((Map.fromList $ zip [0..] args)!)
+                           ((Map.fromList $ zip [0..] args)!)
           return $ sop' .> g
 
 -- | Create an initial state given a set of variables and inputs
@@ -116,4 +118,46 @@ isIdentity vars inputs circuit =
       HHKill _ p -> NotIdentity . show $ getSolution p
       _          -> Inconclusive sop
 
+-- These really need to be packaged up in a logic rather than separate
+-- functions. Doing this for now until a better solution can be found.
+-- Realistically this could also be done "application side" by composing
+-- with relevant path sums.
+validate :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Result
+validate global vars inputs c1 c2 =
+  let sopWithContext = do
+        st <- makeInitial vars inputs
+        action <- computeAction $ c1 ++ dagger c2
+        return $ ket st .> action .> bra st
+      sop = f . grind $ evalState sopWithContext Map.empty where
+        f = if global then dropPhase else id
+  in
+    case sop of
+      Triv       -> Identity
+      HHKill _ p -> NotIdentity . show $ getSolution p
+      _          -> Inconclusive sop
 
+postselectAll :: [ID] -> State Context (Pathsum DMod2)
+postselectAll xs = do
+          args <- mapM findOrAlloc xs
+          nOut <- gets Map.size
+          return $ embed (bra $ map (\_ -> 0) args)
+                         (nOut - length args)
+                         ((Map.fromList $ zip [0..] args)!)
+                         ((Map.fromList $ zip [0..] args)!)
+
+
+validateWithPost :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Result
+validateWithPost global vars inputs c1 c2 =
+  let sopWithContext = do
+        st <- makeInitial vars inputs
+        action <- computeAction $ c1 ++ dagger c2
+        post <- postselectAll (vars \\ inputs)
+        return $ ket st .> action .> post
+      sop = f . dropAmplitude . grind $ evalState sopWithContext Map.empty where
+        f = if global then dropPhase else id
+  in
+    if sop == ket (map ofVar inputs)
+    then Identity
+    else case sop of
+      HHKill _ p -> NotIdentity . show $ getSolution p
+      _          -> Inconclusive sop

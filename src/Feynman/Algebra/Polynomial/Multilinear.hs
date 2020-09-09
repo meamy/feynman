@@ -101,6 +101,10 @@ instance ReprC 'Mult where
  Monomials
  -----------------------------------}
 
+{- TODO: Comparing sets of variables is quite slow. Make the representation
+         of monomials generic so that we can implement monomials with, e.g.,
+         int sets for different variable classes -}
+
 -- | Monomials with graded lexicographic (grevlex) order
 newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 

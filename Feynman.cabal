@@ -19,7 +19,7 @@ source-repository head
   location:          https://github.com/meamy/feynman
 
 library
-  ghc-options:         
+  ghc-options:         -O2 -fprof-auto
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -95,7 +95,7 @@ executable feynopt
 executable feynver
   main-is:             FeynVerify.hs
   buildable:           True
-  ghc-options:         -Wall
+  ghc-options:         -O2 -Wall -prof -fprof-auto -rtsopts
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,

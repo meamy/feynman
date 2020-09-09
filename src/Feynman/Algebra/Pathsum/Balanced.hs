@@ -25,6 +25,7 @@ import Data.Bits (shiftL)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.String (IsString(..))
+import Data.Tuple (swap)
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
@@ -89,6 +90,7 @@ isF _        = False
 unF :: Var -> String
 unF (FVar s) = s
 unF _        = error "Not a free variable"
+
 {-----------------------------------
  Path sums
  -----------------------------------}
@@ -147,6 +149,14 @@ freeVars sop = map unF . Set.toList . Set.filter isF . foldr (Set.union) Set.emp
 isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
 isTrivial sop = sop == identity (inDeg sop)
 
+-- | (To be deprecated) Drops constant term from the phase polynomial
+dropPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
+dropPhase sop = sop { phasePoly = dropConstant $ phasePoly sop }
+
+-- | (To be deprecated) Drops normalization
+dropAmplitude :: Pathsum g -> Pathsum g
+dropAmplitude sop = sop { sde = 0 }
+
 {----------------------------
  Constructors
  ----------------------------}
@@ -185,20 +195,12 @@ compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
 disconnect :: (Eq g, Num g) => Int -> Pathsum g
 disconnect n = Pathsum n n n n 0 [ofVar $ PVar i | i <- [0..n-1]]
 
--- | Extend a path sum by adding a given number of qubits with the specified
---   input and output embedding
-extend :: Pathsum g -> Int -> (Int -> Int) -> Pathsum g
-extend (Pathsum a b c d e f) n embed
-  | n < 0  = error "Cannot embed path sum in smaller space!"
-  | b /= c = error "Can only extend square path sums"
-  | otherwise      = Pathsum a (b+n) (c+n) d (rename sub e) output
-    where sub x   = case x of
-            (IVar i) -> IVar (embed i)
-            _        -> x
-          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
-          initial =
-            let go (v, i) = Map.insert (embed i) (rename sub v) in
-              foldr go Map.empty $ zip f [0..]
+-- | Construct a permutation
+permutation :: (Eq g, Num g) => [Int] -> Pathsum g
+permutation xs
+  | all (\i -> i >= 0 && i <= n) xs = Pathsum 0 n n 0 0 (map (ofVar . IVar) xs)
+  | otherwise = error "permutation: Input not a permutation"
+  where n = length xs
 
 {----------------------------
  Dual constructors
@@ -243,6 +245,10 @@ uncompute xs = Pathsum (2*m) m n (m+n) poly [ofVar (PVar $ m + i) | i <- [0..n-1
         sub  = ((Map.fromList [(v, PVar (m + i)) | (v, i) <- zip (Set.toList fv) [0..]])!)
         poly = foldr (+) zero $ map constructTerm [0..m-1]
         constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
+
+-- | Construct an inverse permutation
+unpermutation :: (Eq g, Num g) => [Int] -> Pathsum g
+unpermutation = permutation . snd . unzip . sort . map swap . zip [0..]
 
 {----------------------------
  Constants & gates
@@ -464,6 +470,43 @@ infixr 5 .>
 renormalize :: Int -> Pathsum g -> Pathsum g
 renormalize k (Pathsum a b c d e f) = Pathsum (a + k) b c d e f
 
+-- | Embed a path sum into a larger space with a specified input and
+--   output embedding.
+embed :: (Eq g, Abelian g) => Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
+embed sop n embedIn embedOut
+  | n < 0     = error "Can't embed in smaller space"
+  | otherwise = inPerm .> tensor (identity n) sop .> outPerm where
+      mIn = inDeg sop
+      ins = map embedIn [0..mIn-1]
+      inPerm  = permutation $ ([0..mIn+n-1] \\ ins) ++ ins
+      mOut = outDeg sop
+      outs = map embedOut [0..mOut-1]
+      outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
+
+{-
+-- | Extend a path sum by adding a given number of qubits with the specified
+--   input and output embedding
+extend :: Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
+extend sop n embedIn embedOut
+  | n < 0     = error "Cannot embed path sum in smaller space!"
+  | otherwise = inPerm .> tensor (identity n) sop .> outPerm where
+      inPerm =
+        let 
+
+    Pathsum a (b+n) (c+n) d (rename sub e) output
+    where sub x = case x of
+            (IVar i) -> IVar (embedIn i)
+            _        -> x
+          output =
+            let pouts = map embedOut [0..c-1]
+                go _ acc [] = acc
+          outputs = map embedOut [0..c-1]
+          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
+          initial =
+            let go (v, i) = Map.insert (embed i) (rename sub v) in
+              foldr go Map.empty $ zip f [0..]
+-}
+
 {--------------------------
  Type class instances
  --------------------------}
@@ -670,8 +713,7 @@ grindStep sop = case sop of
  --------------------------}
 
 -- | Simulates a pathsum on a given input
-simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) =>
-            Pathsum g -> [FF2] -> Map [FF2] (Complex f)
+simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
 simulate sop xs = go $ sop * ket (map constant xs)
   where go      = go' . grind
         go' ps  = case ps of
@@ -692,6 +734,5 @@ simulate sop xs = go $ sop * ket (map constant xs)
           _                      -> error "Incompatible dimensions"
 
 -- | Evaluates a pathsum on a given input and output
-amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) =>
-             [FF2] -> Pathsum g -> [FF2] -> Complex f
+amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]

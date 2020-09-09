@@ -20,7 +20,6 @@ import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>))
 import Feynman.Verification.Symbolic
 
 -- | Check whether two .qc files are equivalent
-{-
 checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
 checkEquivalence options (qc, qc') =
   let gates  = toCliffordT . toGatelist $ qc
@@ -29,23 +28,9 @@ checkEquivalence options (qc, qc') =
       ins    = Set.toList $ inputs qc
       ignore = Set.member "IgnoreGlobal" options
       result =
-        if Set.member "IgnoreGarbage" options
-        then validateOnInputs ignore vars ins gates gates'
-        else if Set.member "Postselect" options
-          then validateToScale ignore vars ins gates gates'
-          else validateIsometry ignore vars ins gates gates'
-  in
-    if inputs qc /= inputs qc'
-    then NotIdentity "Inputs don't match"
-    else result
--}
-checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
-checkEquivalence options (qc, qc') =
-  let gates  = toCliffordT . toGatelist $ qc
-      gates' = toCliffordT . toGatelist $ qc'
-      vars   = union (qubits qc) (qubits qc')
-      ins    = Set.toList $ inputs qc
-      result = isIdentity vars ins (gates ++ dagger gates')
+        if Set.member "PostSelect" options
+          then validateWithPost ignore vars ins gates gates'
+          else validate ignore vars ins gates gates'
   in
     if inputs qc /= inputs qc'
     then NotIdentity "Inputs don't match"
