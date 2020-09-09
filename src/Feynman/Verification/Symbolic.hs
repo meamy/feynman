@@ -156,7 +156,7 @@ validateWithPost global vars inputs c1 c2 =
       sop = f . dropAmplitude . grind $ evalState sopWithContext Map.empty where
         f = if global then dropPhase else id
   in
-    if sop == ket (map ofVar inputs)
+    if sop == ket (map ofVar . filter (`elem` inputs) $ vars)
     then Identity
     else case sop of
       HHKill _ p -> NotIdentity . show $ getSolution p
