@@ -38,9 +38,9 @@ primitiveAction gate = case gate of
   Z _           -> zgate
   CNOT _ _      -> cxgate
   S _           -> sgate
-  Sinv _        -> rzgate $ dyadic 3 1
+  Sinv _        -> sdggate
   T _           -> tgate
-  Tinv _        -> rzgate $ dyadic 7 2
+  Tinv _        -> tdggate
   Swap _ _      -> swapgate
   Rz theta _    -> rzgate $ discretize theta
   Rx theta _    -> hgate * rzgate (discretize theta) * hgate
