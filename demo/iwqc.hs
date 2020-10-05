@@ -2,6 +2,8 @@ module Main where
 
 import Data.List                        (find, splitAt)
 import Data.Maybe                       (fromMaybe)
+import qualified Data.Map as Map
+import Control.Monad.State              (evalState, execState)
 
 import Feynman.Core                     (ID, Primitive(..), dagger)
 import Feynman.Util.Unicode             (subscript)
@@ -61,13 +63,6 @@ dirtyXBullet' xs t y = [H t] ++ go xs t y ++ [H t] where
   go (x:[]) t _   = [Sinv t, CNOT x t, S t, CNOT x t]
   go (x:y:[]) t _ = [Tinv t, CNOT x t, T t, CNOT y t, Tinv t, CNOT x t, T t, CNOT y t]
   go (x:y:xs) t z = rToffoli x t z ++ go (y:xs) z x ++ (dagger $ rToffoli x t z)
-
-dirtyXBullet'' :: [ID] -> ID -> [Primitive]
-dirtyXBullet'' xs t = [H t] ++ go xs t ++ [H t] where
-  go [] t       = [Z t]
-  go (x:[]) t   = [Sinv t, CNOT x t, S t, CNOT x t]
-  go (x:y:[]) t = [Tinv t, CNOT x t, T t, CNOT y t, Tinv t, CNOT x t, T t, CNOT y t]
-  go (x:y:xs) t = rToffoli t x y ++ go (y:xs) x ++ (dagger $ rToffoli t x y)
 
 controllediX []     t = []
 controllediX (c:[]) t = [CNOT c t]
@@ -155,3 +150,44 @@ genMPG k = minimalProductGate (genList k) ("x" ++ subscript k)
 
 genMPG' :: Integer -> [Primitive]
 genMPG' k = minimalProductGate' (genList k) ("x" ++ subscript k)
+
+
+-- | Temporary
+cxstarAction :: Integer -> Pathsum DMod2
+cxstarAction k = grind $ (tensor (identity $ fromInteger k) $ initialize 0) .> sop where
+  sop    = evalState (computeAction $ genCXStar' k ++ [Sinv ("x" ++ subscript k)]) istate
+  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
+
+cxbulletAction :: Integer -> Pathsum DMod2
+cxbulletAction k = grind sop where
+  circ   = dirtyXBullet' ["x" ++ subscript i | i <- [1..k-1]] ("x" ++ subscript k) ("x" ++ subscript 0)
+  sop    = evalState (computeAction $ circ) istate
+  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
+
+pinvAction :: Integer -> Pathsum DMod2
+pinvAction k = grind sop where
+  targ   = "x" ++ subscript 0
+  anc    = "x" ++ subscript 1
+  circ   = [H targ] ++
+           dagger (dirtyXBullet' ["x" ++ subscript i | i <- [2..k-1]] targ anc) ++
+           [H targ]
+  sop    = evalState (computeAction $ circ) istate
+  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
+
+cxstarinvAction :: Integer -> Pathsum DMod2
+cxstarinvAction k = grind sop where
+  targ  = "x" ++ subscript k
+  targ' = "x" ++ subscript 0
+  danc  = "x" ++ subscript 1
+  xs    = ["x" ++ subscript i | i <- [2..k-1]]
+  anc   = "anc"
+  circ = [H targ] ++
+         rToffoli4 targ danc targ' anc ++
+         [CNOT targ' anc] ++
+         [H anc] ++
+         dagger (dirtyXBullet' xs anc danc) ++
+         [H anc] ++
+         [CNOT targ' anc] ++
+         dagger (rToffoli4 targ danc targ' anc)
+  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k, "anc"]) [0..]
+  sop    = tensor (identity (fromInteger $ k+1)) (initialize 0) .> (evalState (computeAction circ) istate)
