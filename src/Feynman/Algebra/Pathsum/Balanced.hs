@@ -202,6 +202,11 @@ permutation xs
   | otherwise = error "permutation: Input not a permutation"
   where n = length xs
 
+-- | Construct an n-ary unit
+etaN :: (Eq g, Num g) => Int -> Pathsum g
+etaN n = Pathsum 0 0 (2*n) n 0 $ xs ++ xs
+  where xs = map (ofVar . PVar) [0..n-1]
+
 {----------------------------
  Dual constructors
  ----------------------------}
@@ -250,6 +255,11 @@ uncompute xs = Pathsum (2*m) m n (m+n) poly [ofVar (PVar $ m + i) | i <- [0..n-1
 unpermutation :: (Eq g, Num g) => [Int] -> Pathsum g
 unpermutation = permutation . snd . unzip . sort . map swap . zip [0..]
 
+-- | Construct an n-ary co-unit
+epsilonN :: (Eq g, Abelian g) => Int -> Pathsum g
+epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
+  where poly = sum $ map f [0..n-1]
+        f i  = ofVar (PVar i) * (ofVar (IVar i) + ofVar (IVar $ n+i))
 {----------------------------
  Constants & gates
  ----------------------------}
@@ -269,6 +279,15 @@ omega = Pathsum 0 0 0 0 (constant (half * half)) []
 -- | A fresh, 0-valued ancilla
 fresh :: (Eq g, Num g) => Pathsum g
 fresh = Pathsum 0 0 1 0 0 [0]
+
+-- | The unit, \(\eta\)
+eta :: (Eq g, Num g) => Pathsum g
+eta = Pathsum 0 0 2 1 0 [ofVar (PVar 0), ofVar (PVar 0)]
+
+-- | The co-unit, \(\epsilon\)
+epsilon :: (Eq g, Abelian g) => Pathsum g
+epsilon = Pathsum 2 2 0 1 p []
+  where p = lift $ ofVar (PVar 0) * (ofVar (IVar 0) + ofVar (IVar 1))
 
 -- | X gate
 xgate :: (Eq g, Num g) => Pathsum g
@@ -347,6 +366,21 @@ swapgate = Pathsum 0 2 2 0 0 [x1, x0]
         x1 = ofVar $ IVar 1
 
 {----------------------------
+ Channels
+ ----------------------------}
+
+-- | Choi matrix of computational basis measurement
+measureChoi :: (Eq g, Abelian g) => Pathsum g
+measureChoi = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
+  where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+        y  = ofVar $ PVar 0
+
+-- | CPM operator of computational basis measurement
+measure :: (Eq g, Abelian g) => Pathsum g
+measure = unChoi measureChoi
+
+{----------------------------
  Bind and unbind
  ----------------------------}
 
@@ -379,18 +413,70 @@ unbind = flip (foldr go)
               sop { inDeg = b - 1,
                     phasePoly = substMany sub e,
                     outVals = map (substMany sub) f }
-
--- | Open a path sum by binding all free variables
-close :: Pathsum g -> Pathsum g
-close sop = bind (freeVars sop)
 -}
+
 {----------------------------
  Operators
  ----------------------------}
 
+-- | Return the dual of a path sum
+dualize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+dualize sop@(Pathsum a b c d e f) = inSOP .> midSOP .> outSOP
+  where inSOP  = tensor (identity c) (etaN b)
+        midSOP = tensor (tensor (identity c) sop) (identity b)
+        outSOP = tensor (epsilonN c) (identity b)
+
+-- | Return the (column) vectorized path sum. By convention we place the inputs
+--   first (i.e. f : A -> B becomes vectorize f : A* \otimes B)
+vectorize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+vectorize sop@(Pathsum a b c d e f) = etaN b .> tensor (identity b) sop
+
+-- | Return the (row) vectorized path sum. By convention we place the outputs
+--   first (i.e. f : A -> B becomes vectorize f : A* \otimes B)
+covectorize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+covectorize sop@(Pathsum a b c d e f) = tensor (identity c) sop .> epsilonN c
+
 -- | Take the dagger of a path sum
---dagger :: Pathsum g -> Pathsum g
---dagger (Pathsum a b c d e f) = Pathsum ? c b ? ? ?
+dagger :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+dagger (Pathsum a b c d e f) = dualize $ Pathsum a b c d (-e) f
+
+-- | Take the conjugate (c.f., lower star) of a path sum
+conjugate :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+conjugate (Pathsum a b c d e f) = Pathsum a b c d (-e) f
+
+-- | Trace a square morphism. Throws an error if the input and outputs are not
+--   the same size
+trace :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+trace sop@(Pathsum a b c d e f)
+  | b /= c = error "Can't trace a non-square operator"
+  | otherwise = etaN b .> tensor (identity b) sop .> epsilonN b
+
+-- | Trace out the first qubit. Throws an error if the input is a vector
+ptrace :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+ptrace sop@(Pathsum a b c d e f)
+  | b < 1 || c < 1 = error "Can't partial trace a vector"
+  | otherwise = tensor eta (identity $ b-1) .>
+                tensor (identity 1) sop .>
+                tensor epsilon (identity $ c-1)
+
+-- | Turn a pure state into a density matrix. Throws an error if the input is not
+--   a column vector
+densify :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+densify sop@(Pathsum a b c d e f)
+  | b /= 0 = error "Can't densify an operator "
+  | otherwise = dagger sop .> sop
+
+-- | Turn a (single-qubit) Choi matrix into a CPM-style linear operator
+unChoi :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+unChoi sop@(Pathsum a b c d e f)
+  | b /= 2 || c /= 2 = error "Only single-qubit channels currently supported"
+  | otherwise        = tensor eta swapgate .>
+                       tensor (identity 1) (tensor sop $ identity 1) .>
+                       tensor swapgate epsilon
+
+-- | Turn a unitary operator into a channel. That is, f becomes f_* \otimes f
+channelize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+channelize sop = tensor (conjugate sop) sop
 
 -- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
 --   and the dimensions match.
@@ -431,6 +517,7 @@ tensor sop sop' = Pathsum sde' inDeg' outDeg' pathVars' phasePoly' outVals'
         shift x    = case x of
           IVar i -> IVar $ i + (inDeg sop)
           PVar i -> PVar $ i + (pathVars sop)
+          _      -> x
 
 -- | Attempt to compose two path sums in sequence. Only succeeds if the dimensions
 --   are compatible (i.e. if the out degree of the former is the in degree of the
@@ -482,30 +569,6 @@ embed sop n embedIn embedOut
       mOut = outDeg sop
       outs = map embedOut [0..mOut-1]
       outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
-
-{-
--- | Extend a path sum by adding a given number of qubits with the specified
---   input and output embedding
-extend :: Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
-extend sop n embedIn embedOut
-  | n < 0     = error "Cannot embed path sum in smaller space!"
-  | otherwise = inPerm .> tensor (identity n) sop .> outPerm where
-      inPerm =
-        let 
-
-    Pathsum a (b+n) (c+n) d (rename sub e) output
-    where sub x = case x of
-            (IVar i) -> IVar (embedIn i)
-            _        -> x
-          output =
-            let pouts = map embedOut [0..c-1]
-                go _ acc [] = acc
-          outputs = map embedOut [0..c-1]
-          output  = [Map.findWithDefault (ofVar $ IVar i) i initial | i <- [0..c+n-1]]
-          initial =
-            let go (v, i) = Map.insert (embed i) (rename sub v) in
-              foldr go Map.empty $ zip f [0..]
--}
 
 {--------------------------
  Type class instances
@@ -736,3 +799,51 @@ simulate sop xs = go $ sop * ket (map constant xs)
 -- | Evaluates a pathsum on a given input and output
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
+
+{--------------------------
+ Examples
+ --------------------------}
+
+-- | A symbolic state |x>
+sstate :: Pathsum DMod2
+sstate = ket [ofVar "x"]
+
+-- | A bell state
+bellstate :: Pathsum DMod2
+bellstate = ket [0, 0] .> tensor hgate (identity 1) .> cxgate
+
+-- | Teleportation circuit
+teleport :: Pathsum DMod2
+teleport = tensor (identity 1) bellstate .>
+           tensor cxgate (identity 1) .>
+           tensor hgate cxgate .>
+           tensor swapgate hgate .>
+           tensor (identity 1) cxgate .>
+           tensor swapgate hgate
+
+-- | Teleportation channel
+teleportChannel :: Pathsum DMod2
+teleportChannel = channelize (tensor (identity 1) bellstate) .>
+                  channelize (tensor cxgate (identity 1)) .>
+                  channelize (tensor hgate cxgate) .>
+                  embed measure 4 (* 3) (* 3) .>
+                  embed measure 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
+                  channelize (tensor swapgate hgate) .>
+                  channelize (tensor (identity 1) cxgate) .>
+                  channelize (tensor swapgate hgate) .>
+                  embed epsilon 4 (* 3) (* 3) .> -- trace out first qubit
+                  embed epsilon 2 (* 2) (* 2)    -- trace out second
+           
+-- | Verify teleportation
+verifyTele :: () -> IO ()
+verifyTele _ = case (densify sstate == grind (ptrace . ptrace . densify $ sstate .> teleport)) of
+  True -> putStrLn "Identity"
+  False -> putStrLn "Not identity"
+  
+-- | Verify teleportation channel
+verifyTeleC :: () -> IO ()
+verifyTeleC _ = case (rho == grind (rho .> teleportChannel)) of
+  True -> putStrLn "Identity"
+  False -> putStrLn "No identity"
+  where rho = grind $ vectorize $ densify sstate
+  
