@@ -260,6 +260,7 @@ epsilonN :: (Eq g, Abelian g) => Int -> Pathsum g
 epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
   where poly = sum $ map f [0..n-1]
         f i  = ofVar (PVar i) * (ofVar (IVar i) + ofVar (IVar $ n+i))
+
 {----------------------------
  Constants & gates
  ----------------------------}
@@ -398,22 +399,19 @@ close :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 close sop = bind (freeVars sop) sop
 
 -- | Unbind (instantiate) some collection of inputs
-{-
-unbind :: Foldable f => f Int -> Pathsum g -> Pathsum g
-unbind = flip (foldr go)
-  where go i (Pathsum a b c d e f)
-          | i >= b || i < 0 = error "Can't unbind " ++ show i ++ "th variable"
-          | otherwise       =
-            let inst = "#" ++ show (IVar i)
-                sub (IVar j)
-                  | j == i   = ofVar $ FVar inst
-                  | j > i     = ofVar $ IVar (j-1)
-                  | otherwise = IVar j
-            in
-              sop { inDeg = b - 1,
-                    phasePoly = substMany sub e,
-                    outVals = map (substMany sub) f }
--}
+unbind :: (Foldable f, Eq g, Abelian g) => f Int -> Pathsum g -> Pathsum g
+unbind xs (Pathsum a b c d e f) = Pathsum a (b - length xs) c d e' f' where
+  e'  = substMany sub e
+  f'  = map (substMany sub) f
+  sub = \v -> Map.findWithDefault (ofVar v) v tmp
+  tmp = snd $ foldr buildMap (0, Map.empty) [0..b-1]
+  buildMap i (j, acc) = case i `elem` xs of
+    True  -> (j, Map.insert (IVar i) (ofVar . FVar $ "#" ++ show (IVar i)) acc)
+    False -> (j+1, Map.insert (IVar i) (ofVar . IVar $ j) acc)
+
+-- | Open a path sum by instantiating all inputs
+open :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+open sop = unbind [0..(inDeg sop) - 1] sop
 
 {----------------------------
  Operators
@@ -477,6 +475,15 @@ unChoi sop@(Pathsum a b c d e f)
 -- | Turn a unitary operator into a channel. That is, f becomes f_* \otimes f
 channelize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 channelize sop = tensor (conjugate sop) sop
+
+-- | Construct a controlled path sum
+controlled :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+controlled sop@(Pathsum a b c d e f) = Pathsum a (b+1) (c+1) d e' f' where
+  shift   = shiftI 1
+  x       = ofVar $ IVar 0
+  e'      = (lift x)*(renameMonotonic shift e)
+  f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
+  g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)
 
 -- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
 --   and the dimensions match.
@@ -806,31 +813,31 @@ amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
 
 -- | A symbolic state |x>
 sstate :: Pathsum DMod2
-sstate = ket [ofVar "x"]
+sstate = open $ identity 1
 
 -- | A bell state
 bellstate :: Pathsum DMod2
-bellstate = ket [0, 0] .> tensor hgate (identity 1) .> cxgate
+bellstate = fresh <> fresh .> hgate <> (identity 1) .> cxgate
 
 -- | Teleportation circuit
 teleport :: Pathsum DMod2
-teleport = tensor (identity 1) bellstate .>
-           tensor cxgate (identity 1) .>
-           tensor hgate cxgate .>
-           tensor swapgate hgate .>
-           tensor (identity 1) cxgate .>
-           tensor swapgate hgate
+teleport = (identity 1) <> bellstate .>
+           cxgate <> (identity 1) .>
+           hgate <> cxgate .>
+           swapgate <> hgate .>
+           (identity 1) <> cxgate .>
+           swapgate <> hgate
 
 -- | Teleportation channel
 teleportChannel :: Pathsum DMod2
-teleportChannel = channelize (tensor (identity 1) bellstate) .>
-                  channelize (tensor cxgate (identity 1)) .>
-                  channelize (tensor hgate cxgate) .>
+teleportChannel = channelize ((identity 1) <> bellstate) .>
+                  channelize (cxgate <> (identity 1)) .>
+                  channelize (hgate <> cxgate) .>
                   embed measure 4 (* 3) (* 3) .>
                   embed measure 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
-                  channelize (tensor swapgate hgate) .>
-                  channelize (tensor (identity 1) cxgate) .>
-                  channelize (tensor swapgate hgate) .>
+                  channelize (swapgate <> hgate) .>
+                  channelize ((identity 1) <> cxgate) .>
+                  channelize (swapgate <> hgate) .>
                   embed epsilon 4 (* 3) (* 3) .> -- trace out first qubit
                   embed epsilon 2 (* 2) (* 2)    -- trace out second
            
@@ -844,6 +851,23 @@ verifyTele _ = case (densify sstate == grind (ptrace . ptrace . densify $ sstate
 verifyTeleC :: () -> IO ()
 verifyTeleC _ = case (rho == grind (rho .> teleportChannel)) of
   True -> putStrLn "Identity"
-  False -> putStrLn "No identity"
+  False -> putStrLn "Not identity"
   where rho = grind $ vectorize $ densify sstate
-  
+
+-- | The |A> = T|+> state
+aState :: Pathsum DMod2
+aState = fresh .> hgate .> tgate
+
+-- | T gate teleportation channel
+teleportTChannel :: Pathsum DMod2
+teleportTChannel = channelize ((identity 1) <> aState) .>
+                   channelize (cxgate) .>
+                   embed measure 2 (\i -> i*2 + 1) (\j -> j*2 + 1) .>
+                   channelize (controlled sgate) .>
+                   embed epsilon 2 (\i -> i*2 + 1) (\j -> j*2 + 1) -- trace out the resource state
+
+-- | Verify teleportation channel
+verifyTeleT :: () -> IO ()
+verifyTeleT _ = case (channelize tgate == grind (teleportTChannel)) of
+  True -> putStrLn "Identity"
+  False -> putStrLn "No identity"
