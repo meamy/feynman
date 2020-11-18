@@ -5,7 +5,7 @@ import Data.List
 import Data.Maybe (fromJust)
 import Control.Monad (when)
 import Numeric
-import System.Time
+import System.CPUTime (getCPUTime)
 import System.Console.ANSI
 import Control.DeepSeq
 
@@ -148,16 +148,16 @@ printResult (num, totals) (benchmark, result) = case result of
 {- Benchmarking functions -}
 withTiming :: (() -> IO ()) -> IO ()
 withTiming f = do
-  TOD starts startp <- getClockTime
+  start <- getCPUTime
   f ()
-  TOD ends endp <- getClockTime
-  let t = (fromIntegral $ ends - starts)*1000 + (fromIntegral $ endp - startp)/10^9
+  end   <- getCPUTime
+  let t = (fromIntegral $ end - start) / 10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
 
 runBenchmarks pass verify xs =
   let runBench s = do
-        src <- B.readFile $ benchmarksPath ++ s ++ ".qc"
-        TOD starts startp <- getClockTime
+        src   <- B.readFile $ benchmarksPath ++ s ++ ".qc"
+        start <- getCPUTime
         case printErr (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c') of
           Left err      -> do
             putStrLn $ s ++ ": ERROR"
@@ -177,8 +177,8 @@ runBenchmarks pass verify xs =
                 depths          = (depth glist, depth glist')
                 tdepths         = (tDepth glist, tDepth glist')
             in do
-              TOD ends endp  <- verResult `deepseq` counts `deepseq` getClockTime
-              let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+              end  <- verResult `deepseq` counts `deepseq` getCPUTime
+              let time = (fromIntegral $ end - start) / 10^9
               putStrLn $ s ++ ":" ++ verResult
               putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
               putStrLn $ "\tQubits:\t\t" ++ show (length $ qubits c)
