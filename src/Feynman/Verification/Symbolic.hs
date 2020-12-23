@@ -20,7 +20,7 @@ import qualified Data.Set as Set
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
-import Feynman.Algebra.Pathsum.Balanced
+import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 
 {------------------------------------
  Path sum actions
