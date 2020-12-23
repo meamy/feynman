@@ -281,6 +281,10 @@ omega = Pathsum 0 0 0 0 (constant (half * half)) []
 fresh :: (Eq g, Num g) => Pathsum g
 fresh = Pathsum 0 0 1 0 0 [0]
 
+-- | The dagger of fresh
+unfresh :: (Eq g, Abelian g) => Pathsum g
+unfresh = dagger fresh
+
 -- | The unit, \(\eta\)
 eta :: (Eq g, Num g) => Pathsum g
 eta = Pathsum 0 0 2 1 0 [ofVar (PVar 0), ofVar (PVar 0)]
@@ -359,6 +363,12 @@ ccxgate = Pathsum 0 3 3 0 0 [x0, x1, x2 + x0*x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
         x2 = ofVar $ IVar 2
+
+-- | k-control Toffoli gate
+mctgate :: (Eq g, Num g) => Int -> Pathsum g
+mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (controls ++ [t + foldr (*) 1 controls])
+  where controls = [ofVar (IVar i) | i <- [0..k-1]]
+        t        = ofVar $ IVar k
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g
@@ -576,6 +586,13 @@ embed sop n embedIn embedOut
       mOut = outDeg sop
       outs = map embedOut [0..mOut-1]
       outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
+
+-- | Drop a qubit
+discard :: Eq g => Int -> Pathsum g -> Pathsum g
+discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
+  b' = if i < b then b-1 else b
+  c' = if i < c then c-1 else c
+  f' = snd . unzip . filter (\(j,_) -> i /= j) $ zip [0..] f
 
 {--------------------------
  Type class instances
