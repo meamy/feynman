@@ -14,9 +14,10 @@ import Data.Maybe                              (fromMaybe)
 import qualified Data.Map as Map
 import Control.Monad.State                     (evalState, execState)
 import Data.Semigroup                          ((<>))
+import Text.Printf
 
 import Feynman.Core                            (ID, Primitive(..), dagger)
-import Feynman.Util.Unicode                    (subscript)
+import Feynman.Util.Unicode                    (subscript, ulambda, bullet, star)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial              (degree)
 import Feynman.Algebra.Polynomial.Multilinear
@@ -208,10 +209,8 @@ unand3 = channelize (hgate <> identity 3) .>
          embed epsilon 6 (*4) (*4) -- trace out the measured qubit
 
 -- Verify that and3 and unand3 are inverse channels
-verify3and :: () -> IO ()
-verify3and _ = case (rho == grind (rho .> (channelize and3) .> unand3)) of
-  True -> putStrLn "Identity"
-  False -> putStrLn "Not identity"
+verify3and :: () -> Bool
+verify3and _ = rho == grind (rho .> (channelize and3) .> unand3)
   where rho    = grind $ vectorize $ densify sstate
         sstate = open $ identity 3 -- symbolic state on 3 qubits
 
@@ -239,10 +238,8 @@ unandk k = channelize (hgate <> fresh <> identity k) .>
         corr  = cciX x y anc ++ [H anc] ++ dirtyX ctrls anc y ++ [H anc] ++ dagger (cciX x y anc)
 
 -- Verify that andk and unandk are inverse channels
-verifykand :: Int -> IO ()
-verifykand k = case (rho == grind (rho .> (channelize $ andk k) .> unandk k)) of
-  True -> putStrLn "Identity"
-  False -> putStrLn "Not identity"
+verifykand :: Int -> Bool
+verifykand k = rho == grind (rho .> (channelize $ andk k) .> unandk k)
   where rho    = grind $ vectorize $ densify sstate
         sstate = open $ identity k -- symbolic state on k qubits
 
@@ -272,117 +269,71 @@ unandkalt k = channelize (hgate <> fresh <> identity k) .>
         corr  = [CNOT y anc, H anc] ++ dagger (dirtyXBullet ctrls anc x) ++ [H anc, CNOT y anc]
 
 -- Verify that andkalt and unandkalt are inverse channels
-verifykandalt :: Int -> IO ()
-verifykandalt k = case (rho == grind (rho .> (channelize $ andkalt k) .> unandkalt k)) of
-  True -> putStrLn "Identity"
-  False -> putStrLn "Not identity"
+verifykandalt :: Int -> Bool
+verifykandalt k = rho == grind (rho .> (channelize $ andkalt k) .> unandkalt k)
   where rho    = grind $ vectorize $ densify sstate
         sstate = open $ identity k -- symbolic state on k qubits
 
-{-
-rToffoli4inv0 w x y z = cSInv w x where
-  cSInv w x = [Tinv w, Tinv x, CNOT w x, T x, CNOT w x]
+-- | Main script
 
-rToffoli4inv1 w x y z = ciZInv w x y where
-  ciZInv w x y = [T y, CNOT w y, Tinv y, CNOT x y, T y, CNOT w y, Tinv y, CNOT x y]
-
--- | Convenience generators
-
-genCiX :: Integer -> [Primitive]
-genCiX k = controllediX (genList k) ("x" ++ subscript k)
-
-genCXBullet :: Integer -> [Primitive]
-genCXBullet k = controlledXBullet (genList k) ("x" ++ subscript k)
-
-genCXStar :: Integer -> [Primitive]
-genCXStar k = controlledXStar (genList k) ("x" ++ subscript k)
-
-genCXStar' :: Integer -> [Primitive]
-genCXStar' k = controlledXStar' (genList k) ("x" ++ subscript k)
-
-genCXBullet' :: Integer -> [Primitive]
-genCXBullet' k = controlledXBullet' (genList k) ("x" ++ subscript k)
-
-genMPG :: Integer -> [Primitive]
-genMPG k = minimalProductGate (genList k) ("x" ++ subscript k)
-
-genMPG' :: Integer -> [Primitive]
-genMPG' k = minimalProductGate' (genList k) ("x" ++ subscript k)
-
-
--- | Temporary
-cxiAction :: Integer -> Pathsum DMod2
-cxiAction k = grind $ (tensor (identity $ fromInteger k) $ initialize 0) .> sop where
-  sop    = evalState (computeAction $ genCiX k ++ [Sinv ("x" ++ subscript k)]) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-cxstarAction :: Integer -> Pathsum DMod2
-cxstarAction k = grind $ (tensor (identity $ fromInteger k) $ initialize 0) .> sop where
-  sop    = evalState (computeAction $ genCXStar' k ++ [Sinv ("x" ++ subscript k)]) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-cxbulletAction :: Integer -> Pathsum DMod2
-cxbulletAction k = grind $ (tensor (identity $ fromInteger k) $ initialize 0) .> sop where
-  sop    = evalState (computeAction $ genCXBullet' k ++ [Sinv ("x" ++ subscript k)]) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-cxbulletDirtyAction :: Integer -> Pathsum DMod2
-cxbulletDirtyAction k = grind sop where
-  circ   = dirtyXBullet' ["x" ++ subscript i | i <- [1..k-1]] ("x" ++ subscript k) ("x" ++ subscript 0)
-  sop    = evalState (computeAction $ circ) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-cxDirtyAction :: Integer -> Pathsum DMod2
-cxDirtyAction k = grind sop where
-  circ   = dirtyX' ["x" ++ subscript i | i <- [1..k-1]] ("x" ++ subscript k) ("x" ++ subscript 0)
-  sop    = evalState (computeAction $ circ) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-pinvAction :: Integer -> Pathsum DMod2
-pinvAction k = grind sop where
-  targ   = "x" ++ subscript 0
-  anc    = "x" ++ subscript 1
-  circ   = [H targ] ++
-           dagger (dirtyXBullet' ["x" ++ subscript i | i <- [2..k-1]] targ anc) ++
-           [H targ]
-  sop    = evalState (computeAction $ circ) istate
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k]) [0..]
-
-cxstarinvAction :: Integer -> Pathsum DMod2
-cxstarinvAction k = grind sop where
-  targ  = "x" ++ subscript k
-  targ' = "x" ++ subscript 0
-  danc  = "x" ++ subscript 1
-  xs    = ["x" ++ subscript i | i <- [2..k-1]]
-  anc   = "anc"
-  circ = [H targ] ++
-         rToffoli4 targ danc targ' anc ++
-         [CNOT targ' anc] ++
-         [H anc] ++
-         dagger (dirtyXBullet' xs anc danc) ++
-         [H anc] ++
-         [CNOT targ' anc] ++
-         dagger (rToffoli4 targ danc targ' anc)
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k, "anc"]) [0..]
-  sop    = tensor (identity (fromInteger $ k+1)) (initialize 0) .> (evalState (computeAction circ) istate)
-
-cxbulletinvAction :: Integer -> Pathsum DMod2
-cxbulletinvAction k = grind sop where
-  targ  = "x" ++ subscript k
-  targ' = "x" ++ subscript 0
-  danc  = "x" ++ subscript 1
-  xs    = ["x" ++ subscript i | i <- [2..k-1]]
-  anc   = "anc"
-  circ = [H targ] ++
-         rToffoli4 targ danc targ' anc ++
-         [CNOT danc anc] ++
-         [CNOT targ' anc] ++
-         [H anc] ++
-         dagger (dirtyX' xs anc danc) ++
-         [H anc] ++
-         [CNOT targ' anc] ++
-         [CNOT danc anc] ++
-         dagger (rToffoli4 targ danc targ' anc)
-  istate = Map.fromList $ zip (reverse (genList k) ++ ["x" ++ subscript k, "anc"]) [0..]
-  sop    = tensor (identity (fromInteger $ k+1)) (initialize 0) .> (evalState (computeAction circ) istate)
--}
+main :: IO ()
+main = do
+  putStrLn "...I am a verification bot, beep boop..."
+  putStrLn "...I will check some circuits for you..."
+  putStrLn ""
+  putStrLn "Construction 1: Relative phase Toffoli with 1 dirty ancilla"
+  mapM_ checkdirtyXBullet [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn "Construction 2: Toffoli with 1 dirty ancilla"
+  mapM_ checkdirtyX [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn "Construction 3: Multiply-controlled iX"
+  mapM_ checkiX [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn $ "Construction 4: Multiply-controlled X" ++ star
+  mapM_ checkXStar [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn $ "Construction 5: Multiply-controlled X" ++ bullet
+  mapM_ checkXBullet [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn "Construction 6: Temporary logical 3-AND"
+  mapM_ check3and [()]
+  putStrLn ""
+  putStrLn "Construction 7: Temporary logical k-AND"
+  mapM_ checkkand [2^i | i <- [1..6]]
+  putStrLn ""
+  putStrLn $ "Construction 8: Temporary logical k-AND (with X" ++ star ++ ")"
+  mapM_ checkkandalt [2^i | i <- [1..6]]
+  where
+  checkdirtyXBullet :: Integer -> IO ()
+  checkdirtyXBullet k = do
+    printf "    checking %s%s(X%s) (1 dirty ancilla) up to phase..." ulambda (subscript k) bullet
+    printf "%s\n" (if verifyDirtyXBullet k then "Success!" else "Failed")
+  checkdirtyX :: Integer -> IO ()
+  checkdirtyX k = do
+    printf "    checking %s%s(X) (1 dirty ancilla)..." ulambda (subscript k)
+    printf "%s\n" (if verifyDirtyX k then "Success!" else "Failed")
+  checkiX :: Integer -> IO ()
+  checkiX k = do
+    printf "    checking %s%s(iX) (ancilla-free)..." ulambda (subscript k)
+    printf "%s\n" (if verifyControllediX k then "Success!" else "Failed")
+  checkXStar :: Integer -> IO ()
+  checkXStar k = do
+    printf "    checking %s%s(X%s) (ancilla-free)..." ulambda (subscript k) star
+    printf "%s\n" (if verifyControlledXStar k then "Success!" else "Failed")
+  checkXBullet :: Integer -> IO ()
+  checkXBullet k = do
+    printf "    checking %s%s(X%s) (ancilla-free)..." ulambda (subscript k) bullet
+    printf "%s\n" (if verifyControlledXBullet k then "Success!" else "Failed")
+  check3and :: () -> IO ()
+  check3and _ = do
+    printf "    checking 3-AND and un-3-AND are inverse channels..."
+    printf "%s\n" (if verify3and () then "Success!" else "Failed")
+  checkkand :: Int -> IO ()
+  checkkand k = do
+    printf "    checking %i-AND and un-%i-AND are inverse channels..." k k
+    printf "%s\n" (if verifykand k then "Success!" else "Failed")
+  checkkandalt :: Int -> IO ()
+  checkkandalt k = do
+    printf "    checking %i-AND%s and un-%i-AND%s are inverse channels..." k star k star
+    printf "%s\n" (if verifykandalt k then "Success!" else "Failed")

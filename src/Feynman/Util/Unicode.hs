@@ -35,7 +35,10 @@ module Feynman.Util.Unicode(
   delta,
   zeta,
   omega,
-  pi
+  pi,
+  ulambda,
+  bullet,
+  star
   ) where
 
 import Prelude hiding (and, sum, pi)
@@ -175,3 +178,12 @@ omega = "\x03C9"
 
 pi :: String
 pi = "\x03C0"
+
+ulambda :: String
+ulambda = "\x039B"
+
+bullet :: String
+bullet = "\x2022"
+
+star :: String
+star = "\x2605"

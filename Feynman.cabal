@@ -122,3 +122,14 @@ executable qc2qasm
                        base,
                        bytestring
   default-language:    Haskell2010
+
+executable ar20Verify
+  main-is:             verifyScript.hs
+  buildable:           True
+  ghc-options:         -Wall
+  hs-source-dirs:      demo
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.5.8.1
+  default-language:    Haskell2010
