@@ -154,7 +154,7 @@ applyGate (gate, l) = case gate of
     bexp' <- getSt v
     setSt u bexp'
     setSt v bexp
-  _      -> error "Unsupported gate"
+  _      -> error $ "Unsupported gate " ++ show gate
 
 {- Run the analysis on a circuit and state -}
 runCircuit :: [Primitive] -> Ctx -> Ctx
