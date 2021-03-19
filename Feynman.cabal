@@ -61,55 +61,12 @@ library
                        parsec3-numbers
   default-language:    Haskell2010
   
-
-executable feynopt
-  main-is:             FeynOpt.hs
+executable simHS
+  main-is:             simHS.hs
   buildable:           True
-  ghc-options:         -Wall
-  default-extensions:  GADTs,
-                       ExistentialQuantification,
-                       FlexibleContexts,
-                       FlexibleInstances
-  hs-source-dirs:      tools
-  other-modules:       Benchmarks
-  build-depends:       Feynman,
-                       QuickCheck >= 2.8.2,
-                       ansi-terminal,
-                       array >= 0.5.1.0,
-                       base,
-                       bv,
-                       bytestring,
-                       containers >= 0.5.8.1,
-                       deepseq
-  default-language:    Haskell2010
-
-executable feynver
-  main-is:             FeynVerify.hs
-  buildable:           True
-  ghc-options:         -Wall
-  default-extensions:  GADTs,
-                       ExistentialQuantification,
-                       FlexibleContexts,
-                       FlexibleInstances
-  hs-source-dirs:      tools
-  build-depends:       Feynman,
-                       QuickCheck >= 2.8.2,
-                       ansi-terminal,
-                       array >= 0.5.1.0,
-                       base,
-                       bv,
-                       bytestring,
-                       containers >= 0.5.8.1,
-                       parsec >= 3.0,
-                       transformers >= 0.5.2.0
-  default-language:    Haskell2010
-
-executable qc2qasm
-  main-is:             QC2Qasm.hs
-  buildable:           True
-  ghc-options:         -Wall
-  hs-source-dirs:      tools
+  hs-source-dirs:      scripts
   build-depends:       Feynman,
                        base,
-                       bytestring
+                       mtl,
+                       containers >= 0.5.8.1
   default-language:    Haskell2010

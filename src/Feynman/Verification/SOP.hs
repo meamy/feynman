@@ -855,7 +855,7 @@ simulateHiddenShift n a () = do
     ++ ", x=" ++ show (fromBits . map (`elem` string) . reverse . sort $ vars)
   printVerStats (circ)
   let sop = circuitSOPWithHints vars circ
-  print $ reduce (blank vars <> sop)
+  print $ snd $ reduce (blank vars <> sop)
   where vars = ["x" ++ show i | i <- [0..n-1]]
   
 
