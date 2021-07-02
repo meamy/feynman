@@ -1,5 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
+{-- Deprecated -}
+
 module Feynman.Verification.SOP where
 
 import Text.Printf

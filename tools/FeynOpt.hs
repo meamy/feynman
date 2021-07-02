@@ -15,7 +15,7 @@ import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
-import Feynman.Verification.SOP
+import Feynman.Verification.Symbolic
 
 import System.Environment
 
@@ -74,14 +74,15 @@ equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheckDotQC qc qc' =
   let circ    = toCliffordT . toGatelist $ qc
       circ'   = toCliffordT . toGatelist $ qc'
-      pInputs = Set.toList $ inputs qc
-      result  = validateIsometry False (union (qubits qc) (qubits qc')) pInputs circ circ'
+      vars    = union (qubits qc) (qubits qc')
+      ins     = Set.toList $ inputs qc
+      result  = validate False vars ins circ circ'
   in
     case (inputs qc == inputs qc', result) of
-      (False, _)           -> Left $ "Circuits not equivalent (different inputs)"
-      (_, NotIdentity str) -> Left $ "Circuits not equivalent (" ++ str ++ ")"
-      (_, Unknown sop)     -> Left $ "Failed to verify: \n  " ++ show sop
-      _                    -> Right qc'
+      (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
+      (_, NotIdentity ce)   -> Left $ "Circuits not equivalent (" ++ ce ++ ")"
+      (_, Inconclusive sop) -> Left $ "Failed to verify: \n  " ++ show sop
+      _                     -> Right qc'
 
 runDotQC :: [Pass] -> Bool -> String -> ByteString -> IO ()
 runDotQC passes verify fname src = do
