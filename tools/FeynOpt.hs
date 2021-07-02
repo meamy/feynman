@@ -17,13 +17,13 @@ import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Verification.Symbolic
 
-import System.Environment
+import System.Environment (getArgs)
+import System.CPUTime     (getCPUTime)
 
 import Data.List
 import qualified Data.Set as Set
 
 import Control.Monad
-import System.Time
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -86,12 +86,12 @@ equivalenceCheckDotQC qc qc' =
 
 runDotQC :: [Pass] -> Bool -> String -> ByteString -> IO ()
 runDotQC passes verify fname src = do
-  TOD starts startp <- getClockTime
-  TOD ends endp     <- parseAndPass `seq` getClockTime
+  start <- getCPUTime
+  end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
     Right (qc, qc') -> do
-      let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+      let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc
@@ -131,12 +131,12 @@ qasmPass pass = case pass of
 
 runQASM :: [Pass] -> Bool -> String -> String -> IO ()
 runQASM passes verify fname src = do
-  TOD starts startp <- getClockTime
-  TOD ends endp     <- parseAndPass `seq` getClockTime
+  start <- getCPUTime
+  end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
     Left err        -> putStrLn $ "ERROR: " ++ err
     Right (qasm, qasm') -> do
-      let time = (fromIntegral $ ends - starts) * 1000 + (fromIntegral $ endp - startp) / 10^9
+      let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "// Feynman -- quantum circuit toolkit"
       putStrLn $ "// Original (" ++ fname ++ "):"
       mapM_ putStrLn . map ("//   " ++) $ showStats qasm

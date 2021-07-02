@@ -65,6 +65,36 @@ data Exp =
   | BOpExp Exp BinOp Exp
   deriving (Eq,Show)
 
+{- Expression evaluation -}
+evalUOp :: UnOp -> (Double -> Double)
+evalUOp op = case op of
+  SinOp  -> sin
+  CosOp  -> cos
+  TanOp  -> tan
+  ExpOp  -> exp
+  LnOp   -> log
+  SqrtOp -> sqrt
+
+evalBOp :: BinOp -> (Double -> Double -> Double)
+evalBOp op = case op of
+  PlusOp  -> (+)
+  MinusOp -> (-)
+  TimesOp -> (*)
+  DivOp   -> (/)
+  PowOp   -> (**)
+
+evalExp :: Exp -> Maybe Double
+evalExp exp = case exp of
+  FloatExp f          -> Just $ f
+  IntExp i            -> Just $ fromIntegral i
+  PiExp               -> Just $ pi
+  VarExp _            -> Nothing
+  UOpExp op exp       -> liftM (evalUOp op) $ evalExp exp
+  BOpExp exp1 op exp2 -> do
+    e1 <- evalExp exp1
+    e2 <- evalExp exp2
+    return $ (evalBOp op) e1 e2
+  
 {- Pretty printing -}
 emit :: QASM -> IO ()
 emit = mapM_ putStrLn . prettyPrint
@@ -458,19 +488,21 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
                 qubitMap' = foldr (\(x, arg) -> Map.insert x arg) qubitMap $ zip vars args
             in
               case (name, exps, vars) of
-                ("h", [], x:[])       -> ((H x):gates, gateMap, qubitMap')
-                ("x", [], x:[])       -> ((X x):gates, gateMap, qubitMap')
-                ("y", [], x:[])       -> ((Y x):gates, gateMap, qubitMap')
-                ("z", [], x:[])       -> ((Z x):gates, gateMap, qubitMap')
-                ("s", [], x:[])       -> ((S x):gates, gateMap, qubitMap')
-                ("sdg", [], x:[])     -> ((Sinv x):gates, gateMap, qubitMap')
-                ("t", [], x:[])       -> ((T x):gates, gateMap, qubitMap')
-                ("tdg", [], x:[])     -> ((Tinv x):gates, gateMap, qubitMap')
-                ("cx", [], x:y:[])    -> ((CNOT x y):gates, gateMap, qubitMap')
-                ("id", [], x:[])      -> (gates, gateMap, qubitMap')
-                ("cz", [], x:y:[])    -> (cz x y ++ gates, gateMap, qubitMap')
-                ("ccx", [], x:y:z:[]) -> (ccx x y z ++ gates, gateMap, qubitMap')
-                _                     ->
+                ("h", [], x:[])             -> ((H x):gates, gateMap, qubitMap')
+                ("x", [], x:[])             -> ((X x):gates, gateMap, qubitMap')
+                ("y", [], x:[])             -> ((Y x):gates, gateMap, qubitMap')
+                ("z", [], x:[])             -> ((Z x):gates, gateMap, qubitMap')
+                ("s", [], x:[])             -> ((S x):gates, gateMap, qubitMap')
+                ("sdg", [], x:[])           -> ((Sinv x):gates, gateMap, qubitMap')
+                ("t", [], x:[])             -> ((T x):gates, gateMap, qubitMap')
+                ("tdg", [], x:[])           -> ((Tinv x):gates, gateMap, qubitMap')
+                ("cx", [], x:y:[])          -> ((CNOT x y):gates, gateMap, qubitMap')
+                ("id", [], x:[])            -> (gates, gateMap, qubitMap')
+                ("cz", [], x:y:[])          -> (cz x y ++ gates, gateMap, qubitMap')
+                ("ccx", [], x:y:z:[])       -> (ccx x y z ++ gates, gateMap, qubitMap')
+                ("rz", [theta], x:[])
+                  | Just a <- evalExp theta -> ((Rz (Continuous a) x):gates, gateMap, qubitMap')
+                _                           ->
                   let gateName = name ++ "(" ++ (prettyPrintExps exps) ++ ")"
                       gateMap' = Map.insert gateName (CallGate name exps) gateMap
                   in
@@ -478,16 +510,17 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
 
         gateToStmt :: (Map ID ([Arg] -> Stmt), Map ID Arg) -> Primitive -> Stmt
         gateToStmt (gateMap, qubitMap) gate = case gate of
-          H x            -> QStmt . GateExp $ CallGate "h" [] [qubitMap!x]
-          X x            -> QStmt . GateExp $ CallGate "x" [] [qubitMap!x]
-          Y x            -> QStmt . GateExp $ CallGate "y" [] [qubitMap!x]
-          Z x            -> QStmt . GateExp $ CallGate "z" [] [qubitMap!x]
-          S x            -> QStmt . GateExp $ CallGate "s" [] [qubitMap!x]
-          Sinv x         -> QStmt . GateExp $ CallGate "sdg" [] [qubitMap!x]
-          T x            -> QStmt . GateExp $ CallGate "t" [] [qubitMap!x]
-          Tinv x         -> QStmt . GateExp $ CallGate "tdg" [] [qubitMap!x]
-          CNOT x y       -> QStmt . GateExp $ CXGate (qubitMap!x) (qubitMap!y)
-          Swap x y       -> QStmt . GateExp $ CallGate "swap" [] [qubitMap!x, qubitMap!y]
+          H x                      -> QStmt . GateExp $ CallGate "h" [] [qubitMap!x]
+          X x                      -> QStmt . GateExp $ CallGate "x" [] [qubitMap!x]
+          Y x                      -> QStmt . GateExp $ CallGate "y" [] [qubitMap!x]
+          Z x                      -> QStmt . GateExp $ CallGate "z" [] [qubitMap!x]
+          S x                      -> QStmt . GateExp $ CallGate "s" [] [qubitMap!x]
+          Sinv x                   -> QStmt . GateExp $ CallGate "sdg" [] [qubitMap!x]
+          T x                      -> QStmt . GateExp $ CallGate "t" [] [qubitMap!x]
+          Tinv x                   -> QStmt . GateExp $ CallGate "tdg" [] [qubitMap!x]
+          CNOT x y                 -> QStmt . GateExp $ CXGate (qubitMap!x) (qubitMap!y)
+          Swap x y                 -> QStmt . GateExp $ CallGate "swap" [] [qubitMap!x, qubitMap!y]
+          Rz (Continuous t) x      -> QStmt . GateExp $ CallGate "rz" [FloatExp t] [qubitMap!x]
           Uninterp "measure" [x,y] -> QStmt $ MeasureExp (qubitMap!x) (qubitMap!y)
           Uninterp "reset" [x]     -> QStmt $ ResetExp (qubitMap!x)
           Uninterp "barrier" xs    -> QStmt $ GateExp $ BarrierGate $ map (qubitMap!) xs
