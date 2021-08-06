@@ -29,7 +29,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
 import Benchmarks (runBenchmarks,
-                   runVerSuite,
                    benchmarksSmall,
                    benchmarksMedium,
                    benchmarksAll,
@@ -203,7 +202,7 @@ parseArgs passes verify (x:xs) = case x of
   "-O3"          -> parseArgs (Simplify:Phasefold:Statefold:Simplify:passes) verify xs
   "-verify"      -> parseArgs passes True xs
   "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
-  "VerAlg"       -> runVerSuite
+--  "VerAlg"       -> runVerSuite
   "Small"        -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksSmall
   "Med"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksMedium
   "All"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksAll

@@ -12,8 +12,10 @@ import Data.Bits
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
-import Feynman.Algebra.Polynomial hiding (zero, one, terms)
-import qualified Feynman.Algebra.Polynomial as P
+import Feynman.Algebra.Polynomial (degree)
+import Feynman.Algebra.Polynomial.Multilinear hiding (zero, one, terms)
+import qualified Feynman.Algebra.Polynomial.Multilinear as P
+import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
 {-- "State" folding optimization -}
@@ -24,10 +26,10 @@ import Feynman.Synthesis.Phase
 
 data Ctx = Ctx {
   dim   :: Int,
-  ket   :: Map ID (Multilinear Bool),
-  terms :: Map (Multilinear Bool) (Set (Loc, Bool), Angle),
+  ket   :: Map ID (SBool String),
+  terms :: Map (SBool String) (Set (Loc, FF2), Angle),
   phase :: Angle,
-  pp    :: Multilinear Angle,
+  pp    :: PseudoBoolean String Angle,
   paths :: Set Int
 } deriving Show
 
@@ -47,7 +49,7 @@ alloc = do
   return n
 
 -- Get the state of variable v
-getSt :: ID -> State Ctx (Multilinear Bool)
+getSt :: ID -> State Ctx (SBool String)
 getSt v = get >>= \st ->
   case Map.lookup v (ket st) of
     Just bexp -> return bexp
@@ -58,33 +60,33 @@ getSt v = get >>= \st ->
       return bexp
 
 -- Set the state of a variable
-setSt :: ID -> Multilinear Bool -> State Ctx ()
-setSt v bexp = modify $ \st -> st { ket = Map.insert v (simplify bexp) (ket st) }
+setSt :: ID -> SBool String -> State Ctx ()
+setSt v bexp = modify $ \st -> st { ket = Map.insert v bexp (ket st) }
 
 -- Adds a mergeable phase term
-addTerm :: Angle -> Loc -> Multilinear Bool -> State Ctx ()
+addTerm :: Angle -> Loc -> SBool String -> State Ctx ()
 addTerm theta loc bexp = modify go where
   go st = st { terms = Map.alter (add theta') bexp' (terms st),
-               pp    = simplify $ pp st + distribute theta bexp,
-               phase = phase st + (if parity then theta else 0) }
+               pp    = pp st + scale theta (P.lift bexp),
+               phase = phase st + (if parity == 1 then theta else 0) }
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, parity) reps, theta + theta')
     Nothing             -> Just (Set.singleton (loc, parity), theta)
   parity = getConstant bexp
-  theta' = if parity then (-theta) else theta
-  bexp'  = simplify . dropConstant $ bexp
+  theta' = if parity == 1 then (-theta) else theta
+  bexp'  = dropConstant $ bexp
 
 -- Adds a quadratic phase term
-addQuadTerm :: Int -> Multilinear Bool -> State Ctx ()
-addQuadTerm n bexp = modify $ \st -> st { pp = simplify $ pp st + poly } where
-  poly = distribute (Discrete $ dyadic 1 1) $ ofVar (var n) * bexp
+addQuadTerm :: Int -> SBool String -> State Ctx ()
+addQuadTerm n bexp = modify $ \st -> st { pp = pp st + poly } where
+  poly = scale (Discrete $ dyadic 1 1) . P.lift $ ofVar (var n) * bexp
 
 -- Finding [HH] reductions
 applyReductions :: Maybe Int -> State Ctx ()
 applyReductions cutoff = do
   poly     <- gets pp
   pathVars <- gets paths
-  outVars  <- gets (Set.fromList . map unvar . concatMap vars . Map.elems . ket)
+  outVars  <- gets (Set.unions . map (Set.map unvar . vars) . Map.elems . ket)
   case matchHH poly (Set.difference pathVars outVars) pathVars cutoff of
     Nothing         -> return ()
     Just (x, y, bexp) -> do
@@ -94,33 +96,22 @@ applyReductions cutoff = do
 
 -- Remove an internal variable
 elimVar :: Int -> State Ctx ()
-elimVar x = modify $ \st -> st { pp = simplify . removeVar (var x) $ pp st }
+elimVar x = modify $ \st -> st { pp = remVar (var x) $ pp st }
 
 -- Substitute a variable
-substVar :: Int -> Multilinear Bool -> State Ctx ()
+substVar :: Int -> SBool String -> State Ctx ()
 substVar x bexp = modify go where
   go st = st { terms = Map.mapKeysWith c f $ terms st,
-               pp    = simplify . P.subst (var x) bexp $ pp st,
-               ket   = Map.map (simplify . P.subst (var x) bexp) $ ket st }
-  f = simplify . dropConstant . P.subst (var x) bexp
+               pp    = P.subst (var x) bexp $ pp st,
+               ket   = Map.map (P.subst (var x) bexp) $ ket st }
+  f = dropConstant . P.subst (var x) bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
-{- Utilities -}
-
-injectZ2 :: Periodic a => a -> Maybe Bool
-injectZ2 a = case order a of
-  0 -> Just False
-  2 -> Just True
-  _ -> Nothing
-
-toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
-toBooleanPoly = convertMaybe injectZ2
-
 -- Matches a instance of [HH]
-matchHH :: Multilinear Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, Multilinear Bool)
+matchHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
 matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   go v = do
-    pp'      <- toBooleanPoly . factorOut v $ pp
+    pp'      <- toBooleanPoly . quotVar v $ pp
     (u, sub) <- find validSoln $ solveForX pp'
     return (unvar v, unvar u, sub)
   validSoln (u, sub) = case cutoff of
@@ -178,8 +169,8 @@ stateFold vars inputs circ =
       (map, gphase) = foldr go (Map.empty, phase result) phases where
         go (locs, angle) (map, gphase) =
           let (loc, gphase', angle') = case Set.findMin locs of
-                (l, False) -> (l, gphase, angle)
-                (l, True)  -> (l, gphase + angle, (-angle))
+                (l, 0) -> (l, gphase, angle)
+                (l, 1)  -> (l, gphase + angle, (-angle))
               update (l,_) = Map.insert l (if l == loc then angle' else 0)
           in
             (Set.foldr update map locs, gphase')

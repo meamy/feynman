@@ -43,6 +43,7 @@ library
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
+                       Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
 
                        Feynman.Verification.Symbolic,
@@ -72,8 +73,8 @@ library
 
 executable feynopt
   main-is:             FeynOpt.hs
-  buildable:           False
-  ghc-options:         -Wall
+  buildable:           True 
+  ghc-options:         -O2 -Wall
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -94,7 +95,7 @@ executable feynopt
 executable feynver
   main-is:             FeynVerify.hs
   buildable:           True
-  ghc-options:         -O2 -Wall -prof -fprof-auto -rtsopts
+  ghc-options:         -O2 -Wall
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -114,7 +115,7 @@ executable feynver
 
 executable qc2qasm
   main-is:             QC2Qasm.hs
-  buildable:           False
+  buildable:           True
   ghc-options:         -Wall
   hs-source-dirs:      tools
   build-depends:       Feynman,
