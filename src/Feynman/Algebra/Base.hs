@@ -23,6 +23,7 @@ module Feynman.Algebra.Base(
   numer,
   denom,
   dMod2,
+  unpack,
   )
 where
 
@@ -202,7 +203,7 @@ toDyadic x = dyadic a n
         ratRepr = toRational x
 
 -- | Dyadic fractions between 0 and 2
-newtype DMod2 = D2 DyadicRational deriving (Eq, Ord)
+newtype DMod2 = D2 { unpack :: DyadicRational } deriving (Eq, Ord)
 
 instance Show DMod2 where
   show (D2 a) = show a

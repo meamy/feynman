@@ -1,6 +1,6 @@
 module Feynman.Frontend.DotQC where
 
-import Feynman.Core (ID, Primitive(..), showLst, Angle(..))
+import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
 import Feynman.Algebra.Base
 
 import Data.List
@@ -227,7 +227,6 @@ gateToCliffordT (Gate g i p) =
         ("cnot", [x,y]) -> [CNOT x y]
         ("swap", [x,y]) -> [Swap x y]
         ("cz", [x,y])   -> [H y, CNOT x y, H y]
-{-
         ("tof", [x,y,z])-> [H z, T x, T y, CNOT z x, Tinv x, CNOT y z, Tinv z,
                             CNOT y x, T x, CNOT y z, CNOT z x, Tinv x,
                             T z, CNOT y x, H z]
@@ -237,16 +236,6 @@ gateToCliffordT (Gate g i p) =
         ("Zd", [x,y,z]) -> [Tinv x, Tinv y, CNOT z x, T x, CNOT y z, T z,
                             CNOT y x, Tinv x, CNOT y z, CNOT z x, T x,
                             Tinv z, CNOT y x]
--}
-        ("tof", [x,y,z])-> [H z, T x, T y, T z, CNOT x y, CNOT y z,
-                            CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
-                            Tinv x, CNOT y z, CNOT z x, CNOT x y, H z]
-        ("Z", [x,y,z])  -> [T x, T y, T z, CNOT x y, CNOT y z,
-                            CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
-                            Tinv x, CNOT y z, CNOT z x, CNOT x y]
-        ("Zd", [x,y,z]) -> [Tinv x, Tinv y, Tinv z, CNOT x y, CNOT y z,
-                             CNOT z x, T x, T y, Tinv z, CNOT y x,
-                             T x, CNOT y z, CNOT z x, CNOT x y]
         ("tof", xs)     -> toCliffordT $ mct xs
         otherwise       -> [Uninterp g p]
   in
@@ -360,9 +349,9 @@ parseDiscrete = do
   string "pi"
   string "/2^"
   power <- int
-  return $ Discrete $ dyadic numerator (power+1)
+  return $ dyadicPhase $ dyadic numerator power
 
-parseContinuous = floating2 True >>= return . Continuous
+parseContinuous = floating2 True >>= return . continuousPhase
 
 parseAngle = do
   char '('

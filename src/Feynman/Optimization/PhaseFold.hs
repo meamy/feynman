@@ -70,11 +70,11 @@ addTerm theta loc (bv, parity) = modify go where
 {- The Phase folding analysis -}
 applyGate :: (Primitive, Loc) -> State Ctx ()
 applyGate (gate, loc) = case gate of
-  T v    -> getSt v >>= addTerm (Discrete $ dyadic 1 3) loc
-  Tinv v -> getSt v >>= addTerm (Discrete $ dyadic 7 3) loc
-  S v    -> getSt v >>= addTerm (Discrete $ dyadic 1 2) loc
-  Sinv v -> getSt v >>= addTerm (Discrete $ dyadic 3 2) loc
-  Z v    -> getSt v >>= addTerm (Discrete $ dyadic 1 1) loc
+  T v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 2) loc
+  Tinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 7 2) loc
+  S v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 1) loc
+  Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) loc
+  Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) loc
   Rz p v -> getSt v >>= addTerm p loc
   X v    -> getSt v >>= \(bv, b) -> setSt v (bv, Prelude.not b)
   CNOT c t -> do

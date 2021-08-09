@@ -67,7 +67,7 @@ setSt v bexp = modify $ \st -> st { ket = Map.insert v bexp (ket st) }
 addTerm :: Angle -> Loc -> SBool String -> State Ctx ()
 addTerm theta loc bexp = modify go where
   go st = st { terms = Map.alter (add theta') bexp' (terms st),
-               pp    = pp st + scale theta (P.lift bexp),
+               pp    = pp st + distribute theta bexp,
                phase = phase st + (if parity == 1 then theta else 0) }
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, parity) reps, theta + theta')
@@ -79,7 +79,7 @@ addTerm theta loc bexp = modify go where
 -- Adds a quadratic phase term
 addQuadTerm :: Int -> SBool String -> State Ctx ()
 addQuadTerm n bexp = modify $ \st -> st { pp = pp st + poly } where
-  poly = scale (Discrete $ dyadic 1 1) . P.lift $ ofVar (var n) * bexp
+  poly = P.lift $ ofVar (var n) * bexp
 
 -- Finding [HH] reductions
 applyReductions :: Maybe Int -> State Ctx ()
@@ -121,11 +121,11 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
 {- The Super phase folding analysis -}
 applyGate :: (Primitive, Loc) -> State Ctx ()
 applyGate (gate, l) = case gate of
-  T v    -> getSt v >>= addTerm (Discrete $ dyadic 1 3) l
-  Tinv v -> getSt v >>= addTerm (Discrete $ dyadic 7 3) l
-  S v    -> getSt v >>= addTerm (Discrete $ dyadic 1 2) l
-  Sinv v -> getSt v >>= addTerm (Discrete $ dyadic 3 2) l
-  Z v    -> getSt v >>= addTerm (Discrete $ dyadic 1 1) l
+  T v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 2) l
+  Tinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 7 2) l
+  S v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 1) l
+  Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) l
+  Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) l
   Rz p v -> getSt v >>= addTerm p l
   CNOT c t -> do
     bexp  <- getSt c

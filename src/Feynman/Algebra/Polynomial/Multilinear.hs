@@ -55,6 +55,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   getSolution,
   liftMonomial,
   lift,
+  distribute,
   excInc,
   incExc,
   fourier,

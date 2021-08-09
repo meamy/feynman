@@ -15,7 +15,8 @@ type ID = String
 type Loc = Int
 
 {- Phase angles -}
-data Angle = Discrete DyadicRational | Continuous Double deriving (Eq, Ord)
+-- Phase angles either have the form pi*(a/2^b) reduced mod 2, or theta
+data Angle = Discrete DMod2 | Continuous Double deriving (Eq, Ord)
 
 apply :: (forall a. Num a => a -> a) -> Angle -> Angle
 apply f (Discrete a)   = Discrete $ f a
@@ -30,11 +31,22 @@ apply2 f a b = case (a,b) of
   where toDouble = fromRational . toRational
 
 discretize :: Angle -> DyadicRational
-discretize (Discrete a)   = a
+discretize (Discrete a)   = unpack a
 discretize (Continuous a) = toDyadic a
 
+-- Phase of pi*(a/2^b) reduced mod 2
+dyadicPhase :: DyadicRational -> Angle
+dyadicPhase = Discrete . fromDyadic
+
+-- Phase of theta
+continuousPhase :: Double -> Angle
+continuousPhase = Continuous
+
 instance Show Angle where
-  show (Discrete a)   = "2pi*" ++ show a
+  show (Discrete a)
+    | a == 0    = show a
+    | a == 1    = "pi"
+    | otherwise = "pi*" ++ show a
   show (Continuous a) = show a
 
 instance Num Angle where
@@ -51,7 +63,7 @@ instance Abelian Angle where
   power i (Continuous a) = Continuous $ (fromInteger i) * a
 
 instance Periodic Angle where
-  order (Discrete a)   = order . (fromDyadic :: DyadicRational -> DMod2) $ power 2 a
+  order (Discrete a)   = order a
   order (Continuous _) = 0
 
 {- Circuits -}
