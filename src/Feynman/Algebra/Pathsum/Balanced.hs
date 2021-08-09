@@ -677,7 +677,7 @@ matchOmega sop = do
   v <- internalPaths sop
   p <- maybeToList . toBooleanPoly . addFactor v $ phasePoly sop
   return (v, p)
-  where addFactor v p = constant (fromDyadic $ dyadic 1 1) + quotVar v p
+  where addFactor v p = constant (fromDyadic $ dyadic 3 1) + quotVar v p
 
 {--------------------------
  Pattern synonyms
@@ -741,7 +741,7 @@ applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pa
 applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
   where e' = renameMonotonic varShift $ p' + remVar (PVar i) e
         f' = map (renameMonotonic varShift) f
-        p' = constant (fromDyadic $ dyadic 1 2) + scale (fromDyadic $ dyadic 3 1) (lift p)
+        p' = constant (fromDyadic $ dyadic 1 2) + distribute (fromDyadic $ dyadic 3 1) (lift p)
         varShift (PVar j)
           | j > i     = PVar $ j - 1
           | otherwise = PVar $ j
