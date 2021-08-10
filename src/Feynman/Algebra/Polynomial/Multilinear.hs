@@ -110,9 +110,12 @@ instance ReprC 'Mult where
 newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 
 instance Ord v => Ord (Monomial v repr) where
-  compare m n = case compare (degree m) (degree n) of
-    EQ -> compare (getVars m) (getVars n)
-    x  -> x
+  {-# INLINABLE compare #-}
+  compare m n
+    | k /= l    = compare k l
+    | otherwise = compare (getVars m) (getVars n)
+    where k = degree m
+          l = degree n
 
 instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
@@ -171,11 +174,11 @@ instance Degree (Multilinear v r repr) where
     Just (m, _a) -> degree m
 
 instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
-  (+) = addM
-  (*) = multM witRepr
+  (+) = \p -> normalize . addM p
+  (*) = \p -> normalize . multM witRepr p
   negate (M t) = M $ Map.map negate t
-  abs    p = p
-  signum p = p
+  abs    = id
+  signum = id
   fromInteger 0 = M $ Map.empty
   fromInteger i = M . Map.singleton (Monomial Set.empty) $ fromInteger i
 
@@ -252,18 +255,21 @@ ofTermList = M . Map.fromList . filter ((/= 0) . snd) . map swap
 
 -- | Scale a 
 scale :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr -> Multilinear v r repr
-scale a p
-  | a == 0    = zero
-  | otherwise = M $ Map.map (a*) $ getTerms p
+scale a
+  | a == 0    = \_ -> 0
+  | otherwise = M . Map.map (a*) . getTerms
 
 -- | Add two polynomials with the same representation
 addM :: (Ord v, Eq r, Num r, ReprC repr) =>
         Multilinear v r repr -> Multilinear v r repr -> Multilinear v r repr
+addM p = M . Map.unionWith (+) (getTerms p) . getTerms
+{-
 addM p q = M $ unionN (getTerms p) (getTerms q) where
   unionN = merge preserveMissing preserveMissing (zipWithMaybeMatched f)
   f m a1 a2 = case (a1 + a2) of
     0  -> Nothing
     a3 -> Just a3
+-}
 
 -- | Multiply two polynomials with the same representation
 multM :: (Ord v, Eq r, Num r) =>
@@ -274,13 +280,14 @@ multM wit p q = case wit of
 
 multImpl :: (Ord v, Eq r, Num r) =>
             Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
-multImpl p q = Map.foldlWithKey' multPolyTerm zero (getTerms p)
-  where multPolyTerm acc m a =
-          addM acc (M $ Map.foldlWithKey' (multTermTerm m a) Map.empty (getTerms q))
-        multTermTerm m a acc m' a' = Map.alter (addCoeff $ a * a') (m <> m') acc
-        addCoeff a b = case b of
-          Nothing -> Just a
-          Just c  -> Just $ a + c
+multImpl p
+  | p == 0           = \_ -> 0
+  | otherwise        = Map.foldrWithKey (\m a acc -> addM acc $ multTerm m a) zero . getTerms
+  where multTerm m a = M . Map.fromAscList . sumUp . groupMono . multBy m a . Map.toAscList $ tms
+        multBy m a   = map $ \(m',a') -> (m<>m', a*a')
+        groupMono    = groupBy (\t t' -> fst t == fst t')
+        sumUp        = map $ foldr1 (\(m,a) (_,a') -> (m,a+a'))
+        tms          = getTerms p
 
 -- | Performs the Euclidean division of a polynomial 'p' by a variables 'x', such that
 --
@@ -368,14 +375,14 @@ subst v p = substMany (\v' -> if v' == v then p else ofVar v')
 -- | Simultaneous substitution of variables with polynomials
 substMany :: (Ord v, Eq r, Abelian r) =>
              (v -> SBool v) -> Multilinear v r 'Mult -> Multilinear v r 'Mult
-substMany sub = normalize . Map.foldlWithKey' (\acc m a -> acc + substInMono m a) zero . getTerms
-  where substInMono m a = distribute a $ foldl' (*) one (map sub . Set.toList $ getVars m)
+substMany sub = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substInMono m a) zero . getTerms
+  where substInMono m a = distribute a $ foldr (multImpl) one (map sub . Set.toList $ getVars m)
 
 -- | Substitute a variable with a monomial
 substMono :: (Ord v, Eq r, Num r, ReprC repr) =>
              v -> Monomial v repr -> Multilinear v r repr -> Multilinear v r repr
-substMono v m = M . Map.mapKeys (Set.foldl' substVar mempty . getVars) . getTerms
-  where substVar acc v'
+substMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
+  where substVar v' acc
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
 
@@ -385,7 +392,7 @@ solveForX :: (Ord v, Eq r, Fractional r, ReprC repr) =>
 solveForX p = mapMaybe checkTerm . filter (\(_a,m) -> degree m == 1) $ toTermList p
   where checkTerm (a,m) =
           let v  = Set.elemAt 0 $ getVars m
-              p' = normalize $ p - ofTerm (a,m)
+              p' = p - ofTerm (a,m)
           in
             if not (contains v p')
             then Just (v, scale (recip a) p')
@@ -459,13 +466,13 @@ incExc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.
 
 -- | Perform the (pseudo-Boolean) Fourier transform
 fourier :: (Ord v, Eq r, Dyadic r) => Multilinear v r 'Mult -> Multilinear v r 'Add
-fourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
-  where addTerm acc m a = acc + unDistribute a m
+fourier = normalize . Map.foldrWithKey addTerm zero . getTerms
+  where addTerm m a acc = addM acc $ unDistribute a m
 
 -- | Perform the (pseudo-Boolean) inverse Fourier transform
 invFourier :: (Ord v, Eq r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Mult
-invFourier = normalize . Map.foldlWithKey' addTerm zero . getTerms
-  where addTerm acc m a = acc + distribute a (liftMonomial m)
+invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
+  where addTerm m a acc = addM acc $ distribute a (liftMonomial m)
 
 -- | Canonicalize an additive multilinear polynomial
 canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Add
