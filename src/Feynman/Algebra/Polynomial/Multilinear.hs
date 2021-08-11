@@ -368,13 +368,11 @@ renameMonotonic :: (Ord v, Ord v') => (v -> v') -> Multilinear v r repr -> Multi
 renameMonotonic sub = M . Map.mapKeysMonotonic (Monomial . Set.map sub . getVars) . getTerms
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
-subst :: (Ord v, Eq r, Abelian r) =>
-         v -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+subst :: (Ord v, Eq r, Abelian r) => v -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 subst v p = substMany (\v' -> if v' == v then p else ofVar v')
 
 -- | Simultaneous substitution of variables with polynomials
-substMany :: (Ord v, Eq r, Abelian r) =>
-             (v -> SBool v) -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+substMany :: (Ord v, Eq r, Abelian r) => (v -> SBool v) -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 substMany sub = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substInMono m a) zero . getTerms
   where substInMono m a = distribute a $ foldr (multImpl) one (map sub . Set.toList $ getVars m)
 
