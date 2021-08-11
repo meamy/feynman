@@ -19,7 +19,7 @@ source-repository head
   location:          https://github.com/meamy/feynman
 
 library
-  ghc-options:         -O2 -fprof-auto
+  ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -74,7 +74,7 @@ library
 executable feynopt
   main-is:             FeynOpt.hs
   buildable:           True 
-  ghc-options:         -O2 -Wall -prof -fprof-auto -rtsopts
+  ghc-options:         -O2 -Wall
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -116,7 +116,7 @@ executable feynver
 executable qc2qasm
   main-is:             QC2Qasm.hs
   buildable:           True
-  ghc-options:         -Wall
+  ghc-options:         -O2 -Wall
   hs-source-dirs:      tools
   build-depends:       Feynman,
                        base,
