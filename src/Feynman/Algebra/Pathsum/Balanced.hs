@@ -267,7 +267,11 @@ epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
 
 -- | \(\sqrt{2}\)
 root2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-root2 = Pathsum 0 0 0 1 ((-constant (half * half)) - scale half (lift $ ofVar (PVar 0))) []
+root2 = Pathsum 0 0 0 1 ((-constant (half * half)) + scale half (lift $ ofVar (PVar 0))) []
+
+-- | \(1/\sqrt{2}\)
+roothalf :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+roothalf = Pathsum 1 0 0 0 0 []
 
 -- | \(i\)
 iunit :: (Eq g, Abelian g, Dyadic g) => Pathsum g
