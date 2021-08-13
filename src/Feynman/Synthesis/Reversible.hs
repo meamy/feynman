@@ -70,6 +70,15 @@ linearSynth input output =
       then error "Fatal: map keys not equal"
       else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
+affineSynth :: AffineTrans -> AffineTrans -> [Primitive]
+affineSynth input output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      outX = f output
+      circ = linearSynth (Map.map fst input) (Map.map fst output)
+  in
+    inX ++ circ ++ outX
+
 liftMatOp :: (F2Mat -> F2Mat) -> LinearTrans -> LinearTrans
 liftMatOp f = Map.fromList . uncurry zip . go . unzip . Map.toList where
   go (ids,vecs) = (ids, toList . f . fromList $ vecs)
