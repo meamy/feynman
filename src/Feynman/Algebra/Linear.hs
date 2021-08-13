@@ -527,17 +527,21 @@ toReducedEchelonSqr :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelonSqr mat = censor transposeROps . toEchelon . transpose =<< toEchelon mat
 
 toReducedEchelonPMH :: F2Mat -> Writer [ROp] F2Mat
-toReducedEchelonPMH mat =
-  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
-    censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
+toReducedEchelonPMH mat
+  | n mat < 2 = toReducedEchelonSqr mat
+  | otherwise =
+    let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+      censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
 
 toReducedEchelonA :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelonA mat = censor transposeROps . toEchelon . transpose =<< toEchelonA mat
 
 toReducedEchelonPMHA :: F2Mat -> Writer [ROp] F2Mat
-toReducedEchelonPMHA mat =
-  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
-    censor transposeROps . (toEchelonPMH width) . transpose =<< toEchelonPMHA width mat
+toReducedEchelonPMHA mat
+  | n mat < 2 = toReducedEchelonA mat
+  | otherwise =
+    let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+      censor transposeROps . (toEchelonPMH width) . transpose =<< toEchelonPMHA width mat
 
 rank :: F2Mat -> Int
 rank mat =
