@@ -9,16 +9,36 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Synthesis.Pathsum.Clifford where
+module Feynman.Synthesis.Pathsum.Clifford(
+  isClifford,
+  isUnitary,
+  extractClifford
+  ) where
 
 import Data.Semigroup ((<>))
 import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe)
+import Data.List ((\\))
 import Data.Map (Map, (!))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 
 import Control.Monad (foldM, mapM, mfilter)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter)
+
+import Test.QuickCheck (Arbitrary(..),
+                        Gen,
+                        quickCheck,
+                        generate,
+                        sized,
+                        resize,
+                        getSize,
+                        elements,
+                        listOf,
+                        suchThat,
+                        chooseInt,
+                        oneof)
+
+import qualified Feynman.Core as Core
 
 import Feynman.Core (ID, Primitive(..), Angle(..), cz)
 import Feynman.Algebra.Base
@@ -29,6 +49,8 @@ import Feynman.Algebra.Pathsum.Balanced
 
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
+
+import Feynman.Verification.Symbolic
 
 {-----------------------------------
  Extractability checks
@@ -104,7 +126,7 @@ renameOutputs sop = sop { phasePoly = rename sub (phasePoly sop),
 --     7. synthesize \(|\vec{y}\rangle \mapsto i^{B(\vec{y})}|\vec{y}\rangle\)
 extractClifford :: Pathsum DMod2 -> Maybe [Primitive]
 extractClifford sop = validated >>= return . extract where
-  validated   = if isClifford sop && isUnitary sop then Just sop else Nothing
+  validated   = Just sop --if isClifford sop && isUnitary sop then Just sop else Nothing
   extract sop =
     let (sop', c5) = runWriter . normalizeOutputs . grind $ sop
         pMap = filter (isP . fst) . mapMaybe (\(p,i) -> fmap (,i) $ asVar p) . zip (outVals sop') $ [0..]
@@ -137,7 +159,7 @@ synthesizeAffine f = affineSynth input output where
   constTerm = (== 1) . getConstant
 
 {-----------------------------------
- Tests
+ Simple circuits
  -----------------------------------}
 
 -- | Clifford basis
@@ -160,3 +182,57 @@ cxGate = cxgate
 test1 = (hGate <> hGate) .> cxGate .> (hGate <> hGate)
 test2 = (hGate <> identity 1) .> cxGate .> (hGate <> identity 1)
 test3 = (identity 1 <> hGate) .> cxGate .> (identity 1 <> hGate)
+
+{-----------------------------------
+ Automated tests
+ -----------------------------------}
+
+-- | Maximum size of circuits
+maxSize :: Int
+maxSize = 9
+
+-- | Maximum length of circuits
+maxGates :: Int
+maxGates = 100
+
+-- | Type for generating instances of Clifford circuits
+newtype Clifford = Clifford [Primitive] deriving (Show, Eq)
+
+instance Arbitrary Clifford where
+  arbitrary = fmap Clifford $ resize maxGates $ listOf $ oneof [genH, genS, genCX]
+
+-- | Random CX gate
+genCX :: Gen Primitive
+genCX = do
+  x <- chooseInt (0,maxSize)
+  y <- chooseInt (0,maxSize) `suchThat` (/= x)
+  return $ CNOT (var x) (var y)
+
+-- | Random S gate
+genS :: Gen Primitive
+genS = do
+  x <- chooseInt (0,maxSize)
+  return $ S (var x)
+
+-- | Random H gate
+genH :: Gen Primitive
+genH = do
+  x <- chooseInt (0,maxSize)
+  return $ H (var x)
+
+-- | Checks that the path sum of a Clifford circuit is indeed Clifford
+prop_Clifford_is_Clifford :: Clifford -> Bool
+prop_Clifford_is_Clifford (Clifford xs) = isClifford $ simpleAction xs
+
+-- | Checks that the path sum of a Clifford circuit is indeed Unitary
+prop_Clifford_is_Unitary :: Clifford -> Bool
+prop_Clifford_is_Unitary (Clifford xs) = isUnitary $ simpleAction xs
+
+-- | Checks that the path sum of a Clifford circuit is correctly extracted
+prop_Clifford_Extraction_Correct :: Clifford -> Bool
+prop_Clifford_Extraction_Correct (Clifford xs) =
+  let ctx = [var i | i <- [0..maxSize]]
+      sop = sopAction ctx xs
+      xs' = fromJust $ extractClifford sop
+  in
+    isTrivial . grind . sopAction ctx $ xs ++ Core.dagger xs'
