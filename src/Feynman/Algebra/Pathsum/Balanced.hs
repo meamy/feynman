@@ -688,7 +688,7 @@ matchHHLinear sop = do
   (v', p') <- solveForX p
   return (v, v', p')
 
--- | Instances of the (\omega\) rule
+-- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
   v <- internalPaths sop
@@ -696,6 +696,16 @@ matchOmega sop = do
   return (v, p)
   where addFactor v p = constant (fromDyadic $ dyadic 3 1) + quotVar v p
 
+-- | Instances of the var rule
+matchVar :: Eq g => Pathsum g -> [(Var, SBool Var)]
+matchVar sop = do
+  p       <- outVals sop
+  (v, p') <- solveForX p
+  case (v, p') of
+    (_, 0)      -> mzero
+    (PVar _, p) -> return (v, ofVar v + p')
+    _           -> mzero
+  
 {--------------------------
  Pattern synonyms
  --------------------------}
@@ -728,6 +738,10 @@ pattern HHKill v p <- (filter (all (not . isP) . vars . snd) . matchHH -> (v, p)
 -- | Pattern synonym for Omega instances
 pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
 pattern Omega v p <- (matchOmega -> (v, p):_)
+
+-- | Pattern synonym for var instances
+pattern Var :: Eq g => Var -> SBool Var -> Pathsum g
+pattern Var v p <- (matchVar -> (v, p):_)
 
 {--------------------------
  Applying reductions
@@ -764,6 +778,10 @@ applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
           | otherwise = PVar $ j
         varShift v = v
 
+-- | Apply a var rule. Does not check if the instance is valid
+applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
+applyVar v p (Pathsum a b c d e f) = Pathsum a b c d (subst v p e) (map (subst v p) f)
+
 -- | Finds and applies the first elimination instance
 rewriteElim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
 rewriteElim sop = case sop of
@@ -781,6 +799,12 @@ rewriteOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 rewriteOmega sop = case sop of
   Omega v p -> applyOmega v p sop
   _         -> sop
+
+-- | Finds and applies the first var instance
+rewriteVar :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+rewriteVar sop = case sop of
+  Var v p -> applyVar v p sop
+  _       -> sop
 
 {--------------------------
  Reduction procedures
@@ -810,6 +834,15 @@ grindStep sop = case sop of
   Elim y         -> applyElim y sop
   HHSolved y z p -> applyHHSolved y z p sop
   Omega y p      -> applyOmega y p sop
+  _              -> sop
+
+-- | A complete normalization procedure for Clifford
+normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+normalizeClifford sop = case sop of
+  Elim y         -> normalizeClifford $ applyElim y sop
+  HHSolved y z p -> normalizeClifford $ applyHHSolved y z p sop
+  Omega y p      -> normalizeClifford $ applyOmega y p sop
+  Var y p        -> normalizeClifford $ applyVar y p sop
   _              -> sop
 
 {--------------------------
