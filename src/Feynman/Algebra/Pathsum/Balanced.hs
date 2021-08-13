@@ -836,15 +836,6 @@ grindStep sop = case sop of
   Omega y p      -> applyOmega y p sop
   _              -> sop
 
--- | A complete normalization procedure for Clifford
-normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-normalizeClifford sop = case sop of
-  Elim y         -> normalizeClifford $ applyElim y sop
-  HHSolved y z p -> normalizeClifford $ applyHHSolved y z p sop
-  Omega y p      -> normalizeClifford $ applyOmega y p sop
-  Var y p        -> normalizeClifford $ applyVar y p sop
-  _              -> sop
-
 {--------------------------
  Simulation
  --------------------------}
