@@ -84,13 +84,15 @@ unvar = read . tail
 
 -- | Normalizes the outputs of a path sum, up to Cliffords
 normalizeOutputs :: Pathsum DMod2 -> Writer [Primitive] (Pathsum DMod2)
-normalizeOutputs sop = foldM go sop [0..(outDeg sop) - 1] where
-  go sop i = case filter (isP . fst) . solveForX $ (outVals sop)!!i of
-    []      -> return sop
-    (v,p):_ -> do
-      let sop' = applyVar v (p + ofVar v) sop
-      outVals' <- mapM (removeVar i v) $ zip (outVals sop') [0..]
-      return . grind $ sop' { outVals = outVals' }
+normalizeOutputs sop = go sop 0 where
+  go sop i
+    | i >= outDeg sop = return sop
+    | otherwise       = case filter (\(v,p) -> isP v && p /= 0) . solveForX $ (outVals sop)!!i of
+      []      -> go sop (i+1)
+      (v,p):_ -> do
+        let sop' = applyVar v (p + ofVar v) sop
+        outVals' <- mapM (removeVar i v) $ zip (outVals sop') [0..]
+        go (grind $ sop' { outVals = outVals' }) 0
   removeVar i v (f, j)
     | i >= j || not (Set.member v (vars f)) = return f
     | otherwise                             = do
