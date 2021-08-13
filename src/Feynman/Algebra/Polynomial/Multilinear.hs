@@ -1,8 +1,11 @@
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-|
 Module      : Multilinear
@@ -35,6 +38,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   ofMonomial,
   ofTerm,
   ofTermList,
+  asVar,
   scale,
   divVar,
   quotVar,
@@ -122,6 +126,10 @@ instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
   degree = Set.size . getVars
 
+instance Ord v => Vars (Monomial v repr) where
+  type Var (Monomial v repr) = v
+  {-# INLINABLE vars #-}
+  vars = getVars
 
 showImpl :: Show v => ReprWit repr -> Monomial v repr -> String
 showImpl WitAdd  = intercalate Unicode.oplus . map show . Set.toList . getVars
@@ -174,6 +182,11 @@ instance Degree (Multilinear v r repr) where
     Nothing      -> -1
     Just (m, _a) -> degree m
 
+instance Ord v => Vars (Multilinear v r repr) where
+  type Var (Multilinear v r repr) = v
+  {-# INLINABLE vars #-}
+  vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
+
 instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   (+) = \p -> normalize . addM p
   (*) = \p -> normalize . multM witRepr p
@@ -202,10 +215,6 @@ coefficients = Map.elems . getTerms
 toTermList :: Multilinear v r repr -> [(r, Monomial v repr)]
 toTermList = map swap . Map.toList . getTerms
 
--- | Get a list of variables contained in the polynomial
-vars :: Ord v => Multilinear v r repr -> Set v
-vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
-
 -- | Retrieve the constant term
 getConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> r
 getConstant = Map.findWithDefault 0 (Monomial Set.empty) . getTerms
@@ -227,6 +236,14 @@ isConst = (== [Monomial Set.empty]) . Map.keys . getTerms
 -- | Check if a variable is used in the polynomial
 contains :: Ord v => v -> Multilinear v r repr -> Bool
 contains v = any (Set.member v . getVars) . Map.keys . getTerms
+
+{- Special forms -}
+
+-- | Check if the polynomial is of the form /v/ for some variable /v/
+asVar :: (Eq r, Num r) => Multilinear v r repr -> Maybe v
+asVar p = case map (Set.toList . getVars . snd) . filter ((1 ==) . fst) $ toTermList p of
+  ([v]):[]  -> Just v
+  otherwise -> Nothing
 
 {- Constructors -}
 
