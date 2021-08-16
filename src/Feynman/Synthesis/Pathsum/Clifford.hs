@@ -67,8 +67,8 @@ isClifford sop = ord (phasePoly sop) <= 2 && all ((1 >=) . degree) (outVals sop)
 isUnitary :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
 isUnitary sop
   | inDeg sop /= outDeg sop = False
-  | otherwise               = isTrivial (grind $ sop .> dagger sop) &&
-                              isTrivial (grind $ dagger sop .> sop)
+  | otherwise               = isTrivial (normalizeClifford $ sop .> dagger sop) &&
+                              isTrivial (normalizeClifford $ dagger sop .> sop)
 
 {-----------------------------------
  Utilities
@@ -128,12 +128,12 @@ renameOutputs sop = sop { phasePoly = rename sub (phasePoly sop),
 --     7. synthesize \(|\vec{y}\rangle \mapsto i^{B(\vec{y})}|\vec{y}\rangle\)
 extractClifford :: Pathsum DMod2 -> Maybe [Primitive]
 extractClifford sop = validated >>= return . extract where
-  validated   = Just sop --if isClifford sop && isUnitary sop then Just sop else Nothing
+  validated   = if isClifford sop && isUnitary sop then Just sop else Nothing
   extract sop =
     let (sop', c5) = runWriter . normalizeOutputs . grind $ sop
         pMap = filter (isP . fst) . mapMaybe (\(p,i) -> fmap (,i) $ asVar p) . zip (outVals sop') $ [0..]
         a = collectBy (all isI . vars . snd) $ phasePoly sop'
-        b = collectBy (all isP . vars . snd) $ phasePoly sop'
+        b = collectBy (all isP . vars . snd) $ phasePoly sop' - a
         c = phasePoly sop' - a - b
         f = map qi (outVals sop') where
           qi p = maybe p (fromJust . toBooleanPoly . (flip quotVar) c) . mfilter isP $ asVar p
@@ -237,4 +237,4 @@ prop_Clifford_Extraction_Correct (Clifford xs) =
       sop = sopAction ctx xs
       xs' = fromJust $ extractClifford sop
   in
-    isTrivial . grind . sopAction ctx $ xs ++ Core.dagger xs'
+    isTrivial . normalizeClifford . sopAction ctx $ xs ++ Core.dagger xs'
