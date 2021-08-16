@@ -99,6 +99,20 @@ normalizeOutputs sop = go sop 0 where
       tell [CNOT (var i) (var j)]
       return (f + ofVar v)
 
+-- | Internal normalization up to Cliffords
+normalizeInternal :: Pathsum DMod2 -> Writer [Primitive] (Pathsum DMod2)
+normalizeInternal sop = foldM go (normalizeClifford sop) [0..outDeg sop - 1] where
+  go sop i = case filter (\(v,p) -> isP v && p == 0) . solveForX $ (outVals sop)!!i of
+    []      -> return sop
+    (v,_):_ -> do
+      outVals' <- mapM (removeVar i v) $ zip (outVals sop) [0..]
+      return $ sop { outVals = outVals' }
+  removeVar i v (f, j)
+    | i == j || not (Set.member v (vars f)) = return f
+    | otherwise                             = do
+      tell [CNOT (var i) (var j)]
+      return (f + ofVar v)
+
 -- | Renames the normalized outputs in ascending order
 renameOutputs :: Pathsum DMod2 -> Pathsum DMod2
 renameOutputs sop = sop { phasePoly = rename sub (phasePoly sop),
@@ -130,7 +144,7 @@ extractClifford :: Pathsum DMod2 -> Maybe [Primitive]
 extractClifford sop = validated >>= return . extract where
   validated   = if isClifford sop && isUnitary sop then Just sop else Nothing
   extract sop =
-    let (sop', c5) = runWriter . normalizeOutputs . grind $ sop
+    let (sop', c5) = runWriter . normalizeInternal $ sop
         pMap = filter (isP . fst) . mapMaybe (\(p,i) -> fmap (,i) $ asVar p) . zip (outVals sop') $ [0..]
         a = collectBy (all isI . vars . snd) $ phasePoly sop'
         b = collectBy (all isP . vars . snd) $ phasePoly sop' - a
