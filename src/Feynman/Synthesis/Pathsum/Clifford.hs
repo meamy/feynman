@@ -40,7 +40,7 @@ import Test.QuickCheck (Arbitrary(..),
 
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), cz)
+import Feynman.Core (ID, Primitive(..), Angle(..))
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (bitI)
 import Feynman.Algebra.Polynomial
@@ -164,7 +164,7 @@ synthesizePP poly = concatMap synthesizeTerm . map expandMonomial . toTermList $
   expandMonomial (a,m)       = (a, Set.toList $ vars m)
   synthesizeTerm (a,[])      = globalPhase (Set.elemAt 0 $ vars poly) (Discrete a)
   synthesizeTerm (a,[v])     = synthesizePhase v (Discrete a)
-  synthesizeTerm (1,[v1,v2]) = cz v1 v2
+  synthesizeTerm (1,[v1,v2]) = [CZ v1 v2]
 
 -- | Synthesize an affine transformation. Unsafe
 synthesizeAffine :: [SBool ID] -> [Primitive]
