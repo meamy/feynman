@@ -135,6 +135,13 @@ applyGate acc g = case g of
     (bvt, bt) <- getSt t
     modify $ updateQval t (bvc + bvt, bc `xor` bt)
     return acc
+  CZ c t -> do            -- Expanding it out to CNOT and S
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ addTerm (bvc, bc) (dyadicPhase $ dyadic 1 1)
+    modify $ addTerm (bvt, bt) (dyadicPhase $ dyadic 1 1)
+    modify $ addTerm (bvc + bvt, bc `xor` bt) (dyadicPhase $ dyadic 3 1)
+    return acc
   Swap u v -> do
     bvu <- getSt u
     bvv <- getSt v
@@ -246,6 +253,13 @@ applyGateOpen synth gates g = case g of
     (bvc, bc) <- getSt c
     (bvt, bt) <- getSt t
     modify $ updateQval t (bvc + bvt, bc `xor` bt)
+    return gates
+  CZ c t -> do            -- Expanding it out to CNOT and S
+    (bvc, bc) <- getSt c
+    (bvt, bt) <- getSt t
+    modify $ addTerm (bvc, bc) (dyadicPhase $ dyadic 1 1)
+    modify $ addTerm (bvt, bt) (dyadicPhase $ dyadic 1 1)
+    modify $ addTerm (bvc + bvt, bc `xor` bt) (dyadicPhase $ dyadic 3 1)
     return gates
   Swap u v -> do
     bvu <- getSt u

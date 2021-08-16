@@ -131,6 +131,7 @@ applyGate (gate, l) = case gate of
     bexp  <- getSt c
     bexp' <- getSt t
     setSt t (bexp + bexp')
+  CZ c t -> return () -- no-op for phase folding
   X v -> do
     bexp <- getSt v
     setSt v (1 + bexp)

@@ -499,7 +499,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
                 ("tdg", [], x:[])           -> ((Tinv x):gates, gateMap, qubitMap')
                 ("cx", [], x:y:[])          -> ((CNOT x y):gates, gateMap, qubitMap')
                 ("id", [], x:[])            -> (gates, gateMap, qubitMap')
-                ("cz", [], x:y:[])          -> (cz x y ++ gates, gateMap, qubitMap')
+                ("cz", [], x:y:[])          -> ((CZ x y):gates, gateMap, qubitMap')
                 ("ccx", [], x:y:z:[])       -> (ccx x y z ++ gates, gateMap, qubitMap')
                 ("rz", [theta], x:[])
                   | Just a <- evalExp theta -> ((Rz (Continuous a) x):gates, gateMap, qubitMap')
@@ -520,6 +520,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           T x                      -> QStmt . GateExp $ CallGate "t" [] [qubitMap!x]
           Tinv x                   -> QStmt . GateExp $ CallGate "tdg" [] [qubitMap!x]
           CNOT x y                 -> QStmt . GateExp $ CXGate (qubitMap!x) (qubitMap!y)
+          CZ x y                   -> QStmt . GateExp $ CallGate "cz" [] [qubitMap!x, qubitMap!y]
           Swap x y                 -> QStmt . GateExp $ CallGate "swap" [] [qubitMap!x, qubitMap!y]
           Rz (Continuous t) x      -> QStmt . GateExp $ CallGate "rz" [FloatExp t] [qubitMap!x]
           Uninterp "measure" [x,y] -> QStmt $ MeasureExp (qubitMap!x) (qubitMap!y)
@@ -538,6 +539,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           T x            -> CallGate "t" [] [qubitMap!x]
           Tinv x         -> CallGate "tdg" [] [qubitMap!x]
           CNOT x y       -> CXGate (qubitMap!x) (qubitMap!y)
+          CZ x y         -> CallGate "cz" [] [qubitMap!x, qubitMap!y]
           Swap x y       -> CallGate "swap" [] [qubitMap!x, qubitMap!y]
           Uninterp "barrier" xs -> BarrierGate $ map (qubitMap!) xs
           Uninterp id xs        -> gateMap!id $ map (qubitMap!) xs

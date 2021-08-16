@@ -226,7 +226,7 @@ gateToCliffordT (Gate g i p) =
         ("tof", [x,y])  -> [CNOT x y]
         ("cnot", [x,y]) -> [CNOT x y]
         ("swap", [x,y]) -> [Swap x y]
-        ("cz", [x,y])   -> [H y, CNOT x y, H y]
+        ("cz", [x,y])   -> [CZ x y]
         ("tof", [x,y,z])-> [H z, T x, T y, CNOT z x, Tinv x, CNOT y z, Tinv z,
                             CNOT y x, T x, CNOT y z, CNOT z x, Tinv x,
                             T z, CNOT y x, H z]

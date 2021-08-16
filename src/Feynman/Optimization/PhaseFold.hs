@@ -81,6 +81,7 @@ applyGate (gate, loc) = case gate of
     bv  <- getSt c
     bv' <- getSt t
     setSt t (fst bv + fst bv', snd bv `xor` snd bv')
+  CZ c t -> return ()  -- N-op wrt phase folding
   Swap u v -> do
     bv  <- getSt u
     bv' <- getSt v

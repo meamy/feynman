@@ -37,6 +37,7 @@ primitiveAction gate = case gate of
   Y _           -> ygate
   Z _           -> zgate
   CNOT _ _      -> cxgate
+  CZ _ _        -> czgate
   S _           -> sgate
   Sinv _        -> sdggate
   T _           -> tgate

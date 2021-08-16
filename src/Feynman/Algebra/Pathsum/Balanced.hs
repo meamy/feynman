@@ -365,6 +365,13 @@ cxgate = Pathsum 0 2 2 0 0 [x0, x0+x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
 
+-- | CZ gate
+czgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+czgate = Pathsum 0 2 2 0 p [x0, x1]
+  where p = lift $ x0 * x1
+        x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+
 -- | Toffoli gate
 ccxgate :: (Eq g, Num g) => Pathsum g
 ccxgate = Pathsum 0 3 3 0 0 [x0, x1, x2 + x0*x1]
