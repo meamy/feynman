@@ -684,9 +684,18 @@ matchHHSolve sop = do
 -- | Instances of the HH rule with a linear substitution
 matchHHLinear :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHLinear sop = do
-  (v, p)   <- filter (\(_, p) -> degree p <= 1) $ matchHH sop
+  (v, p)   <- filter ((<= 1) . degree . snd) $ matchHH sop
   (v', p') <- solveForX p
   return (v, v', p')
+
+-- | Instances of the HH rule with only internal substitutions
+matchHHInternal :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
+matchHHInternal sop = do
+  (v, p)   <- matchHH sop
+  (v', p') <- filter ((flip elem) (internalPaths sop) . fst) $ solveForX p
+  case v' of
+    PVar _ -> return (v, v', p')
+    _      -> mzero
 
 -- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
@@ -729,6 +738,10 @@ pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
+
+-- | Pattern synonym for internal HH instances
+pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
+pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
@@ -818,9 +831,9 @@ simplify sop = case sop of
   Omega y p      -> grind $ applyOmega y p sop
   _              -> sop
 
--- | A complete normalization procedure for Clifford circuits. Originally described in
---   the paper M. Amy,
+-- | The rewrite system of M. Amy,
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
+--   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
   Elim y         -> grind $ applyElim y sop
@@ -828,13 +841,16 @@ grind sop = case sop of
   Omega y p      -> grind $ applyOmega y p sop
   _              -> sop
 
--- | A single step of 'grind'
-grindStep :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-grindStep sop = case sop of
-  Elim y         -> applyElim y sop
-  HHSolved y z p -> applyHHSolved y z p sop
-  Omega y p      -> applyOmega y p sop
-  _              -> sop
+-- | A normalization procedure for Clifford circuits
+normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+normalizeClifford sop = go $ sop .> hLayer .> hLayer where
+  hLayer = foldr (<>) mempty $ replicate (outDeg sop) hgate
+  go sop = case sop of
+    Elim y           -> go $ applyElim y sop
+    HHInternal y z p -> go $ applyHHSolved y z p sop
+    Omega y p        -> go $ applyOmega y p sop
+    HHSolved y z p   -> go $ applyHHSolved y z p sop
+    _                -> sop
 
 {--------------------------
  Simulation
