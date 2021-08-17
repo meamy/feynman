@@ -263,6 +263,7 @@ gateFromCliffordT g = case g of
   T x           -> Gate "T" 1 [x]
   Tinv x        -> Gate "T*" 1 [x]
   CNOT x y      -> Gate "cnot" 1 [x, y]
+  CZ x y        -> Gate "cz" 1 [x, y]
   Swap x y      -> Gate "swap" 1 [x, y]
   Rz f x        -> ParamGate "Rz" 1 f [x]
   Rx f x        -> ParamGate "Rx" 1 f [x]

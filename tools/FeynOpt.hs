@@ -15,6 +15,7 @@ import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
+import Feynman.Optimization.Clifford
 import Feynman.Verification.Symbolic
 
 import System.Environment (getArgs)
@@ -45,6 +46,7 @@ data Pass = Triv
           | Statefold
           | CNOTMin
           | TPar
+          | Cliff
 
 {- DotQC -}
 
@@ -68,6 +70,7 @@ dotQCPass pass = case pass of
   Statefold -> optimizeDotQC stateFold
   CNOTMin   -> optimizeDotQC minCNOT
   TPar      -> optimizeDotQC tpar
+  Cliff     -> optimizeDotQC (\_ _ -> simplifyCliffords)
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheckDotQC qc qc' =
@@ -127,6 +130,7 @@ qasmPass pass = case pass of
   Statefold -> applyOpt stateFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
+  Cliff     -> applyOpt (\_ _ -> simplifyCliffords)
 
 runQASM :: [Pass] -> Bool -> String -> String -> IO ()
 runQASM passes verify fname src = do
@@ -198,6 +202,7 @@ parseArgs passes verify (x:xs) = case x of
   "-statefold"   -> parseArgs (Statefold:Simplify:passes) verify xs
   "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
   "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
+  "-clifford"    -> parseArgs (Cliff:Simplify:passes) verify xs
   "-O2"          -> parseArgs (Simplify:Phasefold:Simplify:passes) verify xs
   "-O3"          -> parseArgs (Simplify:Phasefold:Statefold:Simplify:passes) verify xs
   "-verify"      -> parseArgs passes True xs

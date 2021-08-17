@@ -40,11 +40,13 @@ library
                        Feynman.Synthesis.Reversible,
                        Feynman.Synthesis.Reversible.Parallel,
                        Feynman.Synthesis.Reversible.Gray,
+                       Feynman.Synthesis.Pathsum.Clifford,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
                        Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
+                       Feynman.Optimization.Clifford,
 
                        Feynman.Verification.Symbolic,
 

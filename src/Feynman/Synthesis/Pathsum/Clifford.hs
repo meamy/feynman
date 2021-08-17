@@ -12,7 +12,8 @@ Portability : portable
 module Feynman.Synthesis.Pathsum.Clifford(
   isClifford,
   isUnitary,
-  extractClifford
+  extractClifford,
+  resynthesizeClifford
   ) where
 
 import Data.Semigroup ((<>))
@@ -24,15 +25,13 @@ import qualified Data.Map as Map
 
 import Control.Monad (foldM, mapM, mfilter)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter)
+import Control.Monad.State.Lazy (runState)
 
 import Test.QuickCheck (Arbitrary(..),
                         Gen,
                         quickCheck,
                         generate,
-                        sized,
                         resize,
-                        getSize,
-                        elements,
                         listOf,
                         suchThat,
                         chooseInt,
@@ -174,6 +173,19 @@ synthesizeAffine f = affineSynth input output where
   toVec     = sum . map (bitI (length f) . unvar) . Set.toList . vars
   constTerm = (== 1) . getConstant
 
+-- | Re-synthesize a Clifford circuit. Raises an error if unsuccessful.
+--   TODO: this does the simple ugly thing of using the computed context to apply a final
+--   substitution on the circuit. It should really be threading a context through the
+--   extraction method
+resynthesizeClifford :: [Primitive] -> [Primitive]
+resynthesizeClifford xs = case extractClifford sop of
+  Nothing  -> error $ "Could not extract path sum:\n  " ++ show sop
+  Just xs' -> Core.subst sub xs'
+  where (sop, ctx) = runState (computeAction xs) Map.empty
+        qubits     = Map.fromList . map (\(a,b) -> (b,a)) . Map.toList $ ctx
+        sub        = (qubits!) . unvar
+    
+
 {-----------------------------------
  Simple circuits
  -----------------------------------}
@@ -246,9 +258,6 @@ prop_Clifford_is_Unitary (Clifford xs) = isUnitary $ simpleAction xs
 
 -- | Checks that the path sum of a Clifford circuit is correctly extracted
 prop_Clifford_Extraction_Correct :: Clifford -> Bool
-prop_Clifford_Extraction_Correct (Clifford xs) =
-  let ctx = [var i | i <- [0..maxSize]]
-      sop = sopAction ctx xs
-      xs' = fromJust $ extractClifford sop
-  in
-    isTrivial . normalizeClifford . sopAction ctx $ xs ++ Core.dagger xs'
+prop_Clifford_Extraction_Correct (Clifford xs) = go where
+  go  = isTrivial . normalizeClifford . simpleAction $ xs ++ Core.dagger xs'
+  xs' = resynthesizeClifford xs
