@@ -92,7 +92,7 @@ addMay st phases = (\(a,b) -> (reverse a,b)) . snd . foldl' go (st,([],phases)) 
     let tmp = (st!t) + (st!c) in
       case partition (\phase -> fst phase == tmp) may of
         ([], may')      -> (Map.insert t tmp st, (gate:circ, may'))
-        ([phase], may') -> trace "HELLO" $ (Map.insert t tmp st, (circ', may')) where
+        ([phase], may') -> (Map.insert t tmp st, (circ', may')) where
           circ' = synthesizePhase t (snd phase) ++ (gate:circ)
   go (st,(circ,may)) gate = (st,(gate:circ,may))
 
