@@ -17,7 +17,11 @@ printHelp = mapM_ putStrLn [
   "",
   "USAGE: qc2qasm <circuit>.qc",
   "",
-  "qc2qasm <circuit>.qc produces a QASM gate declaration for the given .qc circuit."
+  "",
+  "qc2qasm <circuit>.qc produces openQASM 2.0 code with at least one gate",
+  "declaration, <circuit>, which implements the functionality of <circuit>.qc.",
+  "To use in an openQASM program, either import the file or copy and paste the gate",
+  "declarations from the qc2qasm into an openQASM program."
   ]
 
 parseArgs :: [String] -> IO ()
