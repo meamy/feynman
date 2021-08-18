@@ -120,7 +120,8 @@ executable qc2qasm
   hs-source-dirs:      tools
   build-depends:       Feynman,
                        base,
-                       bytestring
+                       bytestring,
+                       filepath
   default-language:    Haskell2010
 
 executable ar21

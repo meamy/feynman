@@ -5,6 +5,7 @@ import Feynman.Frontend.DotQC (DotQC)
 import qualified Feynman.Frontend.DotQC as DotQC
 
 import Data.List
+import Data.Char (isDigit, isAlpha)
 
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -625,6 +626,17 @@ regify y subs x = case Map.lookup x subs of
   Nothing -> Var x
   Just i  -> Offset y i
 
+isValidIDChar :: Char -> Bool
+isValidIDChar c = isAlpha c || isDigit c || c == '_'
+
+validate :: ID -> ID
+validate [] = []
+validate (x:xs)
+  | isAlpha x = foldr go [] (x:xs)
+  | otherwise = "q" ++ foldr go [] (x:xs)
+  where go x acc | isValidIDChar x = x:acc
+                 | otherwise       = acc
+
 qcGateToQASM :: (ID -> Arg) -> DotQC.Gate -> [UExp]
 qcGateToQASM sub (DotQC.Gate g i p) =
   let circ = case (g, p) of
@@ -666,9 +678,11 @@ qcGateToQASM sub (DotQC.ParamGate g i theta p) =
 qcGatesToQASM :: Map ID Int -> [DotQC.Gate] -> [UExp]
 qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
-fromDotQC :: DotQC -> QASM
-fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
+fromDotQC :: String -> DotQC -> QASM
+fromDotQC mainName dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
   stmts = map go $ DotQC.decls dotqc
-  go (DotQC.Decl name loc body) = DecStmt $ GateDec name [] (glob ++ loc) (convert body)
-  glob = DotQC.qubits dotqc
-  convert = concatMap (qcGateToQASM Var)
+  go (DotQC.Decl name loc body)
+    | name == "main" = DecStmt $ GateDec (validate mainName) [] (glob ++ map validate loc) (convert body)
+    | otherwise      = DecStmt $ GateDec (validate name) [] (glob ++ map validate loc) (convert body)
+  glob = map validate $ DotQC.qubits dotqc
+  convert = concatMap (qcGateToQASM $ Var . validate)
