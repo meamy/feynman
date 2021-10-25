@@ -30,6 +30,8 @@ checkEquivalence options (qc, qc') =
       result =
         if Set.member "PostSelect" options
           then validateWithPost ignore vars ins gates gates'
+        else if Set.member "Experimental" options
+          then validateExperimental ignore vars ins gates gates'
           else validate ignore vars ins gates gates'
   in
     if inputs qc /= inputs qc'
@@ -60,6 +62,7 @@ printHelp = mapM_ putStrLn lines
           "  -ignore-global-phase\tVerify equivalence up to a global phase",
           "  -ignore-ancillas\tVerify equivalence up to (separable) garbage in the ancilla qubits",
           "  -postselect-ancillas\tVerify equivalence, post-selecting on the ancillas being in the 0 state",
+          "  -experimental\tFor a little bit of extra proving power",
           ""
           ]
 
@@ -102,6 +105,7 @@ run options xs = case xs of
   (x:xs) | x == "-ignore-global-phase" -> run (Set.insert "IgnoreGlobal" options) xs
          | x == "-ignore-ancillas"     -> run (Set.insert "IgnoreGarbage" options) xs
          | x == "-postselect-ancillas" -> run (Set.insert "PostSelect" options) xs
+         | x == "-experimental"        -> run (Set.insert "Experimental" options) xs
   _ -> do
     lift $ putStrLn "Invalid argument(s)"
     lift $ printHelp

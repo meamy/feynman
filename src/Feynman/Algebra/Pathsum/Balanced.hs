@@ -807,7 +807,7 @@ grindStep sop = case sop of
  Simulation
  --------------------------}
 
--- Gets the cofactors
+-- | Gets the cofactors of some path variable
 expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
 expand (Pathsum a b c d e f) v = (p0, p1) where
   p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
@@ -837,6 +837,17 @@ simulate sop xs = go $ sop * ket (map constant xs)
 -- | Evaluates a pathsum on a given input and output
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
+
+-- | Checks identity by checking inputs iteratively
+isIdentity :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isIdentity sop
+  | isTrivial sop = True
+  | otherwise     = case inDeg sop of
+      0 -> False
+      i -> let p0 = (grind $ identity (i-1) <> ket [0] .> sop .> identity (i-1) <> bra [0])
+               p1 = (grind $ identity (i-1) <> ket [1] .> sop .> identity (i-1) <> bra [1])
+           in
+             isIdentity p0 && isIdentity p1
 
 {--------------------------
  Examples

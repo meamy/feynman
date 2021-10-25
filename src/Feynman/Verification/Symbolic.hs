@@ -104,20 +104,6 @@ data Result =
   | Inconclusive (Pathsum DMod2)
   deriving (Show)
 
--- | Check if a circuit is the identity
-isIdentity :: [ID] -> [ID] -> [Primitive] -> Result
-isIdentity vars inputs circuit =
-  let sopWithContext = do
-        st <- makeInitial vars inputs
-        action <- computeAction circuit
-        return $ ket st .> action .> bra st
-      sop = grind $ evalState sopWithContext Map.empty
-  in
-    case sop of
-      Triv       -> Identity
-      HHKill _ p -> NotIdentity . show $ getSolution p
-      _          -> Inconclusive sop
-
 -- These really need to be packaged up in a logic rather than separate
 -- functions. Doing this for now until a better solution can be found.
 -- Realistically this could also be done "application side" by composing
@@ -135,6 +121,20 @@ validate global vars inputs c1 c2 =
       Triv       -> Identity
       HHKill _ p -> NotIdentity . show $ getSolution p
       _          -> Inconclusive sop
+
+validateExperimental :: Bool -> [ID] -> [ID] -> [Primitive] -> [Primitive] -> Result
+validateExperimental global vars inputs c1 c2 =
+  let sopWithContext = do
+        st <- makeInitial vars inputs
+        action <- computeAction $ c1 ++ dagger c2
+        return $ action
+      sop = f . grind $ evalState sopWithContext Map.empty where
+        f = if global then dropGlobalPhase else id
+  in
+    case sop of
+      Triv       -> Identity
+      HHKill _ p -> NotIdentity . show $ getSolution p
+      _          -> if isIdentity sop then Identity else NotIdentity "By explicit computation"
 
 postselectAll :: [ID] -> State Context (Pathsum DMod2)
 postselectAll xs = do
