@@ -184,11 +184,7 @@ resynthesizeClifford xs = case extractClifford sop of
   where (sop, ctx) = runState (computeAction xs) Map.empty
         qubits     = Map.fromList . map (\(a,b) -> (b,a)) . Map.toList $ ctx
         sub        = (qubits!) . unvar
-    
 
-{-----------------------------------
- Simple circuits
- -----------------------------------}
 
 -- | Clifford basis
 xGate :: Pathsum DMod2

@@ -50,6 +50,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   castMaybe,
   collectBy,
   collectVar,
+  collectVars,
   rename,
   renameMonotonic,
   subst,
@@ -374,7 +375,11 @@ collectBy f = M . Map.filterWithKey (curry $ f . swap) . getTerms
 -- | Collects the terms of a polynomial containing a particular variable
 collectVar :: Ord v => v -> Multilinear v r repr -> Multilinear v r repr
 collectVar v = collectBy (\(_a, m) -> Set.member v $ getVars m)
-  
+
+-- | Collects the terms of a polynomial containing a set of variables
+collectVars :: Ord v => Set v -> Multilinear v r repr -> Multilinear v r repr
+collectVars s = collectBy (\(_a, m) -> (getVars m) `Set.isSubsetOf` s)
+
 {- Substitutions -}
 
 -- | Rename variables according to a variable map
