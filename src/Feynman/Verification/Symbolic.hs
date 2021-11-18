@@ -80,7 +80,9 @@ makeInitial vars inputs = fmap Map.elems $ foldM go Map.empty vars
 
 -- | Compute the path sum action of a primitive circuit
 computeAction :: [Primitive] -> State Context (Pathsum DMod2)
-computeAction = applyCircuit (identity 0)
+computeAction xs = do
+  n <- gets Map.size
+  applyCircuit (identity n) xs
 
 -- | Shortcut for computing an action in the empty context
 simpleAction :: [Primitive] -> Pathsum DMod2
@@ -89,6 +91,10 @@ simpleAction = (flip evalState) Map.empty . computeAction
 -- | Shortcut for computing an action in a linear context
 sopAction :: [ID] -> [Primitive] -> Pathsum DMod2
 sopAction ids = (flip evalState) (Map.fromList $ zip ids [0..]) . computeAction
+
+-- | Shortcut for computing an action in a context
+computeActionInCtx :: [Primitive] -> Context -> Pathsum DMod2
+computeActionInCtx xs = evalState (computeAction xs)
 
 -- | Shortcut for computing an action given a set of variables and inputs
 complexAction :: [ID] -> [ID] -> [Primitive] -> Pathsum DMod2

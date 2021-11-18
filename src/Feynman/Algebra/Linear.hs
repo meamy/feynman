@@ -115,6 +115,11 @@ fromList vecs@(x:xs) =
     else error "Vectors have differing lengths"
   where n = width x
 
+fromListSafe :: [F2Vec] -> F2Mat
+fromListSafe xs = fromList (map go xs) where
+  go bv = if width bv < n then zeroExtend (n - width bv) bv else bv
+  n     = maximum $ map width xs
+
 fromVec :: F2Vec -> F2Mat
 fromVec x = F2Mat 1 n [x]
   where n = width x

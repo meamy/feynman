@@ -17,7 +17,7 @@ import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.Bits (xor)
 
-import Control.Monad (foldM, mapM, mfilter, liftM)
+import Control.Monad (foldM, mapM, mfilter, liftM, (>=>))
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Lazy (StateT, get, gets, put, runState, evalState, evalStateT)
 
@@ -52,8 +52,12 @@ import Debug.Trace
  Types
  -----------------------------------}
 
-type Ctx = Map Int ID
+type Ctx = (Map Int ID, Map ID Int)
 type ExtractionState a = StateT Ctx (Writer [Primitive]) a
+
+-- | Create a bidirectional context from a mapping from IDs to indices
+mkctx :: Map ID Int -> (Map Int ID, Map ID Int)
+mkctx ctx = (Map.fromList . map (\(a, b) -> (b, a)) . Map.toList $ ctx, ctx)
 
 {-----------------------------------
  Utilities
@@ -61,7 +65,11 @@ type ExtractionState a = StateT Ctx (Writer [Primitive]) a
 
 -- | ID for the ith variable
 qref :: Int -> ExtractionState ID
-qref i = gets (!i)
+qref i = gets ((!i) . fst)
+
+-- | index for a qubit ID
+qidx :: ID -> ExtractionState Int
+qidx q = gets ((!q) . snd)
 
 -- | Takes a map from Ints expressed as a list to a map on IDs
 reindex :: [a] -> ExtractionState (Map ID a)
@@ -109,10 +117,10 @@ normalize = return . normalizeClifford
 simplifyKet :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 simplifyKet sop = do
   output <- linearize $ outVals sop
-  input <- linearize $ outVals sop -- NOT RIGHT JUST FOR TESTING
-  let circ = affineSynth input output
-  tell $ circ
-  return $ sop -- NOT RIGHT JUST FOR TESTING
+  let circ = simplifyAffine output
+  tell $ dagger circ
+  ctx <- gets snd
+  return $ sop .> computeActionInCtx (dagger circ) ctx
   
   
 {-
@@ -186,19 +194,22 @@ extractUnitary ctx sop = processWriter $ evalStateT (normalize sop >>= extract) 
   processWriter w = case runWriter w of
     (Just _, circ) -> Just $ dagger circ
     _              -> Nothing
-  extract :: Pathsum DMod2 -> ExtractionState (Maybe ())
-  extract sop
-    | isTrivial sop = return (Just ())
-    | otherwise     = do
-      sop' <- simplifyKet sop >>= stateToPhaseOracle >>= synthesizePhaseOracle >>= reducePaths >>= normalize
-      if pathVars sop' < pathVars sop then extract sop' else return Nothing
+  extract sop = do
+    sop' <- synthesisPass sop
+    if isTrivial sop'
+      then return (Just ())
+      else if pathVars sop' < pathVars sop then extract sop' else return Nothing
+  synthesisPass = simplifyKet >=>
+                  stateToPhaseOracle >=>
+                  synthesizePhaseOracle >=>
+                  reducePaths >=>
+                  normalize
 
 -- | Resynthesizes a circuit
 -- Ugh... Again we run into problems
 resynthesizeCircuit :: [Primitive] -> Maybe [Primitive]
-resynthesizeCircuit xs = extractUnitary ctx' sop where
+resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
   (sop, ctx) = runState (computeAction xs) Map.empty
-  ctx'       = Map.fromList $ map (\(a,b) -> (b,a)) $ Map.toList ctx 
 
 {-----------------------------------
  Testing

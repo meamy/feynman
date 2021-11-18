@@ -79,6 +79,32 @@ affineSynth input output =
   in
     inX ++ circ ++ outX
 
+-- Applies linear simplifications
+simplifyLinear :: LinearTrans -> [Primitive]
+simplifyLinear output =
+  let (ids, ovecs) = unzip $ Map.toList output
+      mat  = fromListSafe ovecs
+      rops = snd $ runWriter $ toReducedEchelonPMHA mat
+      rops' = snd $ runWriter $ toReducedEchelonA mat
+      isadd g = case g of
+        Add _ _   -> True
+        otherwise -> False
+      counta = length . filter isadd
+      f op = case op of
+        Add i j      -> [CNOT (ids !! i) (ids !! j)]
+        Exchange i j -> [Swap (ids !! i) (ids !! j)]
+  in
+      reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
+
+-- Affine simplifications
+simplifyAffine :: AffineTrans -> [Primitive]
+simplifyAffine output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      outX = f output
+      circ = simplifyLinear (Map.map fst output)
+  in
+    circ ++ outX
+
 liftMatOp :: (F2Mat -> F2Mat) -> LinearTrans -> LinearTrans
 liftMatOp f = Map.fromList . uncurry zip . go . unzip . Map.toList where
   go (ids,vecs) = (ids, toList . f . fromList $ vecs)
