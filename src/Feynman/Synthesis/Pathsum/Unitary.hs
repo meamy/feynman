@@ -122,24 +122,6 @@ simplifyKet sop = do
   ctx <- gets snd
   return $ sop .> computeActionInCtx (dagger circ) ctx
   
-  
-{-
-simplifyKet :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-simplifyKet sop = foldM go sop [0..outDeg sop - 1] where
-  go sop i = case filter (\(v,p) -> p == 0) . solveForX $ (outVals sop)!!i of
-    []      -> return sop
-    (v,_):_ -> do
-      outVals' <- mapM (removeVar i v) $ zip (outVals sop) [0..]
-      return $ sop { outVals = outVals' }
-  removeVar i v (f, j)
-    | i == j || quotVar v f /= 1 = return f
-    | otherwise                  = do
-        q1 <- qref i
-        q2 <- qref j
-        tell [CNOT q1 q2]
-        return (f + ofVar v)
--}
-
 -- | Swap a (computable) state oracle to a phase oracle
 stateToPhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 stateToPhaseOracle sop = do
@@ -289,3 +271,5 @@ q6 = "q6"
 q7 = "q7"
 q8 = "q8"
 q9 = "q9"
+
+ctx = mkctx $ Map.fromList $ zip [q0, q1, q2, q3, q4, q5, q6, q7, q8, q9] [0..]

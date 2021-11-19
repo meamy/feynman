@@ -84,17 +84,14 @@ simplifyLinear :: LinearTrans -> [Primitive]
 simplifyLinear output =
   let (ids, ovecs) = unzip $ Map.toList output
       mat  = fromListSafe ovecs
-      rops = snd $ runWriter $ toReducedEchelonPMHA mat
-      rops' = snd $ runWriter $ toReducedEchelonA mat
-      isadd g = case g of
-        Add _ _   -> True
-        otherwise -> False
-      counta = length . filter isadd
+      {- Significant area for improvement here. We can't use any of bi-directional (i.e. column ops)
+         methods since we don't have a transformation matrix. -}
+      rops = snd $ runWriter $ toReducedEchelon mat
       f op = case op of
         Add i j      -> [CNOT (ids !! i) (ids !! j)]
         Exchange i j -> [Swap (ids !! i) (ids !! j)]
   in
-      reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
+      reverse $ concatMap f rops
 
 -- Affine simplifications
 simplifyAffine :: AffineTrans -> [Primitive]
