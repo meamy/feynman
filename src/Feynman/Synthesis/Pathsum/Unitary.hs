@@ -121,6 +121,27 @@ simplifyKet sop = do
   tell $ dagger circ
   ctx <- gets snd
   return $ sop .> computeActionInCtx (dagger circ) ctx
+
+-- | Final affine simplifications needed to implement the operator
+--   on the nose
+finalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalize sop = do
+  ctx <- gets snd
+  let input = Map.map (\i -> (bitI n i, False)) ctx
+  let output = Map.map (\i -> bitvecOfPoly $ (outVals sop)!!i) ctx
+  let circ = affineSynth input output
+  tell $ dagger circ
+  ctx <- gets snd
+  return $ sop .> computeActionInCtx (dagger circ) ctx
+  where n = inDeg sop
+        bitvecOfPoly p 
+          | degree p > 1 = error "Attempting to finalize non-linear path-sum!"
+          | otherwise    = (foldr xor (bitI 0 0) . map bitvecOfVar . Set.toList $ vars p,
+                            getConstant p == 1)
+        bitvecOfVar (IVar i) = bitI n i
+        bitvecOfVar (PVar _) = error "Attempting to finalize a proper path-sum!"
+        bitvecOfVar (FVar _) = error "Attempting to extract a path-sum with free variables!"
+
   
 -- | Swap a (computable) state oracle to a phase oracle
 stateToPhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
@@ -136,6 +157,9 @@ stateToPhaseOracle sop = do
   foldM go sop [0..outDeg sop - 1]
 
 -- | Phase oracle synthesis step
+--
+--   Needs to do a bit more work. Notably when |y>|x + z> is in the state and
+--   2(yx + yz) is in the phase...
 synthesizePhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizePhaseOracle sop = do
   ctx <- ketToScope sop
@@ -176,11 +200,18 @@ extractUnitary ctx sop = processWriter $ evalStateT (normalize sop >>= extract) 
   processWriter w = case runWriter w of
     (Just _, circ) -> Just $ dagger circ
     _              -> Nothing
-  extract sop = do
-    sop' <- synthesisPass sop
+  extract sop
+    | pathVars sop == 0 = extractReversible sop
+    | otherwise         = do
+        sop' <- synthesisPass sop
+        if isTrivial sop'
+          then return (Just ())
+          else if pathVars sop' < pathVars sop then extract sop' else return Nothing
+  extractReversible sop = do
+    sop' <- synthesisPass sop >>= finalize
     if isTrivial sop'
       then return (Just ())
-      else if pathVars sop' < pathVars sop then extract sop' else return Nothing
+      else return Nothing
   synthesisPass = simplifyKet >=>
                   stateToPhaseOracle >=>
                   synthesizePhaseOracle >=>
