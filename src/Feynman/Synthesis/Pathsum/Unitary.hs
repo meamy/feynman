@@ -109,12 +109,24 @@ linearize xs = reindex $ evalState (mapM linearizePoly xs) (0, Map.empty) where
 --   of only variables, e.g. |x>|y>|z>...
 --
 --   Returns the frame as well as the path-sum
-changeFrame :: Pathsum DMod2 -> ExtractionState ([(Var, SBool Var)], Pathsum DMod2)
-changeFrame sop = return ([], sop)
+changeFrame :: Pathsum DMod2 -> ([(Var, SBool Var)], Pathsum DMod2)
+changeFrame sop = foldl go ([], sop) [0..outDeg sop - 1] where
+  nonConstant (a,m) = a /= 0 && degree m > 0
+  fv i              = FVar $ "#tmp" ++ show i
+  go (subs, sop) i  = case filter nonConstant . toTermList $ (outVals sop)!!i of
+    []                       -> (subs, sop)
+    (1,m):[] | degree m == 1 -> (subs, sop)
+    (1,m):xs                 ->
+      let vs   = Set.toList . vars $ ofMonomial m
+          poly = (outVals sop)!!i
+          psub = ofVar (fv i) + poly - ofMonomial m
+      in
+        ((fv i, poly):subs, substitute vs psub sop)
 
 -- | Reverts the frame of the path-sum back to the standard frame
-revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-revertFrame xs sop = return sop
+revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> Pathsum DMod2
+revertFrame = flip (foldl applySub) where
+  applySub sop (v, p) = substitute [v] p sop
 
 {-----------------------------------
  Passes
@@ -172,12 +184,12 @@ synthesizePhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizePhaseOracle sop = do
   -- Compute a local change of variables to get an expression of the phase
   -- over the current ket
-  (subs, localSOP) <- changeFrame sop
+  let (subs, localSOP) = changeFrame sop
   ctx <- ketToScope localSOP
   let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
   mapM_ synthesizePhaseTerm . toTermList . rename (ctx!) $ poly
   let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
-  revertFrame subs localSOP'
+  return $ revertFrame subs localSOP'
   where synthesizePhaseTerm (a, m) = tell $ circ ++ [Rz (Discrete $ -a) "_t"] ++ circ where
           circ = synthesizeMCT 0 (Set.toList $ vars m) "_t"
         synthesizeMCT _ [] t       = [X t]
