@@ -217,6 +217,9 @@ simplifyPrimitive circ =
 
 -- Builtin circuits
 
+cs :: ID -> ID -> [Primitive]
+cs x y = [T x, T y, CNOT x y, Tinv y, CNOT x y]
+
 ccx :: ID -> ID -> ID -> [Primitive]
 ccx x y z = [H z] ++ ccz x y z ++ [H z]
 

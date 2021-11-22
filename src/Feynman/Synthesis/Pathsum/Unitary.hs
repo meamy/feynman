@@ -33,7 +33,7 @@ import Test.QuickCheck (Arbitrary(..),
 
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger)
+import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Polynomial hiding (Var)
@@ -234,6 +234,9 @@ bianCircuit :: [Primitive]
 bianCircuit = (circ ++ circ) where
   circ = [CNOT "x" "y", X "x", T "y", H "y", T "y", H "y", Tinv "y",
           CNOT "x" "y", X "x", T "y", H "y", Tinv "y", H "y", Tinv "y"]
+
+hardCase :: [Primitive]
+hardCase = [CNOT "x" "y", H "x"] ++ cs "x" "y"
 
 {-----------------------------------
  Automated tests
