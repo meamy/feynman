@@ -33,7 +33,7 @@ import Test.QuickCheck (Arbitrary(..),
 
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs)
+import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs, ccx)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Polynomial hiding (Var)
@@ -105,6 +105,17 @@ linearize xs = reindex $ evalState (mapM linearizePoly xs) (0, Map.empty) where
         put (maxBit + 1, Map.insert mono maxBit ctx)
         return maxBit
 
+-- | Changes the frame of a path-sum so that we have an output ket consisting
+--   of only variables, e.g. |x>|y>|z>...
+--
+--   Returns the frame as well as the path-sum
+changeFrame :: Pathsum DMod2 -> ExtractionState ([(Var, SBool Var)], Pathsum DMod2)
+changeFrame sop = return ([], sop)
+
+-- | Reverts the frame of the path-sum back to the standard frame
+revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+revertFrame xs sop = return sop
+
 {-----------------------------------
  Passes
  -----------------------------------}
@@ -157,15 +168,16 @@ stateToPhaseOracle sop = do
   foldM go sop [0..outDeg sop - 1]
 
 -- | Phase oracle synthesis step
---
---   Needs to do a bit more work. Notably when |y>|x + z> is in the state and
---   2(yx + yz) is in the phase...
 synthesizePhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizePhaseOracle sop = do
-  ctx <- ketToScope sop
-  let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly sop
+  -- Compute a local change of variables to get an expression of the phase
+  -- over the current ket
+  (subs, localSOP) <- changeFrame sop
+  ctx <- ketToScope localSOP
+  let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
   mapM_ synthesizePhaseTerm . toTermList . rename (ctx!) $ poly
-  return $ sop { phasePoly = phasePoly sop - poly }
+  let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
+  revertFrame subs localSOP'
   where synthesizePhaseTerm (a, m) = tell $ circ ++ [Rz (Discrete $ -a) "_t"] ++ circ where
           circ = synthesizeMCT 0 (Set.toList $ vars m) "_t"
         synthesizeMCT _ [] t       = [X t]
@@ -235,8 +247,21 @@ bianCircuit = (circ ++ circ) where
   circ = [CNOT "x" "y", X "x", T "y", H "y", T "y", H "y", Tinv "y",
           CNOT "x" "y", X "x", T "y", H "y", Tinv "y", H "y", Tinv "y"]
 
+-- Need linear substitutions in the output for this case
 hardCase :: [Primitive]
 hardCase = [CNOT "x" "y", H "x"] ++ cs "x" "y"
+
+-- Need non-linear substitutions
+harderCase :: Pathsum DMod2
+harderCase = (identity 2 <> fresh) .>
+             ccxgate .>
+             hgate <> identity 2 .>
+             swapgate <> identity 1 .>
+             identity 1 <> tgate <> tgate .>
+             identity 1 <> cxgate .>
+             identity 2 <> tdggate .>
+             identity 1 <> cxgate .>
+             swapgate <> identity 1
 
 {-----------------------------------
  Automated tests
