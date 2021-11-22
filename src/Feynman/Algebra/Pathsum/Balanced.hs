@@ -400,7 +400,7 @@ measure :: (Eq g, Abelian g) => Pathsum g
 measure = unChoi measureChoi
 
 {----------------------------
- Bind and unbind
+ Bind, unbind, and subst
  ----------------------------}
 
 -- | Bind some collection of free variables in a path sum
@@ -430,6 +430,15 @@ unbind xs (Pathsum a b c d e f) = Pathsum a (b - length xs) c d e' f' where
 -- | Open a path sum by instantiating all inputs
 open :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 open sop = unbind [0..(inDeg sop) - 1] sop
+
+-- | Substitute a monomial with a symbolic Boolean expression throughout
+--
+--   This is generally not a very safe thing to do. Convenience for certain
+--   local transformations
+substitute :: (Eq g, Abelian g) => [Var] -> SBool Var -> Pathsum g -> Pathsum g
+substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e' = substMonomial xs p e
+  f' = map (substMonomial xs p) f
 
 {----------------------------
  Operators

@@ -50,6 +50,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   renameMonotonic,
   subst,
   substMany,
+  substMonomial,
   solveForX,
   allSolutions,
   getSolution,
@@ -376,10 +377,20 @@ substMany :: (Ord v, Eq r, Abelian r) => (v -> SBool v) -> Multilinear v r 'Mult
 substMany sub = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substInMono m a) zero . getTerms
   where substInMono m a = distribute a $ foldr (multImpl) one (map sub . Set.toList $ getVars m)
 
+-- | Substitute a (Boolean, multiplicative) monomial with a (Boolean) polynomial
+substMonomial :: (Ord v, Eq r, Abelian r) => [v] -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+substMonomial xs p = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substMonoInMono m a) zero . getTerms
+  where m = Set.fromList xs
+        substMonoInMono m' a
+          | not (m `Set.isSubsetOf` (getVars m')) = ofTerm (a,m')
+          | otherwise =
+            let mono = Monomial (Set.difference (getVars m') m) in
+              distribute a . M . Map.mapKeys (mono <>) $ getTerms p
+
 -- | Substitute a variable with a monomial
-substMono :: (Ord v, Eq r, Num r, ReprC repr) =>
+substVarMono :: (Ord v, Eq r, Num r, ReprC repr) =>
              v -> Monomial v repr -> Multilinear v r repr -> Multilinear v r repr
-substMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
+substVarMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
   where substVar v' acc
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
@@ -435,7 +446,7 @@ unDistribute a' = go a' . Set.toList . getVars
           let recTerm = go (negate $ divTwo a) $ x:xs
               sub     = Monomial $ Set.fromList [x, y]
           in
-            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substMono x sub recTerm
+            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substVarMono x sub recTerm
 
 -- | Non-recursive exclusion-inclusion formula
 excInc :: (Ord v, Eq r, Dyadic r) => Monomial v 'Mult -> Multilinear v r 'Add
@@ -476,7 +487,7 @@ invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
 canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Add
 canonicalize = fourier . invFourier
 
-{- Constants, for testing
+-- Constants, for testing
 
 newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 
@@ -504,5 +515,3 @@ y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DMod2 'Mult
 y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DMod2 'Mult
 y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DMod2 'Mult
 y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DMod2 'Mult
-
--}
