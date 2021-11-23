@@ -213,6 +213,18 @@ reducePaths sop = foldM go sop (zip [0..] $ outVals sop) where
  Extraction
  -----------------------------------}
 
+-- | A single pass of the synthesis algorithm
+synthesizeFrontier :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+synthesizeFrontier sop = go (normalizeClifford sop) where
+  go sop
+    | pathVars sop == 0 = synthesisPass sop >>= finalize
+    | otherwise         = synthesisPass sop
+  synthesisPass = simplifyKet >=>
+                  stateToPhaseOracle >=>
+                  synthesizePhaseOracle >=>
+                  reducePaths >=>
+                  normalize
+
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
 --
 --   Algorithm proceeds by Hadamard stages. In each stage
