@@ -11,7 +11,7 @@ module Feynman.Synthesis.Pathsum.Unitary where
 
 import Data.Semigroup ((<>))
 import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe, isJust)
-import Data.List ((\\))
+import Data.List ((\\), find)
 import Data.Map (Map, (!))
 import qualified Data.Set as Set
 import qualified Data.Map as Map
@@ -128,6 +128,11 @@ revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> Pathsum DMod2
 revertFrame = flip (foldl applySub) where
   applySub sop (v, p) = substitute [v] p sop
 
+-- | Finds a reducible quadratic
+findQuadraticReduction :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, Var)
+findQuadraticReduction xs p = find go [(x, y) | x <- xs, y <- xs, x /= y] where
+  go (x, y) = isJust $ toBooleanPoly . quotVar x . subst y (ofVar x + ofVar y) $ p
+
 {-----------------------------------
  Passes
  -----------------------------------}
@@ -198,6 +203,24 @@ synthesizePhaseOracle sop = do
         synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
           circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
+-- | Quadratic term reduction step
+reduceQuadraticTerms :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+reduceQuadraticTerms sop = do
+  ctx <- ketToScope sop
+  let scopedPVars = filter isP . Map.keys $ ctx
+  -- Need to match terms of the form sum_y i^{xy + xz}(-1)^Q where y and z are in scope
+  case findQuadraticReduction scopedPVars (phasePoly sop) of
+    Nothing     -> return sop
+    Just (y, z) -> do
+      let sop' = substitute [z] (ofVar y + ofVar z) sop
+      idx_y <- qidx (ctx!y)
+      idx_z <- qidx (ctx!z)
+      let f i = case i of
+            0 -> idx_y
+            1 -> idx_z
+      tell [CNOT (ctx!y) (ctx!z)]
+      return $ sop' .> embed cxgate (outDeg sop' - 2) f  f
+
 -- | Hadamard step
 reducePaths :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 reducePaths sop = foldM go sop (zip [0..] $ outVals sop) where
@@ -222,6 +245,7 @@ synthesizeFrontier sop = go (normalizeClifford sop) where
   synthesisPass = simplifyKet >=>
                   stateToPhaseOracle >=>
                   synthesizePhaseOracle >=>
+                  reduceQuadraticTerms >=>
                   reducePaths >=>
                   normalize
 
@@ -251,6 +275,7 @@ extractUnitary ctx sop = processWriter $ evalStateT (normalize sop >>= extract) 
   synthesisPass = simplifyKet >=>
                   stateToPhaseOracle >=>
                   synthesizePhaseOracle >=>
+                  reduceQuadraticTerms >=>
                   reducePaths >=>
                   normalize
 
@@ -286,6 +311,14 @@ harderCase = (identity 2 <> fresh) .>
              identity 2 <> tdggate .>
              identity 1 <> cxgate .>
              swapgate <> identity 1
+
+-- Need linear substitutions that un-normalize the output ket.
+-- This one is annoying because we effectively need to find some
+-- linear substitution which will make one of the path variables reducible.
+-- I don't have a more general way of handling this than to just look
+-- for this particular case... yet
+hardestCase :: [Primitive]
+hardestCase = [H "x"] ++ cs "x" "y" ++ [H "y", CNOT "y" "x"]
 
 {-----------------------------------
  Automated tests
