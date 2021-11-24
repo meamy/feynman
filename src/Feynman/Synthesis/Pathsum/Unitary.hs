@@ -256,28 +256,15 @@ synthesizeFrontier sop = go (normalizeClifford sop) where
 --     2. Synthesize P_{x_1...x_n}
 --     3. Find some ket(x_i) such that P_{x_i} = x_i*Q(x...)
 extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [Primitive]
-extractUnitary ctx sop = processWriter $ evalStateT (normalize sop >>= extract) ctx where
+extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
   processWriter w = case runWriter w of
-    (Just _, circ) -> Just $ dagger circ
-    _              -> Nothing
-  extract sop
-    | pathVars sop == 0 = extractReversible sop
-    | otherwise         = do
-        sop' <- synthesisPass sop
-        if isTrivial sop'
-          then return (Just ())
-          else if pathVars sop' < pathVars sop then extract sop' else return Nothing
-  extractReversible sop = do
-    sop' <- synthesisPass sop >>= finalize
-    if isTrivial sop'
-      then return (Just ())
-      else return Nothing
-  synthesisPass = simplifyKet >=>
-                  stateToPhaseOracle >=>
-                  synthesizePhaseOracle >=>
-                  reduceQuadraticTerms >=>
-                  reducePaths >=>
-                  normalize
+    (True, circ) -> Just $ dagger circ
+    _            -> Nothing
+  go sop = do
+    sop' <- synthesizeFrontier sop
+    if pathVars sop' < pathVars sop
+      then go sop'
+      else return $ isTrivial sop'
 
 -- | Resynthesizes a circuit
 -- Ugh... Again we run into problems
@@ -319,6 +306,18 @@ harderCase = (identity 2 <> fresh) .>
 -- for this particular case... yet
 hardestCase :: [Primitive]
 hardestCase = [H "x"] ++ cs "x" "y" ++ [H "y", CNOT "y" "x"]
+
+-- This one is subtle. Only appears in certain configurations of the
+-- context because normal forms are not unique for, and certain normal
+-- form are irreducible. Simplest way to fix this is to fix the
+-- irreducibility of those normal forms. Problem here is that
+-- x0 + x1 + x2y0 is not computable in the final stage, but the variable y0
+-- can be removed from the output by a computable transformation.
+-- Alternatively, some changes of variables (hence some normalizations)
+-- make this computable, but it may be possible to manufacture a situation
+-- where this isn't possible. Curious
+evenHarderCase :: [Primitive]
+evenHarderCase = [CNOT "x" "z", H "x"] ++ ccx "x" "y" "z"
 
 {-----------------------------------
  Automated tests
@@ -388,4 +387,5 @@ q7 = "q7"
 q8 = "q8"
 q9 = "q9"
 
-ctx = mkctx $ Map.fromList $ zip [q0, q1, q2, q3, q4, q5, q6, q7, q8, q9] [0..]
+initialctx = Map.fromList $ zip [q0, q1, q2, q3, q4, q5, q6, q7, q8, q9] [0..]
+ctx = mkctx $ initialctx
