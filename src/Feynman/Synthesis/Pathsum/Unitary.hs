@@ -175,7 +175,7 @@ finalize sop = do
 stateToPhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 stateToPhaseOracle sop = do
   scopedVars <- liftM (Set.fromList . Map.keys) $ ketToScope sop
-  let computableOracle (v,p) = p /= 0 && (vars p) `Set.isSubsetOf` scopedVars
+  let computableOracle (v,p) = p /= 0 -- && (vars p) `Set.isSubsetOf` scopedVars
   let go sop i = case filter computableOracle . solveForX $ (outVals sop)!!i of
         [] -> return sop
         _  -> do
