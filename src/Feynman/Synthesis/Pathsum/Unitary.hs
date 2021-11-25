@@ -17,7 +17,7 @@ import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.Bits (xor)
 
-import Control.Monad (foldM, mapM, mfilter, liftM, (>=>))
+import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Lazy (StateT, get, gets, put, runState, evalState, evalStateT)
 
@@ -129,9 +129,27 @@ revertFrame = flip (foldl applySub) where
   applySub sop (v, p) = substitute [v] p sop
 
 -- | Finds a reducible quadratic
-findQuadraticReduction :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, Var)
-findQuadraticReduction xs p = find go [(x, y) | x <- xs, y <- xs, x /= y] where
-  go (x, y) = isJust $ toBooleanPoly . quotVar x . subst y (ofVar x + ofVar y) $ p
+findQuadraticReduction :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, [Var])
+findQuadraticReduction xs p = msum $ map go xs where
+  pvars = filter isP $ Set.toList $ vars p
+  go y = do
+    pmody <- toBooleanPoly $ power 2 (quotVar y p)
+    subs <- mapM (getSubst y) $ toTermList pmody
+    return (y, subs)
+  getSubst y (a,m) = msum $ map (completesMono m) $ pvars \\ [y]
+  completesMono m z = do
+    pmodz <- toBooleanPoly $ power 2 (quotVar z p)
+    case filter ((1 ==).fst) $ toTermList pmodz of
+      [(_,m')] | m' == m -> Just z
+      _                  -> Nothing
+
+-- | Synthesize a multiply-controlled Toffoli gate
+synthesizeMCT :: Int -> [ID] -> ID -> [Primitive]
+synthesizeMCT _ [] t       = [X t]
+synthesizeMCT _ [x] t      = [CNOT x t]
+synthesizeMCT _ [x,y] t    = Core.ccx x y t
+synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
+  circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
 {-----------------------------------
  Passes
@@ -142,16 +160,102 @@ normalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 normalize = return . normalizeClifford
 
 -- | Simplify the output ket up to affine transformations
-simplifyKet :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-simplifyKet sop = do
+--
+--   Linearizes the ket as |A(x1...xk) + b> and then synthesizes
+--   more or less a pseudoinverse of (A,b)
+affineSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+affineSimplifications sop = do
   output <- linearize $ outVals sop
   let circ = simplifyAffine output
   tell $ dagger circ
   ctx <- gets snd
   return $ sop .> computeActionInCtx (dagger circ) ctx
 
--- | Final affine simplifications needed to implement the operator
---   on the nose
+-- | Simplify the phase polynomial by applying phase gates
+--
+--   We compute a local "frame" by writing the ket as |x1x2...xn>
+--   and then re-writing the phase polynomial over x1...xn
+--
+--   TODO: This sometimes results in extra effort, particularly if the
+--   substitution ends up increasing the number of terms in the phase
+--   polynomial. This is because when p = x + p' and we substitute
+--   p with y, we actually substitute x with y + p'. A better option
+--   may be to factorize the phase polynomial as pQ + R and substitute
+--   so that we have yQ + R, but this is a bit trickier and I need to check
+--   whether this will break some cases...
+phaseSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplifications sop = do
+  let (subs, localSOP) = changeFrame sop
+  ctx <- ketToScope localSOP
+  let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
+  mapM_ synthesizePhaseTerm . toTermList . rename (ctx!) $ poly
+  let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
+  return $ revertFrame subs localSOP'
+  where synthesizePhaseTerm (a, m) = tell $ circ ++ [Rz (Discrete $ -a) "_t"] ++ circ where
+          circ = synthesizeMCT 0 (Set.toList $ vars m) "_t"
+
+-- | Simplify the output ket up to non-linear transformations
+--
+--   Applies reversible synthesis to eliminate non-linear terms where
+--   possible
+nonlinearSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+nonlinearSimplifications = computeFixpoint where
+  computeFixpoint sop = do
+    sop' <- go sop
+    if sop' == sop
+      then return sop'
+      else return sop'
+  go sop = do
+    ctx <- ketToScope sop
+    foldM (simplifyState ctx) sop [0..outDeg sop - 1]
+  scope = Set.fromList . Map.keys
+  simplifyState ctx sop i = foldM (simplifyTerm ctx i) sop (toTermList $ (outVals sop)!!i)
+  simplifyTerm ctx i sop term = case term of
+    (0, _)                                               -> return sop
+    (_, m) | degree m <= 1                               -> return sop
+    (_, m) | not ((vars m) `Set.isSubsetOf` (scope ctx)) -> return sop
+    (_, m) | otherwise                                   -> do
+               target <- qref i
+               let controls = map (ctx!) $ Set.toList (vars m)
+               tell $ synthesizeMCT 0 controls target
+               return $ sop { outVals = addTermAt term i (outVals sop) }
+  addTermAt term i xs =
+    let (head, y:ys) = splitAt i xs in
+      head ++ (y + ofTerm term):ys
+
+{-
+-- | Simplify the output ket up to non-linear transformations
+--
+--   Applies reversible synthesis to eliminate non-linear terms where
+--   possible
+nonlinearSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+nonlinearSimplifications = computeFixpoint where
+  computeFixpoint sop = do
+    sop' <- go sop
+    if sop' == sop
+      then return sop'
+      else return sop'
+  go sop = do
+    ctx <- Debug.Trace.trace ("Computing scope") $ ketToScope sop
+    foldM (simplifyState ctx) sop [0..outDeg sop - 1]
+  scope = Set.fromList . Map.keys
+  simplifyState ctx sop i = Debug.Trace.trace ("Simplifying entry " ++ show i) $ foldM (simplifyTerm ctx i) sop (toTermList $ (outVals sop)!!i)
+  simplifyTerm ctx i sop term = Debug.Trace.trace ("simplifyNonlinear\nctx: " ++ show ctx ++ "\ni: " ++ show i ++ "\nsop: " ++ show sop ++ "\nterm: " ++ show term ++ "\n") $ case term of
+    (0, _)                                               -> return sop
+    (_, m) | degree m <= 1                               -> return sop
+    (_, m) | not ((vars m) `Set.isSubsetOf` (scope ctx)) -> return sop
+    (_, m) | otherwise                                   -> do
+               target <- qref i
+               let controls = Debug.Trace.trace ("Computing controls") $ map (ctx!) $ Set.toList (vars m)
+               tell $ Debug.Trace.trace ("Synthesizing MCT (controls = " ++ show controls ++ ", target = " ++ show target) $ synthesizeMCT 0 controls target
+               return $ Debug.Trace.trace ("Swapping out the output") $ sop { outVals = addTermAt term i (outVals sop) }
+  addTermAt term i xs =
+    let (head, y:ys) = splitAt i xs in
+      head ++ (y + ofTerm term):ys
+-}
+
+-- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
+--   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalize sop = do
   ctx <- gets snd
@@ -170,60 +274,37 @@ finalize sop = do
         bitvecOfVar (PVar _) = error "Attempting to finalize a proper path-sum!"
         bitvecOfVar (FVar _) = error "Attempting to extract a path-sum with free variables!"
 
-  
--- | Swap a (computable) state oracle to a phase oracle
-stateToPhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-stateToPhaseOracle sop = do
-  scopedVars <- liftM (Set.fromList . Map.keys) $ ketToScope sop
-  let computableOracle (v,p) = p /= 0 -- && (vars p) `Set.isSubsetOf` scopedVars
-  let go sop i = case filter computableOracle . solveForX $ (outVals sop)!!i of
-        [] -> return sop
-        _  -> do
-          q <- qref i
-          tell [H q]
-          return $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
-  foldM go sop [0..outDeg sop - 1]
-
--- | Phase oracle synthesis step
-synthesizePhaseOracle :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-synthesizePhaseOracle sop = do
-  -- Compute a local change of variables to get an expression of the phase
-  -- over the current ket
-  let (subs, localSOP) = changeFrame sop
-  ctx <- ketToScope localSOP
-  let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
-  mapM_ synthesizePhaseTerm . toTermList . rename (ctx!) $ poly
-  let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
-  return $ revertFrame subs localSOP'
-  where synthesizePhaseTerm (a, m) = tell $ circ ++ [Rz (Discrete $ -a) "_t"] ++ circ where
-          circ = synthesizeMCT 0 (Set.toList $ vars m) "_t"
-        synthesizeMCT _ [] t       = [X t]
-        synthesizeMCT _ [x] t      = [CNOT x t]
-        synthesizeMCT _ [x,y] t    = Core.ccx x y t
-        synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
-          circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
-
--- | Quadratic term reduction step
-reduceQuadraticTerms :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-reduceQuadraticTerms sop = do
+-- | Reduce the "strength" of the phase polynomial in some variable
+--
+--   Idea is to find a sequence of substitutions giving P' such that P'/y is Boolean.
+--   This appears to be the difficult part of the problem. A simple heuristic is to
+--   find some y such that 2P = yQ + R with Q Boolean and Q admits a "cover" of the form
+--   where for every term x1...xk in Q, there exists i such that 2P = xi(x1...xk) + R'
+--   Then for this cover we can apply the substitution xi <- xi + y, resulting in
+--   2P' = yQ + yQ + Q + R'' = Q + R'' mod 2
+strengthReduction :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+strengthReduction sop = do
   ctx <- ketToScope sop
   let scopedPVars = filter isP . Map.keys $ ctx
-  -- Need to match terms of the form sum_y i^{xy + xz}(-1)^Q where y and z are in scope
   case findQuadraticReduction scopedPVars (phasePoly sop) of
-    Nothing     -> return sop
-    Just (y, z) -> do
-      let sop' = substitute [z] (ofVar y + ofVar z) sop
-      idx_y <- qidx (ctx!y)
-      idx_z <- qidx (ctx!z)
-      let f i = case i of
-            0 -> idx_y
-            1 -> idx_z
-      tell [CNOT (ctx!y) (ctx!z)]
-      return $ sop' .> embed cxgate (outDeg sop' - 2) f  f
-
+    Nothing      -> return sop
+    Just (y, xs) -> do
+      let id_y = ctx!y
+      idx_y <- qidx id_y
+      let applySubst sop x = case Map.lookup x ctx of
+            Nothing   -> return $ substitute [x] (ofVar y + ofVar x) sop
+            Just id_x -> do
+              idx_x <- qidx id_x
+              tell [CNOT (ctx!y) (ctx!x)]
+              let f i = case i of
+                    0 -> idx_y
+                    1 -> idx_x
+              return $ (substitute [x] (ofVar y + ofVar x) sop) .> embed cxgate (outDeg sop - 2) f f
+      foldM applySubst sop xs
+  
 -- | Hadamard step
-reducePaths :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-reducePaths sop = foldM go sop (zip [0..] $ outVals sop) where
+hLayer :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+hLayer sop = foldM go sop (zip [0..] $ outVals sop) where
   reducible v  = isJust . toBooleanPoly . quotVar v $ phasePoly sop
   go sop (i,p) = case filter (\(v,p) -> isP v && p == 0 && reducible v) $ solveForX p of
     [] -> return sop
@@ -242,11 +323,12 @@ synthesizeFrontier sop = go (normalizeClifford sop) where
   go sop
     | pathVars sop == 0 = synthesisPass sop >>= finalize
     | otherwise         = synthesisPass sop
-  synthesisPass = simplifyKet >=>
-                  stateToPhaseOracle >=>
-                  synthesizePhaseOracle >=>
-                  reduceQuadraticTerms >=>
-                  reducePaths >=>
+  synthesisPass = affineSimplifications >=>
+                  phaseSimplifications >=>
+                  nonlinearSimplifications >=>
+                  phaseSimplifications >=>
+                  strengthReduction >=>
+                  hLayer >=>
                   normalize
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
@@ -275,6 +357,10 @@ resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
 {-----------------------------------
  Testing
  -----------------------------------}
+
+eval :: ExtractionState (Pathsum DMod2) -> Map ID Int -> Pathsum DMod2
+eval st = fst . runWriter . evalStateT st . mkctx
+
 testCircuit :: [Primitive]
 testCircuit = [H "y", CNOT "x" "y", T "y", CNOT "x" "y", H "x"]
 

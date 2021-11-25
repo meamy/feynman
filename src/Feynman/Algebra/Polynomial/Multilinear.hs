@@ -198,7 +198,7 @@ instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   fromInteger i = M . Map.singleton (Monomial Set.empty) $ fromInteger i
 
 instance (Ord v, Eq r, Abelian r, ReprC repr) => Abelian (Multilinear v r repr) where
-  power i = M . Map.map (power i) . getTerms
+  power i = normalize . M . Map.map (power i) . getTerms
 
 instance (Ord v, Eq r, Periodic r, ReprC repr) => Periodic (Multilinear v r repr) where
   order = Map.foldr (\a -> lcm (order a)) 1 . getTerms
