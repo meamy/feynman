@@ -17,6 +17,7 @@ import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.Bits (xor)
 
+import Control.Applicative ((<|>))
 import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Lazy (StateT, get, gets, put, runState, evalState, evalStateT)
@@ -129,13 +130,23 @@ revertFrame = flip (foldl applySub) where
   applySub sop (v, p) = substitute [v] p sop
 
 -- | Finds a reducible quadratic
+--
+--   In general I think we'll have to look for some subset that covers the polynomial
+--   As it is we tackle two simple cases where either one variable covers the whole thing
+--   or one variable covers each individual term
 findQuadraticReduction :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, [Var])
 findQuadraticReduction xs p = msum $ map go xs where
   pvars = filter isP $ Set.toList $ vars p
   go y = do
     pmody <- toBooleanPoly $ power 2 (quotVar y p)
-    subs <- mapM (getSubst y) $ toTermList pmody
+    subs <- (getSingleSubst y pmody) <|> (mapM (getSubst y) $ toTermList pmody)
     return (y, subs)
+  getSingleSubst y pmody = (msum $ map (completesPoly pmody) $ pvars \\ [y]) >>= return . (:[])
+  completesPoly pmody z = do
+    pmodz <- toBooleanPoly $ power 2 (quotVar z p)
+    case (pmodz == pmody) of
+      True -> Just z
+      _    -> Nothing
   getSubst y (a,m) = msum $ map (completesMono m) $ pvars \\ [y]
   completesMono m z = do
     pmodz <- toBooleanPoly $ power 2 (quotVar z p)
