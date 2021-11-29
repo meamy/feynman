@@ -129,30 +129,20 @@ revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> Pathsum DMod2
 revertFrame = flip (foldl applySub) where
   applySub sop (v, p) = substitute [v] p sop
 
--- | Finds a reducible quadratic
+-- | Finds a simultaneous substitution y_i <- y + y_i such that P/y is Boolean
 --
---   In general I think we'll have to look for some subset that covers the polynomial
---   As it is we tackle two simple cases where either one variable covers the whole thing
---   or one variable covers each individual term
-findQuadraticReduction :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, [Var])
-findQuadraticReduction xs p = msum $ map go xs where
-  pvars = filter isP $ Set.toList $ vars p
-  go y = do
-    pmody <- toBooleanPoly $ power 2 (quotVar y p)
-    subs <- (getSingleSubst y pmody) <|> (mapM (getSubst y) $ toTermList pmody)
-    return (y, subs)
-  getSingleSubst y pmody = (msum $ map (completesPoly pmody) $ pvars \\ [y]) >>= return . (:[])
-  completesPoly pmody z = do
-    pmodz <- toBooleanPoly $ power 2 (quotVar z p)
-    case (pmodz == pmody) of
-      True -> Just z
-      _    -> Nothing
-  getSubst y (a,m) = msum $ map (completesMono m) $ pvars \\ [y]
-  completesMono m z = do
-    pmodz <- toBooleanPoly $ power 2 (quotVar z p)
-    case filter ((1 ==).fst) $ toTermList pmodz of
-      [(_,m')] | m' == m -> Just z
-      _                  -> Nothing
+--   Exponential in the number of path variables
+findSubstitutions :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, [Var])
+findSubstitutions xs p = find go candidates where
+  go (y, zs) = case foldr (+) (power 2 $ quotVar y p) [power 2 $ quotVar z p | z <- zs] of
+    0 -> True
+    _ -> False
+  pvars      = filter isP $ Set.toList $ vars p
+  candidates = concatMap computeCandidatesI [1..length xs - 1]
+  computeCandidatesI i = [(y, zs) | y <- xs, zs <- choose i $ pvars \\ [y]]
+  choose 0 _      = [[]]
+  choose i []     = []
+  choose i (x:xs) = (choose i xs) ++ (map (x:) $ choose (i-1) xs)
 
 -- | Synthesize a multiply-controlled Toffoli gate
 synthesizeMCT :: Int -> [ID] -> ID -> [Primitive]
@@ -297,7 +287,7 @@ strengthReduction :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 strengthReduction sop = do
   ctx <- ketToScope sop
   let scopedPVars = filter isP . Map.keys $ ctx
-  case findQuadraticReduction scopedPVars (phasePoly sop) of
+  case findSubstitutions scopedPVars (phasePoly sop) of
     Nothing      -> return sop
     Just (y, xs) -> do
       let id_y = ctx!y
@@ -310,7 +300,8 @@ strengthReduction sop = do
               let f i = case i of
                     0 -> idx_y
                     1 -> idx_x
-              return $ (substitute [x] (ofVar y + ofVar x) sop) .> embed cxgate (outDeg sop - 2) f f
+              return $ (substitute [x] (ofVar y + ofVar x) sop) .>
+                       embed cxgate (outDeg sop - 2) f f
       foldM applySubst sop xs
   
 -- | Hadamard step
