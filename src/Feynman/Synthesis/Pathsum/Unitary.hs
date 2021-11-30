@@ -13,6 +13,7 @@ import Data.Semigroup ((<>))
 import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe, isJust)
 import Data.List ((\\), find)
 import Data.Map (Map, (!))
+import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Data.Bits (xor)
@@ -87,6 +88,13 @@ ketToScope sop = foldM go Map.empty $ zip [0..] (outVals sop) where
       q <- qref i
       return $ Map.insert v q ctx
     _       -> return ctx
+
+-- | Compute the reducible variables in scope
+reducibles :: Pathsum DMod2 -> Set Var
+reducibles sop = snd $ foldr go (Set.empty, Set.empty) (outVals sop) where
+  go p (seen, reducibles) = case solveForX p of
+    [(v,0)] | isP v && v `Set.notMember` seen -> (Set.insert v seen, Set.insert v reducibles)
+    _                                         -> (Set.union seen (vars p), Set.difference reducibles (vars p))
 
 -- | Computes a linearization of the ket by mapping monomials to unique variables
 linearize :: Ord v => [SBool v] -> ExtractionState AffineTrans
@@ -286,7 +294,7 @@ finalize sop = do
 strengthReduction :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 strengthReduction sop = do
   ctx <- ketToScope sop
-  let scopedPVars = filter isP . Map.keys $ ctx
+  let scopedPVars = Set.toList $ reducibles sop
   case findSubstitutions scopedPVars (phasePoly sop) of
     Nothing      -> return sop
     Just (y, xs) -> do
@@ -307,8 +315,9 @@ strengthReduction sop = do
 -- | Hadamard step
 hLayer :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 hLayer sop = foldM go sop (zip [0..] $ outVals sop) where
+  candidates   = reducibles sop
   reducible v  = isJust . toBooleanPoly . quotVar v $ phasePoly sop
-  go sop (i,p) = case filter (\(v,p) -> isP v && p == 0 && reducible v) $ solveForX p of
+  go sop (i,p) = case filter (\(v,p) -> Set.member v candidates && isP v && p == 0 && reducible v) $ solveForX p of
     [] -> return sop
     _  -> do
       q <- qref i
