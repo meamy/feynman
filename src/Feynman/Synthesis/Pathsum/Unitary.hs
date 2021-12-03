@@ -89,6 +89,15 @@ ketToScope sop = foldM go Map.empty $ zip [0..] (outVals sop) where
       return $ Map.insert v q ctx
     _       -> return ctx
 
+-- | Checks whether a variable is reducible
+reducible :: Pathsum DMod2 -> Var -> Bool
+reducible sop v = ppCondition && ketCondition where
+  ppCondition  = 0 == power 2 (quotVar v $ phasePoly sop)
+  ketCondition = uncurry (&&) $  foldr go (False, True) $ outVals sop
+  go p (a, b)  = case solveForX p of
+    [(u, 0)] | u == v -> (if a then (True, False) else (True, b))
+    otherwise         -> (a, b && not (Set.member v $ vars p))
+
 -- | Compute the reducible variables in scope
 reducibles :: Pathsum DMod2 -> Set Var
 reducibles sop = snd $ foldr go (Set.empty, Set.empty) (outVals sop) where
@@ -140,12 +149,12 @@ revertFrame = flip (foldl applySub) where
 -- | Finds a simultaneous substitution y_i <- y + y_i such that P/y is Boolean
 --
 --   Exponential in the number of path variables
-findSubstitutions :: [Var] -> PseudoBoolean Var DMod2 -> Maybe (Var, [Var])
-findSubstitutions xs p = find go candidates where
-  go (y, zs) = case foldr (+) (power 2 $ quotVar y p) [power 2 $ quotVar z p | z <- zs] of
-    0 -> True
-    _ -> False
-  pvars      = filter isP $ Set.toList $ vars p
+findSubstitutions :: [Var] -> Pathsum DMod2 -> Maybe (Var, [Var])
+findSubstitutions xs sop = find go candidates where
+  go (y, zs) =
+    let sop' = foldr (\z -> substitute [z] (ofVar z + ofVar y)) sop zs in
+      reducible sop' y
+  pvars      = map PVar [0..pathVars sop - 1]
   candidates = concatMap computeCandidatesI [1..length xs - 1]
   computeCandidatesI i = [(y, zs) | y <- xs, zs <- choose i $ pvars \\ [y]]
   choose 0 _      = [[]]
@@ -232,37 +241,6 @@ nonlinearSimplifications = computeFixpoint where
     let (head, y:ys) = splitAt i xs in
       head ++ (y + ofTerm term):ys
 
-{-
--- | Simplify the output ket up to non-linear transformations
---
---   Applies reversible synthesis to eliminate non-linear terms where
---   possible
-nonlinearSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-nonlinearSimplifications = computeFixpoint where
-  computeFixpoint sop = do
-    sop' <- go sop
-    if sop' == sop
-      then return sop'
-      else return sop'
-  go sop = do
-    ctx <- Debug.Trace.trace ("Computing scope") $ ketToScope sop
-    foldM (simplifyState ctx) sop [0..outDeg sop - 1]
-  scope = Set.fromList . Map.keys
-  simplifyState ctx sop i = Debug.Trace.trace ("Simplifying entry " ++ show i) $ foldM (simplifyTerm ctx i) sop (toTermList $ (outVals sop)!!i)
-  simplifyTerm ctx i sop term = Debug.Trace.trace ("simplifyNonlinear\nctx: " ++ show ctx ++ "\ni: " ++ show i ++ "\nsop: " ++ show sop ++ "\nterm: " ++ show term ++ "\n") $ case term of
-    (0, _)                                               -> return sop
-    (_, m) | degree m <= 1                               -> return sop
-    (_, m) | not ((vars m) `Set.isSubsetOf` (scope ctx)) -> return sop
-    (_, m) | otherwise                                   -> do
-               target <- qref i
-               let controls = Debug.Trace.trace ("Computing controls") $ map (ctx!) $ Set.toList (vars m)
-               tell $ Debug.Trace.trace ("Synthesizing MCT (controls = " ++ show controls ++ ", target = " ++ show target) $ synthesizeMCT 0 controls target
-               return $ Debug.Trace.trace ("Swapping out the output") $ sop { outVals = addTermAt term i (outVals sop) }
-  addTermAt term i xs =
-    let (head, y:ys) = splitAt i xs in
-      head ++ (y + ofTerm term):ys
--}
-
 -- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
@@ -294,8 +272,8 @@ finalize sop = do
 strengthReduction :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 strengthReduction sop = do
   ctx <- ketToScope sop
-  let scopedPVars = Set.toList $ reducibles sop
-  case findSubstitutions scopedPVars (phasePoly sop) of
+  let inScopePVars = filter isP . Map.keys $ ctx
+  case findSubstitutions inScopePVars sop of
     Nothing      -> return sop
     Just (y, xs) -> do
       let id_y = ctx!y
