@@ -93,10 +93,7 @@ ketToScope sop = foldM go Map.empty $ zip [0..] (outVals sop) where
 reducible :: Pathsum DMod2 -> Var -> Bool
 reducible sop v = ppCondition && ketCondition where
   ppCondition  = 0 == power 2 (quotVar v $ phasePoly sop)
-  ketCondition = uncurry (&&) $  foldr go (False, True) $ outVals sop
-  go p (a, b)  = case solveForX p of
-    [(u, 0)] | u == v -> (if a then (True, False) else (True, b))
-    otherwise         -> (a, b && not (Set.member v $ vars p))
+  ketCondition = all (\p -> degree (quotVar v p) <= 0) $ outVals sop
 
 -- | Compute the reducible variables in scope
 reducibles :: Pathsum DMod2 -> Set Var
@@ -291,16 +288,17 @@ strengthReduction sop = do
       foldM applySubst sop xs
   
 -- | Hadamard step
-hLayer :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-hLayer sop = foldM go sop (zip [0..] $ outVals sop) where
+hLayer :: Pathsum DMod2 -> ExtractionState (Maybe (Pathsum DMod2))
+hLayer sop = liftM msum $ mapM go (zip [0..] $ outVals sop) where
   candidates   = reducibles sop
   reducible v  = isJust . toBooleanPoly . quotVar v $ phasePoly sop
-  go sop (i,p) = case filter (\(v,p) -> Set.member v candidates && isP v && p == 0 && reducible v) $ solveForX p of
-    [] -> return sop
+  go (i,p) = case filter (\(v,p) -> Set.member v candidates && isP v && p == 0 && reducible v) $ solveForX p of
+    [] -> return Nothing
     _  -> do
       q <- qref i
       tell [H q]
-      return $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
+      return $ Just $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
+
 
 {-----------------------------------
  Extraction
@@ -311,14 +309,20 @@ synthesizeFrontier :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizeFrontier sop = go (normalizeClifford sop) where
   go sop
     | pathVars sop == 0 = synthesisPass sop >>= finalize
-    | otherwise         = synthesisPass sop
+    | otherwise         = synthesisPass sop >>= reducePaths
   synthesisPass = affineSimplifications >=>
                   phaseSimplifications >=>
                   nonlinearSimplifications >=>
-                  phaseSimplifications >=>
-                  strengthReduction >=>
-                  hLayer >=>
-                  normalize
+                  phaseSimplifications
+  reducePaths sop = do
+    sop' <- hLayer sop
+    case sop' of
+      Just sop'' -> normalize sop''
+      Nothing    -> do
+        sop' <- strengthReduction sop >>= hLayer
+        case sop' of
+          Just sop'' -> normalize sop''
+          Nothing    -> normalize sop
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
 --
