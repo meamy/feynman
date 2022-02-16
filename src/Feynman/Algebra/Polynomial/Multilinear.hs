@@ -405,9 +405,7 @@ substMonomial xs p = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substM
   where m = Set.fromList xs
         substMonoInMono m' a
           | not (m `Set.isSubsetOf` (getVars m')) = ofTerm (a,m')
-          | otherwise =
-            let mono = Monomial (Set.difference (getVars m') m) in
-              distribute a . M . Map.mapKeys (mono <>) $ getTerms p
+          | otherwise = distribute a $ p * ofMonomial (Monomial $ Set.difference (getVars m') m)
 
 -- | Substitute a variable with a monomial
 substVarMono :: (Ord v, Eq r, Num r, ReprC repr) =>
@@ -516,16 +514,16 @@ newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 instance Show IVar where
   show (IVar (x, i)) = Unicode.sub x i
 
-x0 = ofVar (IVar ("x",0)) :: Multilinear IVar DMod2 'Mult
-x1 = ofVar (IVar ("x",1)) :: Multilinear IVar DMod2 'Mult
-x2 = ofVar (IVar ("x",2)) :: Multilinear IVar DMod2 'Mult
-x3 = ofVar (IVar ("x",3)) :: Multilinear IVar DMod2 'Mult
-x4 = ofVar (IVar ("x",4)) :: Multilinear IVar DMod2 'Mult
-x5 = ofVar (IVar ("x",5)) :: Multilinear IVar DMod2 'Mult
-x6 = ofVar (IVar ("x",6)) :: Multilinear IVar DMod2 'Mult
-x7 = ofVar (IVar ("x",7)) :: Multilinear IVar DMod2 'Mult
-x8 = ofVar (IVar ("x",8)) :: Multilinear IVar DMod2 'Mult
-x9 = ofVar (IVar ("x",9)) :: Multilinear IVar DMod2 'Mult
+x0 = ofVar (IVar ("x",0)) :: SBool IVar
+x1 = ofVar (IVar ("x",1)) :: SBool IVar
+x2 = ofVar (IVar ("x",2)) :: SBool IVar
+x3 = ofVar (IVar ("x",3)) :: SBool IVar
+x4 = ofVar (IVar ("x",4)) :: SBool IVar
+x5 = ofVar (IVar ("x",5)) :: SBool IVar
+x6 = ofVar (IVar ("x",6)) :: SBool IVar
+x7 = ofVar (IVar ("x",7)) :: SBool IVar
+x8 = ofVar (IVar ("x",8)) :: SBool IVar
+x9 = ofVar (IVar ("x",9)) :: SBool IVar
 
 y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DMod2 'Mult
 y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DMod2 'Mult

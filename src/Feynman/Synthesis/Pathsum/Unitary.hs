@@ -134,7 +134,7 @@ changeFrame sop = foldl go ([], sop) [0..outDeg sop - 1] where
     (1,m):xs                 ->
       let vs   = Set.toList . vars $ ofMonomial m
           poly = (outVals sop)!!i
-          psub = ofVar (fv i) + poly - ofMonomial m
+          psub = ofVar (fv i) + poly + ofMonomial m
       in
         ((fv i, poly):subs, substitute vs psub sop)
 
@@ -172,7 +172,7 @@ synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ whe
 
 -- | Apply Clifford normalizations
 normalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-normalize = return . normalizeClifford
+normalize = return . grind
 
 -- | Simplify the output ket up to affine transformations
 --
@@ -306,7 +306,7 @@ hLayer sop = liftM msum $ mapM go (zip [0..] $ outVals sop) where
 
 -- | A single pass of the synthesis algorithm
 synthesizeFrontier :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-synthesizeFrontier sop = go (normalizeClifford sop) where
+synthesizeFrontier sop = go (grind sop) where
   go sop
     | pathVars sop == 0 = synthesisPass sop >>= finalize
     | otherwise         = synthesisPass sop >>= reducePaths
@@ -351,8 +351,8 @@ resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
  Testing
  -----------------------------------}
 
-eval :: ExtractionState (Pathsum DMod2) -> Map ID Int -> Pathsum DMod2
-eval st = fst . runWriter . evalStateT st . mkctx
+extract :: ExtractionState a -> Map ID Int -> (a, [Primitive])
+extract st = runWriter . evalStateT st . mkctx
 
 testCircuit :: [Primitive]
 testCircuit = [H "y", CNOT "x" "y", T "y", CNOT "x" "y", H "x"]
@@ -442,6 +442,12 @@ genH = do
 -- | Checks that the path sum of a Clifford+T circuit is indeed Unitary
 prop_Unitary_is_Unitary :: CliffordT -> Bool
 prop_Unitary_is_Unitary (CliffordT xs) = isUnitary $ simpleAction xs
+
+-- | Checks that frame change is reversible
+prop_Frame_Reversible :: CliffordT -> Bool
+prop_Frame_Reversible (CliffordT xs) = sop == revertFrame subs localSOP where
+  sop              = grind $ simpleAction xs
+  (subs, localSOP) = changeFrame sop
 
 -- | Checks that the path sum of a Clifford+T circuit is correctly extracted
 prop_Clifford_plus_T_Extraction_Possible :: CliffordT -> Bool

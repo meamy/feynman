@@ -693,7 +693,9 @@ matchHHLinear :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHLinear sop = do
   (v, p)   <- filter ((<= 1) . degree . snd) $ matchHH sop
   (v', p') <- solveForX p
-  return (v, v', p')
+  case v' of
+    PVar _ -> return (v, v', p')
+    _      -> mzero
 
 -- | Instances of the HH rule with only internal substitutions
 matchHHInternal :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
@@ -833,9 +835,9 @@ rewriteVar sop = case sop of
 -- | Performs basic simplifications
 simplify :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 simplify sop = case sop of
-  Elim y         -> grind $ applyElim y sop
-  HHLinear y z p -> grind $ applyHHSolved y z p sop
-  Omega y p      -> grind $ applyOmega y p sop
+  Elim y         -> simplify $ applyElim y sop
+  HHLinear y z p -> simplify $ applyHHSolved y z p sop
+  Omega y p      -> simplify $ applyOmega y p sop
   _              -> sop
 
 -- | The rewrite system of M. Amy,
