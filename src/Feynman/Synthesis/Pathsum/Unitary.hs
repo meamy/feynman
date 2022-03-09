@@ -446,6 +446,14 @@ hardestCase = [H "x"] ++ cs "x" "y" ++ [H "y", CNOT "y" "x"]
 evenHarderCase :: [Primitive]
 evenHarderCase = [CNOT "x" "z", H "x"] ++ ccx "x" "y" "z"
 
+-- Random failing circuit. Fails because we miss some permutations that
+-- make a path variable reducible. Below is the relevant part of the residual
+-- path sum
+--
+-- |x₀⟩⋯|x₉⟩ ⟼ |x₆⟩|y₃⟩|y₂⟩|x₇⟩|x₅ + x₁y₁ + x₂y₁ + x₃y₁ + x₄y₁ + x₉y₁⟩
+--             |x₁ + x₃⟩|x₂ + x₃ + x₄⟩|x₃ + x₉⟩|y₁⟩|y₄⟩
+--
+hardStateSimp = [H q0,H q1,H q9,H q9,H q1,H q7,CNOT q1 q0,H q5,T q0,CNOT q2 q8,CNOT q9 q4,CNOT q9 q1,H q0,T q5,CNOT q9 q3,H q9,H q9,T q3,T q3,H q3,T q5,T q9,H q9,H q3,H q8,CNOT q1 q4,CNOT q1 q7,CNOT q6 q2,CNOT q4 q2,T q2,T q9,H q5,T q3,T q1,T q1,CNOT q5 q3,CNOT q0 q9,T q8,CNOT q2 q1,CNOT q2 q3,H q1,CNOT q6 q0,CNOT q4 q0,CNOT q7 q6,T q0,T q4,H q9,T q7,H q9,H q4,H q6,CNOT q1 q6,H q0,H q1,T q7,T q5,T q1,T q3,H q6,CNOT q4 q9,T q0,CNOT q8 q2,T q2,CNOT q4 q5,H q1,T q5,CNOT q8 q2,T q8,T q7,T q0,CNOT q0 q8,H q0,T q8,H q2,CNOT q4 q0,CNOT q7 q9,T q8,H q3,CNOT q3 q0,CNOT q9 q0,CNOT q6 q5,H q5,T q1,CNOT q4 q8,H q9]
 {-----------------------------------
  Automated tests
  -----------------------------------}
