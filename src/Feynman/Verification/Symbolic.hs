@@ -43,9 +43,9 @@ primitiveAction gate = case gate of
   T _           -> tgate
   Tinv _        -> tdggate
   Swap _ _      -> swapgate
-  Rz theta _    -> rzgate $ discretize theta
-  Rx theta _    -> hgate * rzgate (discretize theta) * hgate
-  Ry theta _    -> rzgate (discretize theta) * hgate * rzgate (discretize theta) * hgate
+  Rz theta _    -> rzgate $ fromDyadic $ discretize theta
+  Rx theta _    -> hgate * rzgate (fromDyadic $ discretize theta) * hgate
+  Ry theta _    -> rzgate (fromDyadic $ discretize theta) * hgate * rzgate (fromDyadic $ discretize theta) * hgate
   Uninterp _ _  -> error "Uninterpreted gates not supported"
 
 -- | Find the relevant index or allocate one for the given qubit

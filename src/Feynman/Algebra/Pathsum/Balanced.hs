@@ -342,9 +342,9 @@ rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
 
 -- | R_z gate
-rzgate :: (Eq g, Abelian g, Dyadic g) => DyadicRational -> Pathsum g
+rzgate :: (Eq g, Abelian g, Dyadic g) => g -> Pathsum g
 rzgate theta = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (fromDyadic theta) (lift $ ofVar (IVar 0))
+  where p = scale theta (lift $ ofVar (IVar 0))
 
 -- | H gate
 hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -384,6 +384,12 @@ mctgate :: (Eq g, Num g) => Int -> Pathsum g
 mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (controls ++ [t + foldr (*) 1 controls])
   where controls = [ofVar (IVar i) | i <- [0..k-1]]
         t        = ofVar $ IVar k
+
+-- | n-qubit R_z gate
+rzNgate :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g
+rzNgate theta k = Pathsum 0 k k 0 p controls
+  where controls = [ofVar (IVar i) | i <- [0..k-1]]
+        p        = scale theta (lift $ foldr (*) 1 controls)
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g

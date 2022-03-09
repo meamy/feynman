@@ -55,11 +55,21 @@ import Debug.Trace
  -----------------------------------}
 
 type Ctx = (Map Int ID, Map ID Int)
-type ExtractionState a = StateT Ctx (Writer [Primitive]) a
+type ExtractionState a = StateT Ctx (Writer [ExtractionGates]) a
+data ExtractionGates = Hadamard ID | Phase DMod2 [ID] | MCT [ID] ID | Swapper ID ID deriving Show
 
 -- | Create a bidirectional context from a mapping from IDs to indices
 mkctx :: Map ID Int -> (Map Int ID, Map ID Int)
 mkctx ctx = (Map.fromList . map (\(a, b) -> (b, a)) . Map.toList $ ctx, ctx)
+
+-- | Deprecated, need a type class
+daggerDep :: [ExtractionGates] -> [ExtractionGates]
+daggerDep = reverse . map daggerGateDep where
+  daggerGateDep g = case g of
+    Hadamard _ -> g
+    Phase a xs -> Phase (-a) xs
+    MCT _ _    -> g
+    Swapper _ _ -> g
 
 {-----------------------------------
  Utilities
@@ -128,7 +138,7 @@ changeFrame :: Pathsum DMod2 -> ([(Var, SBool Var)], Pathsum DMod2)
 changeFrame sop = foldl go ([], sop) [0..outDeg sop - 1] where
   nonConstant (a,m) = a /= 0 && degree m > 0
   fv i              = FVar $ "#tmp" ++ show i
-  go (subs, sop) i  = case filter nonConstant . toTermList $ (outVals sop)!!i of
+  go (subs, sop) i  = case filter nonConstant . reverse . toTermList $ (outVals sop)!!i of
     []                       -> (subs, sop)
     (1,m):[] | degree m == 1 -> (subs, sop)
     (1,m):xs                 ->
@@ -158,14 +168,6 @@ findSubstitutions xs sop = find go candidates where
   choose i []     = []
   choose i (x:xs) = (choose i xs) ++ (map (x:) $ choose (i-1) xs)
 
--- | Synthesize a multiply-controlled Toffoli gate
-synthesizeMCT :: Int -> [ID] -> ID -> [Primitive]
-synthesizeMCT _ [] t       = [X t]
-synthesizeMCT _ [x] t      = [CNOT x t]
-synthesizeMCT _ [x,y] t    = Core.ccx x y t
-synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
-  circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
-
 {-----------------------------------
  Passes
  -----------------------------------}
@@ -181,10 +183,10 @@ normalize = return . grind
 affineSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 affineSimplifications sop = do
   output <- linearize $ outVals sop
-  let circ = simplifyAffine output
-  tell $ dagger circ
+  let circ = dagger $ simplifyAffine output
+  tell $ map toMCT circ
   ctx <- gets snd
-  return $ sop .> computeActionInCtx (dagger circ) ctx
+  return $ sop .> computeActionInCtx circ ctx
 
 -- | Simplify the phase polynomial by applying phase gates
 --
@@ -206,8 +208,7 @@ phaseSimplifications sop = do
   mapM_ synthesizePhaseTerm . toTermList . rename (ctx!) $ poly
   let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
   return $ revertFrame subs localSOP'
-  where synthesizePhaseTerm (a, m) = tell $ circ ++ [Rz (Discrete $ -a) "_t"] ++ circ where
-          circ = synthesizeMCT 0 (Set.toList $ vars m) "_t"
+  where synthesizePhaseTerm (a, m) = tell [Phase (-a) (Set.toList $ vars m)]
 
 -- | Simplify the output ket up to non-linear transformations
 --
@@ -232,7 +233,7 @@ nonlinearSimplifications = computeFixpoint where
     (_, m) | otherwise                                   -> do
                target <- qref i
                let controls = map (ctx!) $ Set.toList (vars m)
-               tell $ synthesizeMCT 0 controls target
+               tell [MCT controls target]
                return $ sop { outVals = addTermAt term i (outVals sop) }
   addTermAt term i xs =
     let (head, y:ys) = splitAt i xs in
@@ -245,10 +246,10 @@ finalize sop = do
   ctx <- gets snd
   let input = Map.map (\i -> (bitI n i, False)) ctx
   let output = Map.map (\i -> bitvecOfPoly $ (outVals sop)!!i) ctx
-  let circ = affineSynth input output
-  tell $ dagger circ
+  let circ = dagger $ affineSynth input output
+  tell $ map toMCT circ
   ctx <- gets snd
-  return $ sop .> computeActionInCtx (dagger circ) ctx
+  return $ sop .> computeActionInCtx circ ctx
   where n = inDeg sop
         bitvecOfPoly p 
           | degree p > 1 = error "Attempting to finalize non-linear path-sum!"
@@ -266,6 +267,14 @@ finalize sop = do
 --   where for every term x1...xk in Q, there exists i such that 2P = xi(x1...xk) + R'
 --   Then for this cover we can apply the substitution xi <- xi + y, resulting in
 --   2P' = yQ + yQ + Q + R'' = Q + R'' mod 2
+--
+--   Unfortunately this doesn't work for non-linear substitutions, e.g.
+--     2P = x1x2y1 + x1y2
+--   In this case, y2 <- y2 + x2y1 works.
+--
+--   More generally, say we have 2P = yQ + R. We want
+--   to find some permutation [zi <- zi + Pi] such that
+--     2P[zi <- zi + Pi] = R'
 strengthReduction :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 strengthReduction sop = do
   ctx <- ketToScope sop
@@ -279,7 +288,7 @@ strengthReduction sop = do
             Nothing   -> return $ substitute [x] (ofVar y + ofVar x) sop
             Just id_x -> do
               idx_x <- qidx id_x
-              tell [CNOT (ctx!y) (ctx!x)]
+              tell [MCT [(ctx!y)] (ctx!x)]
               let f i = case i of
                     0 -> idx_y
                     1 -> idx_x
@@ -296,9 +305,28 @@ hLayer sop = liftM msum $ mapM go (zip [0..] $ outVals sop) where
     [] -> return Nothing
     _  -> do
       q <- qref i
-      tell [H q]
+      tell [Hadamard q]
       return $ Just $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
 
+{-----------------------------------
+ Synthesis
+ -----------------------------------}
+
+-- | Primitive to MCT gate
+toMCT :: Primitive -> ExtractionGates
+toMCT g = case g of
+  CNOT c t -> MCT [c] t
+  X t      -> MCT []  t
+  Swap x y -> Swapper x y
+  _        -> error "Not an MCT gate"
+
+-- | Synthesize a multiply-controlled Toffoli gate
+synthesizeMCT :: Int -> [ID] -> ID -> [Primitive]
+synthesizeMCT _ [] t       = [X t]
+synthesizeMCT _ [x] t      = [CNOT x t]
+synthesizeMCT _ [x,y] t    = Core.ccx x y t
+synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
+  circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
 {-----------------------------------
  Extraction
@@ -325,15 +353,10 @@ synthesizeFrontier sop = go (grind sop) where
           Nothing    -> normalize sop
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
---
---   Algorithm proceeds by Hadamard stages. In each stage
---     1. Normalize the path sum to get ket(x_1...x_n)
---     2. Synthesize P_{x_1...x_n}
---     3. Find some ket(x_i) such that P_{x_i} = x_i*Q(x...)
-extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [Primitive]
+extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]
 extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
   processWriter w = case runWriter w of
-    (True, circ) -> Just $ dagger circ
+    (True, circ) -> Just $ daggerDep circ
     _            -> Nothing
   go sop = do
     sop' <- synthesizeFrontier sop
@@ -342,8 +365,7 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
       else return $ isTrivial sop'
 
 -- | Resynthesizes a circuit
--- Ugh... Again we run into problems
-resynthesizeCircuit :: [Primitive] -> Maybe [Primitive]
+resynthesizeCircuit :: [Primitive] -> Maybe [ExtractionGates]
 resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
   (sop, ctx) = runState (computeAction xs) Map.empty
 
@@ -351,7 +373,33 @@ resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
  Testing
  -----------------------------------}
 
-extract :: ExtractionState a -> Map ID Int -> (a, [Primitive])
+-- | Retrieve the path sum representation of a primitive gate
+extractionAction :: ExtractionGates -> Pathsum DMod2
+extractionAction gate = case gate of
+  Hadamard _     -> hgate
+  Phase theta xs -> rzNgate theta $ length xs
+  MCT xs _       -> mctgate $ length xs
+
+-- | Apply a circuit to a state
+applyExtract :: Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
+applyExtract sop xs = do
+  ctx <- gets snd
+  return $ foldl (absorbGate ctx) sop xs
+  where absorbGate ctx sop gate =
+          let index xs = ((Map.fromList $ zip [0..] [ctx!x | x <- xs])!)
+          in case gate of
+            Hadamard x     -> sop .> embed hgate (outDeg sop - 1) (index [x]) (index [x])
+            Swapper x y    -> sop .> embed swapgate (outDeg sop - 2) (index [x, y]) (index [x, y])
+            Phase theta xs -> sop .> embed (rzNgate theta (length xs))
+                                           (outDeg sop - length xs)
+                                           (index xs)
+                                           (index xs)
+            MCT xs x       -> sop .> embed (mctgate $ length xs)
+                                           (outDeg sop - length xs - 1)
+                                           (index $ xs ++ [x])
+                                           (index $ xs ++ [x])
+
+extract :: ExtractionState a -> Map ID Int -> (a, [ExtractionGates])
 extract st = runWriter . evalStateT st . mkctx
 
 testCircuit :: [Primitive]
@@ -449,7 +497,7 @@ prop_Frame_Reversible (CliffordT xs) = sop == revertFrame subs localSOP where
   sop              = grind $ simpleAction xs
   (subs, localSOP) = changeFrame sop
 
--- | Checks that the path sum of a Clifford+T circuit is correctly extracted
+-- | Checks that extraction always succeeds for a unitary path sum
 prop_Clifford_plus_T_Extraction_Possible :: CliffordT -> Bool
 prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCircuit xs)
 
@@ -457,8 +505,9 @@ prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCi
 -- | Checks that the path sum of a Clifford+T circuit is correctly extracted
 prop_Clifford_plus_T_Extraction_Correct :: CliffordT -> Bool
 prop_Clifford_plus_T_Extraction_Correct (CliffordT xs) = go where
+  (sop, ctx) = runState (computeAction xs) Map.empty
+  xs' = fromJust $ extractUnitary (mkctx ctx) sop
   go  = isTrivial . normalizeClifford . simpleAction $ xs ++ Core.dagger xs'
-  xs' = resynthesizeCircuit xs
 -}
 
 q0 = "q0"
