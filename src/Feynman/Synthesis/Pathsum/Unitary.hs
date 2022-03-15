@@ -41,6 +41,7 @@ import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Polynomial hiding (Var)
 import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
+import qualified Feynman.Algebra.Pathsum.Balanced as PS
 
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
@@ -56,7 +57,7 @@ import Debug.Trace
 
 type Ctx = (Map Int ID, Map ID Int)
 type ExtractionState a = StateT Ctx (Writer [ExtractionGates]) a
-data ExtractionGates = Hadamard ID | Phase DMod2 [ID] | MCT [ID] ID | Swapper ID ID deriving Show
+data ExtractionGates = Hadamard ID | Phase DMod2 [ID] | MCT [ID] ID | Swapper ID ID deriving (Show, Eq)
 
 -- | Create a bidirectional context from a mapping from IDs to indices
 mkctx :: Map ID Int -> (Map Int ID, Map ID Int)
@@ -297,16 +298,17 @@ strengthReduction sop = do
       foldM applySubst sop xs
   
 -- | Hadamard step
-hLayer :: Pathsum DMod2 -> ExtractionState (Maybe (Pathsum DMod2))
-hLayer sop = liftM msum $ mapM go (zip [0..] $ outVals sop) where
+hLayer :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+hLayer sop = foldM go sop (zip [0..] $ outVals sop) where
   candidates   = reducibles sop
   reducible v  = isJust . toBooleanPoly . quotVar v $ phasePoly sop
-  go (i,p) = case filter (\(v,p) -> Set.member v candidates && isP v && p == 0 && reducible v) $ solveForX p of
-    [] -> return Nothing
+  checkIt (v,p) = p == 0 && isP v && Set.member v candidates && reducible v
+  go sop (i,p) = case filter checkIt (solveForX p) of
+    [] -> return sop
     _  -> do
       q <- qref i
       tell [Hadamard q]
-      return $ Just $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
+      return $ sop .> embed hgate (outDeg sop - 1) (\0 -> i) (\0 -> i)
 
 {-----------------------------------
  Synthesis
@@ -328,6 +330,27 @@ synthesizeMCT _ [x,y] t    = Core.ccx x y t
 synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
   circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
+-- | Push swaps to the end
+pushSwaps :: [ExtractionGates] -> [ExtractionGates]
+pushSwaps = reverse . snd . go (Map.empty, []) where
+  get :: Map ID ID -> ID -> ID
+  get ctx q               = Map.findWithDefault q q ctx
+  synthesize :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
+  synthesize q (ctx, acc) =
+    let q' = get ctx q in
+      if q' == q
+      then (ctx, acc)
+      else (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc)
+  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
+  go (ctx, acc) []        = foldr synthesize (ctx, acc) $ Map.keys ctx
+  go (ctx, acc) (x:xs)    = case x of
+    Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
+    Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
+    MCT cs t      -> go (ctx, (MCT (map (get ctx) cs) (get ctx t)):acc) xs
+    Swapper q1 q2 ->
+      let (q1', q2') = (get ctx q1, get ctx q2) in
+        go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
+
 {-----------------------------------
  Extraction
  -----------------------------------}
@@ -343,14 +366,10 @@ synthesizeFrontier sop = go (grind sop) where
                   nonlinearSimplifications >=>
                   phaseSimplifications
   reducePaths sop = do
-    sop' <- hLayer sop
-    case sop' of
-      Just sop'' -> normalize sop''
-      Nothing    -> do
-        sop' <- strengthReduction sop >>= hLayer
-        case sop' of
-          Just sop'' -> normalize sop''
-          Nothing    -> normalize sop
+    sop' <- hLayer sop >>= normalize
+    case pathVars sop' < pathVars sop of
+      True  -> return sop'
+      False -> strengthReduction sop' >>= hLayer >>= normalize
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
 extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]
@@ -372,6 +391,19 @@ resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
 {-----------------------------------
  Testing
  -----------------------------------}
+
+-- | Primitive to MCT gate
+toExtraction :: Primitive -> ExtractionGates
+toExtraction g = case g of
+  CNOT c t -> MCT [c] t
+  X t      -> MCT []  t
+  Swap x y -> Swapper x y
+  H t      -> Hadamard t
+  Z t      -> Phase (fromDyadic $ dyadic 1 0) [t]
+  S t      -> Phase (fromDyadic $ dyadic 1 1) [t]
+  Sinv t   -> Phase (fromDyadic $ dyadic 3 1) [t]
+  T t      -> Phase (fromDyadic $ dyadic 1 2) [t]
+  Tinv t   -> Phase (fromDyadic $ dyadic 7 2) [t]
 
 -- | Retrieve the path sum representation of a primitive gate
 extractionAction :: ExtractionGates -> Pathsum DMod2
@@ -508,6 +540,49 @@ prop_Frame_Reversible (CliffordT xs) = sop == revertFrame subs localSOP where
 -- | Checks that extraction always succeeds for a unitary path sum
 prop_Clifford_plus_T_Extraction_Possible :: CliffordT -> Bool
 prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCircuit xs)
+
+-- | Checks that the translation from Clifford+T to MCT is correct
+prop_Translation_Correct :: CliffordT -> Bool
+prop_Translation_Correct (CliffordT xs) = grind sop == grind sop' where
+  (sop, ctx) = runState (computeAction xs) Map.empty
+  sop'       = fst $ extract (applyExtract (identity $ Map.size ctx) (map toExtraction xs)) ctx
+
+-- | Checks that affine simplifications are correct
+prop_Affine_Correctness :: CliffordT -> Bool
+prop_Affine_Correctness (CliffordT xs) = grind sop' == grind sop'' where
+  (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  (sop', gates) = extract (affineSimplifications sop) ctx
+  (sop'', _)    = extract (applyExtract sop gates) ctx
+
+-- | Checks that phase simplifications are correct
+prop_Phase_Correctness :: CliffordT -> Bool
+prop_Phase_Correctness (CliffordT xs) = grind sop' == grind sop'' where
+  (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  (sop', gates) = extract (phaseSimplifications sop) ctx
+  (sop'', _)    = extract (applyExtract sop gates) ctx
+
+-- | Checks that nonlinear simplifications are correct
+prop_Nonlinear_Correctness :: CliffordT -> Bool
+prop_Nonlinear_Correctness (CliffordT xs) = grind sop' == grind sop'' where
+  (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  (sop', gates) = extract (nonlinearSimplifications sop) ctx
+  (sop'', _)    = extract (applyExtract sop gates) ctx
+
+-- | Checks that each step of the synthesis algorithm is correct
+prop_Frontier_Correctness :: CliffordT -> Bool
+prop_Frontier_Correctness (CliffordT xs) = grind sop' == grind sop'' where
+  (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  (sop', gates) = extract (synthesizeFrontier sop) ctx
+  (sop'', _)    = extract (applyExtract sop gates) ctx
+
+-- | Checks that the overall algorithm is correct
+prop_Extraction_Correctness :: CliffordT -> Bool
+prop_Extraction_Correctness (CliffordT xs) = isTrivial sop' where
+  (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  gates    = extractUnitary (mkctx ctx) sop
+  sop'       = case gates of
+    Just xs' -> grind $ fst $ extract (applyExtract sop (daggerDep xs')) ctx
+    Nothing  -> grind $ sop .> PS.dagger sop'
 
 {-
 -- | Checks that the path sum of a Clifford+T circuit is correctly extracted
