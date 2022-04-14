@@ -56,7 +56,7 @@ library
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,
                        array >= 0.5.1.0,
-                       base >= 4.9 && < 4.13,
+                       base >= 4.9,
                        bv,
                        bytestring,
                        containers >= 0.5.8.1,
