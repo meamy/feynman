@@ -41,6 +41,7 @@ library
                        Feynman.Synthesis.Reversible.Parallel,
                        Feynman.Synthesis.Reversible.Gray,
                        Feynman.Synthesis.Pathsum.Clifford,
+                       Feynman.Synthesis.Pathsum.Unitary,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
@@ -135,4 +136,16 @@ executable ar21
                        base,
                        mtl,
                        containers >= 0.5.8.1
+  default-language:    Haskell2010
+
+executable abr22
+  main-is:             abr22.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.5.8.1,
+                       QuickCheck >= 2.8.2
   default-language:    Haskell2010

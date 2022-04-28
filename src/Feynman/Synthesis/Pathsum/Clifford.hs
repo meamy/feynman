@@ -13,7 +13,8 @@ module Feynman.Synthesis.Pathsum.Clifford(
   isClifford,
   isUnitary,
   extractClifford,
-  resynthesizeClifford
+  resynthesizeClifford,
+  generateClifford
   ) where
 
 import Data.Semigroup ((<>))
@@ -33,6 +34,7 @@ import Test.QuickCheck (Arbitrary(..),
                         generate,
                         resize,
                         listOf,
+                        listOf1,
                         suchThat,
                         chooseInt,
                         oneof)
@@ -141,7 +143,7 @@ renameOutputs sop = sop { phasePoly = rename sub (phasePoly sop),
 --     7. synthesize \(|\vec{y}\rangle \mapsto i^{B(\vec{y})}|\vec{y}\rangle\)
 extractClifford :: Pathsum DMod2 -> Maybe [Primitive]
 extractClifford sop = validated >>= return . extract where
-  validated   = if isClifford sop && isUnitary sop then Just sop else Nothing
+  validated   = Just sop --if isClifford sop && isUnitary sop then Just sop else Nothing
   extract sop =
     let (sop', c5) = runWriter . normalizeInternal $ sop
         pMap = filter (isP . fst) . mapMaybe (\(p,i) -> fmap (,i) $ asVar p) . zip (outVals sop') $ [0..]
@@ -161,7 +163,7 @@ extractClifford sop = validated >>= return . extract where
 synthesizePP :: PseudoBoolean ID DMod2 -> [Primitive]
 synthesizePP poly = concatMap synthesizeTerm . map expandMonomial . toTermList $ poly where
   expandMonomial (a,m)       = (a, Set.toList $ vars m)
-  synthesizeTerm (a,[])      = globalPhase (Set.elemAt 0 $ vars poly) (Discrete a)
+  synthesizeTerm (a,[])      = globalPhase (var 0) (Discrete a)
   synthesizeTerm (a,[v])     = synthesizePhase v (Discrete a)
   synthesizeTerm (1,[v1,v2]) = [CZ v1 v2]
 
@@ -223,25 +225,26 @@ maxGates = 100
 newtype Clifford = Clifford [Primitive] deriving (Show, Eq)
 
 instance Arbitrary Clifford where
-  arbitrary = fmap Clifford $ resize maxGates $ listOf $ oneof [genH, genS, genCX]
+  arbitrary = fmap Clifford $ resize maxGates $ listOf $ oneof gates where
+    gates = [genH maxSize, genS maxSize, genCX maxSize]
 
 -- | Random CX gate
-genCX :: Gen Primitive
-genCX = do
-  x <- chooseInt (0,maxSize)
-  y <- chooseInt (0,maxSize) `suchThat` (/= x)
+genCX :: Int -> Gen Primitive
+genCX n = do
+  x <- chooseInt (0, n)
+  y <- chooseInt (0, n) `suchThat` (/= x)
   return $ CNOT (var x) (var y)
 
 -- | Random S gate
-genS :: Gen Primitive
-genS = do
-  x <- chooseInt (0,maxSize)
+genS :: Int -> Gen Primitive
+genS n = do
+  x <- chooseInt (0,n)
   return $ S (var x)
 
 -- | Random H gate
-genH :: Gen Primitive
-genH = do
-  x <- chooseInt (0,maxSize)
+genH :: Int -> Gen Primitive
+genH n = do
+  x <- chooseInt (0,n)
   return $ H (var x)
 
 -- | Checks that the path sum of a Clifford circuit is indeed Clifford
@@ -257,3 +260,8 @@ prop_Clifford_Extraction_Correct :: Clifford -> Bool
 prop_Clifford_Extraction_Correct (Clifford xs) = go where
   go  = isTrivial . normalizeClifford . simpleAction $ xs ++ Core.dagger xs'
   xs' = resynthesizeClifford xs
+
+-- | Generates a random Clifford circuit
+generateClifford :: Int -> Int -> IO [Primitive]
+generateClifford n k = generate customArbitrary where
+  customArbitrary = resize k $ listOf1 $ oneof [genH n, genS n, genCX n]

@@ -26,6 +26,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   PseudoBoolean,
   SBool,
   coefficients,
+  support,
   toTermList,
   vars,
   getConstant,
@@ -211,6 +212,10 @@ instance (Ord v, IsString v, Eq r, Num r, ReprC repr) => IsString (Multilinear v
 -- | Get a list of the coefficients in grevlex order
 coefficients :: Multilinear v r repr -> [r]
 coefficients = Map.elems . getTerms
+
+-- | Get the support in grevlex order
+support :: Multilinear v r repr -> [Monomial v repr]
+support = Map.keys . getTerms
 
 -- | Get the terms in grevlex order
 toTermList :: Multilinear v r repr -> [(r, Monomial v repr)]

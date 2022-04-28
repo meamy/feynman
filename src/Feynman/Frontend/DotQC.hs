@@ -2,6 +2,7 @@ module Feynman.Frontend.DotQC where
 
 import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
 import Feynman.Algebra.Base
+import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..))
 
 import Data.List
 
@@ -272,6 +273,16 @@ gateFromCliffordT g = case g of
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
+
+gateFromExtractionBasis :: ExtractionGates -> Gate
+gateFromExtractionBasis g = case g of
+  Hadamard x    -> Gate "H" 1 [x]
+  MCT xs x      -> Gate "tof" 1 $ xs ++ [x]
+  Phase f xs    -> ParamGate "Rz" 1 (Discrete f) $ xs
+  Swapper x y   -> Gate "swap" 1 [x, y]
+
+fromExtractionBasis :: [ExtractionGates] -> [Gate]
+fromExtractionBasis = map gateFromExtractionBasis
 
 {- Statistics -}
 

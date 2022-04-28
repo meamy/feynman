@@ -215,6 +215,17 @@ simplifyPrimitive circ =
   in
     fst . unzip . (converge simplify) $ circ'
 
+-- Removes all swap gates by re-indexing
+removeSwaps :: [Primitive] -> [Primitive]
+removeSwaps = reverse . go (Map.empty, []) where
+  get ctx q = Map.findWithDefault q q ctx
+  go (ctx, acc) []        = acc
+  go (ctx, acc) (x:xs)    = case x of
+    Swap q1 q2 ->
+      let (q1', q2') = (get ctx q1, get ctx q2) in
+        go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
+    _          -> go (ctx, (substGate (get ctx) x):acc) xs
+
 -- Builtin circuits
 
 cs :: ID -> ID -> [Primitive]

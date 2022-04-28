@@ -29,13 +29,14 @@ import Test.QuickCheck (Arbitrary(..),
                         generate,
                         resize,
                         listOf,
+                        listOf1,
                         suchThat,
                         chooseInt,
                         oneof)
 
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs, ccx)
+import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs, ccx, removeSwaps)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Polynomial hiding (Var)
@@ -131,18 +132,31 @@ linearize xs = reindex $ evalState (mapM linearizePoly xs) (0, Map.empty) where
         put (maxBit + 1, Map.insert mono maxBit ctx)
         return maxBit
 
+-- | Computes a linearization of the ket by mapping monomials to unique variables
+linearizeV2 :: Ord v => [SBool v] -> ExtractionState AffineTrans
+linearizeV2 xs =
+  let supp = Set.toDescList . foldr Set.union (Set.empty) . map (Set.fromAscList . support) $ xs
+      ctx  = Map.fromDescList $ zip supp [0..]
+      k    = length supp
+      linearizePoly f = foldl linearizeTerm (bitI 0 0, False) (toTermList f)
+      linearizeTerm (bv, parity) (r, mono)
+        | r == 0           = (bv, parity)
+        | degree mono == 0 = (bv, parity `xor` True)
+        | otherwise        = (bv `xor` bitI k (ctx!mono), parity)
+  in
+    reindex $ map linearizePoly xs
+
 -- | Changes the frame of a path-sum so that we have an output ket consisting
 --   of only variables, e.g. |x>|y>|z>...
 --
 --   Returns the frame as well as the path-sum
 changeFrame :: Pathsum DMod2 -> ([(Var, SBool Var)], Pathsum DMod2)
 changeFrame sop = foldl go ([], sop) [0..outDeg sop - 1] where
-  nonConstant (a,m) = a /= 0 && degree m > 0
+  candidate (a,m)   = a /= 0 && degree m > 0 && (degree m > 1 || not (all isF $ vars m))
   fv i              = FVar $ "#tmp" ++ show i
-  go (subs, sop) i  = case filter nonConstant . reverse . toTermList $ (outVals sop)!!i of
-    []                       -> (subs, sop)
-    (1,m):[] | degree m == 1 -> (subs, sop)
-    (1,m):xs                 ->
+  go (subs, sop) i  = case filter candidate . reverse . toTermList $ (outVals sop)!!i of
+    []       -> (subs, sop)
+    (1,m):xs ->
       let vs   = Set.toList . vars $ ofMonomial m
           poly = (outVals sop)!!i
           psub = ofVar (fv i) + poly + ofMonomial m
@@ -164,10 +178,11 @@ findSubstitutions xs sop = find go candidates where
       reducible sop' y
   pvars      = map PVar [0..pathVars sop - 1]
   candidates = concatMap computeCandidatesI [1..length xs - 1]
-  computeCandidatesI i = [(y, zs) | y <- xs, zs <- choose i $ pvars \\ [y]]
+  computeCandidatesI i = [(y, zs) | y <- reducibles, zs <- choose i $ pvars \\ [y]]
   choose 0 _      = [[]]
   choose i []     = []
   choose i (x:xs) = (choose i xs) ++ (map (x:) $ choose (i-1) xs)
+  reducibles      = filter (not . isJust . toBooleanPoly . (flip quotVar) (phasePoly sop)) xs
 
 {-----------------------------------
  Passes
@@ -184,7 +199,7 @@ normalize = return . grind
 affineSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 affineSimplifications sop = do
   output <- linearize $ outVals sop
-  let circ = dagger $ simplifyAffine output
+  let circ = removeSwaps . dagger $ simplifyAffine output
   tell $ map toMCT circ
   ctx <- gets snd
   return $ sop .> computeActionInCtx circ ctx
@@ -252,10 +267,7 @@ finalize sop = do
   ctx <- gets snd
   return $ sop .> computeActionInCtx circ ctx
   where n = inDeg sop
-        bitvecOfPoly p 
-          | degree p > 1 = error "Attempting to finalize non-linear path-sum!"
-          | otherwise    = (foldr xor (bitI 0 0) . map bitvecOfVar . Set.toList $ vars p,
-                            getConstant p == 1)
+        bitvecOfPoly p = (foldr xor (bitI 0 0) . map bitvecOfVar . Set.toList $ vars p, getConstant p == 1)
         bitvecOfVar (IVar i) = bitI n i
         bitvecOfVar (PVar _) = error "Attempting to finalize a proper path-sum!"
         bitvecOfVar (FVar _) = error "Attempting to extract a path-sum with free variables!"
@@ -369,7 +381,7 @@ synthesizeFrontier sop = go (grind sop) where
     sop' <- hLayer sop >>= normalize
     case pathVars sop' < pathVars sop of
       True  -> return sop'
-      False -> strengthReduction sop' >>= hLayer >>= normalize
+      False -> strengthReduction sop' >>= synthesisPass >>= hLayer >>= normalize
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
 extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]
@@ -385,7 +397,7 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
 
 -- | Resynthesizes a circuit
 resynthesizeCircuit :: [Primitive] -> Maybe [ExtractionGates]
-resynthesizeCircuit xs = extractUnitary (mkctx ctx) sop where
+resynthesizeCircuit xs = liftM pushSwaps $ extractUnitary (mkctx ctx) sop where
   (sop, ctx) = runState (computeAction xs) Map.empty
 
 {-----------------------------------
@@ -442,9 +454,13 @@ bianCircuit = (circ ++ circ) where
   circ = [CNOT "x" "y", X "x", T "y", H "y", T "y", H "y", Tinv "y",
           CNOT "x" "y", X "x", T "y", H "y", Tinv "y", H "y", Tinv "y"]
 
+-- Need strength reduction
+srCase :: [Primitive]
+srCase = [CNOT "x" "y", H "x"] ++ cs "x" "y"
+
 -- Need linear substitutions in the output for this case
 hardCase :: [Primitive]
-hardCase = [CNOT "x" "y", H "x"] ++ cs "x" "y"
+hardCase = [Tinv "y", CNOT "x" "y", H "x"] ++ cs "x" "y"
 
 -- Need non-linear substitutions
 harderCase :: Pathsum DMod2
@@ -478,14 +494,21 @@ hardestCase = [H "x"] ++ cs "x" "y" ++ [H "y", CNOT "y" "x"]
 evenHarderCase :: [Primitive]
 evenHarderCase = [CNOT "x" "z", H "x"] ++ ccx "x" "y" "z"
 
--- Random failing circuit. Fails because we miss some permutations that
--- make a path variable reducible. Below is the relevant part of the residual
--- path sum
---
--- |x₀⟩⋯|x₉⟩ ⟼ |x₆⟩|y₃⟩|y₂⟩|x₇⟩|x₅ + x₁y₁ + x₂y₁ + x₃y₁ + x₄y₁ + x₉y₁⟩
---             |x₁ + x₃⟩|x₂ + x₃ + x₄⟩|x₃ + x₉⟩|y₁⟩|y₄⟩
---
-hardStateSimp = [H q0,H q1,H q9,H q9,H q1,H q7,CNOT q1 q0,H q5,T q0,CNOT q2 q8,CNOT q9 q4,CNOT q9 q1,H q0,T q5,CNOT q9 q3,H q9,H q9,T q3,T q3,H q3,T q5,T q9,H q9,H q3,H q8,CNOT q1 q4,CNOT q1 q7,CNOT q6 q2,CNOT q4 q2,T q2,T q9,H q5,T q3,T q1,T q1,CNOT q5 q3,CNOT q0 q9,T q8,CNOT q2 q1,CNOT q2 q3,H q1,CNOT q6 q0,CNOT q4 q0,CNOT q7 q6,T q0,T q4,H q9,T q7,H q9,H q4,H q6,CNOT q1 q6,H q0,H q1,T q7,T q5,T q1,T q3,H q6,CNOT q4 q9,T q0,CNOT q8 q2,T q2,CNOT q4 q5,H q1,T q5,CNOT q8 q2,T q8,T q7,T q0,CNOT q0 q8,H q0,T q8,H q2,CNOT q4 q0,CNOT q7 q9,T q8,H q3,CNOT q3 q0,CNOT q9 q0,CNOT q6 q5,H q5,T q1,CNOT q4 q8,H q9]
+-- QFT
+qft :: Int -> [Primitive]
+qft 1 = [H "x1"]
+qft n = [H ("x" ++ show n)] ++ concatMap (go n) (reverse [1..(n-1)]) ++ qft (n-1) where
+  go n i  = crk (dMod2 1 (n - i)) ("x" ++ show i) ("x" ++ show n)
+  crk theta x y =
+    let angle = half * theta in
+      [Rz (Discrete angle) x, Rz (Discrete angle) y, CNOT x y, Rz (Discrete $ -angle) y, CNOT x y]
+
+qftFull :: Int -> [Primitive]
+qftFull n = qft n ++ permute where
+  permute = map (\(i, j) -> Swap i j) pairs
+  pairs   = zip ["x" ++ show i | i <- [0..(n-1)`div`2]]
+                ["x" ++ show i | i <- reverse [(n+1)`div`2..(n-1)]]
+
 {-----------------------------------
  Automated tests
  -----------------------------------}
@@ -502,29 +525,30 @@ maxGates = 100
 newtype CliffordT = CliffordT [Primitive] deriving (Show, Eq)
 
 instance Arbitrary CliffordT where
-  arbitrary = fmap CliffordT $ resize maxGates $ listOf $ oneof [genH, genT, genCX]
+  arbitrary = fmap CliffordT $ resize maxGates $ listOf $ oneof gates where
+    gates = [genH maxSize, genT maxSize, genCX maxSize]
 
 -- | Variable names
 var :: Int -> ID
 var i = "q" ++ show i
 
 -- | Random CX gate
-genCX :: Gen Primitive
-genCX = do
-  x <- chooseInt (0,maxSize)
-  y <- chooseInt (0,maxSize) `suchThat` (/= x)
+genCX :: Int -> Gen Primitive
+genCX n = do
+  x <- chooseInt (0,n)
+  y <- chooseInt (0,n) `suchThat` (/= x)
   return $ CNOT (var x) (var y)
 
 -- | Random S gate
-genT :: Gen Primitive
-genT = do
-  x <- chooseInt (0,maxSize)
+genT :: Int -> Gen Primitive
+genT n = do
+  x <- chooseInt (0,n)
   return $ T (var x)
 
 -- | Random H gate
-genH :: Gen Primitive
-genH = do
-  x <- chooseInt (0,maxSize)
+genH :: Int -> Gen Primitive
+genH n = do
+  x <- chooseInt (0,n)
   return $ H (var x)
 
 -- | Checks that the path sum of a Clifford+T circuit is indeed Unitary
@@ -568,6 +592,13 @@ prop_Nonlinear_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop', gates) = extract (nonlinearSimplifications sop) ctx
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
+-- | Checks that strength reduction is correct
+prop_Strength_Reduction_Correctness :: CliffordT -> Bool
+prop_Strength_Reduction_Correctness (CliffordT xs) = grind sop' == grind sop'' where
+  (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
+  (sop', gates) = extract (strengthReduction sop) ctx
+  (sop'', _)    = extract (applyExtract sop gates) ctx
+
 -- | Checks that each step of the synthesis algorithm is correct
 prop_Frontier_Correctness :: CliffordT -> Bool
 prop_Frontier_Correctness (CliffordT xs) = grind sop' == grind sop'' where
@@ -577,21 +608,14 @@ prop_Frontier_Correctness (CliffordT xs) = grind sop' == grind sop'' where
 
 -- | Checks that the overall algorithm is correct
 prop_Extraction_Correctness :: CliffordT -> Bool
-prop_Extraction_Correctness (CliffordT xs) = isTrivial sop' where
+prop_Extraction_Correctness (CliffordT xs) = go where
   (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
-  gates    = extractUnitary (mkctx ctx) sop
-  sop'       = case gates of
-    Just xs' -> grind $ fst $ extract (applyExtract sop (daggerDep xs')) ctx
-    Nothing  -> grind $ sop .> PS.dagger sop'
-
-{-
--- | Checks that the path sum of a Clifford+T circuit is correctly extracted
-prop_Clifford_plus_T_Extraction_Correct :: CliffordT -> Bool
-prop_Clifford_plus_T_Extraction_Correct (CliffordT xs) = go where
-  (sop, ctx) = runState (computeAction xs) Map.empty
-  xs' = fromJust $ extractUnitary (mkctx ctx) sop
-  go  = isTrivial . normalizeClifford . simpleAction $ xs ++ Core.dagger xs'
--}
+  gates      = extractUnitary (mkctx ctx) sop
+  go         = case gates of
+    Nothing  -> True
+    Just xs' ->
+      let sop' = grind $ fst $ extract (applyExtract (identity $ outDeg sop) xs') ctx in
+        sop == sop' || isTrivial (grind $ sop .> PS.dagger sop')
 
 q0 = "q0"
 q1 = "q1"
@@ -606,3 +630,8 @@ q9 = "q9"
 
 initialctx = Map.fromList $ zip [q0, q1, q2, q3, q4, q5, q6, q7, q8, q9] [0..]
 ctx = mkctx $ initialctx
+
+-- | Generates a random Clifford+T circuit
+generateCliffordT :: Int -> Int -> IO [Primitive]
+generateCliffordT n k = generate customArbitrary where
+  customArbitrary = resize k $ listOf1 $ oneof [genH n, genT n, genCX n]
