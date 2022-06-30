@@ -913,6 +913,13 @@ isIdentity sop
            in
              isIdentity p0 && isIdentity p1
 
+-- | Checks whether a state is the density matrix of a pure state by computing the purity
+isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isPure sop
+  | inDeg sop /= outDeg sop = False
+  | otherwise               = purity == identity 0 where
+      purity = trace $ sop .> sop
+
 {--------------------------
  Examples
  --------------------------}
