@@ -231,6 +231,9 @@ removeSwaps = reverse . go (Map.empty, []) where
 cs :: ID -> ID -> [Primitive]
 cs x y = [T x, T y, CNOT x y, Tinv y, CNOT x y]
 
+cz :: ID -> ID -> [Primitive]
+cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
+
 ccx :: ID -> ID -> ID -> [Primitive]
 ccx x y z = [H z] ++ ccz x y z ++ [H z]
 
