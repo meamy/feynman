@@ -20,7 +20,7 @@ multiplicative and additive "parity" basis.
 -}
 
 module Feynman.Algebra.Polynomial.Multilinear(
-  Monomial,
+  Monomial(..),
   Multilinear,
   PhasePolynomial,
   PseudoBoolean,

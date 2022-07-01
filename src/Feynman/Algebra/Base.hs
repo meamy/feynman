@@ -16,6 +16,7 @@ module Feynman.Algebra.Base(
   Abelian(..),
   Periodic(..),
   Dyadic(..),
+  Euclidean(..),
   FF2,
   Zmod,
   Z4,
@@ -142,6 +143,10 @@ instance Fractional FF2 where
   (FF2 x) / (FF2 y) = FF2 $ x && y
   recip x           = x
   fromRational a    = (fromInteger $ numerator a) / (fromInteger $ denominator a)
+
+instance Euclidean FF2 where
+  rank _ = 1
+  divmod a b = (a / b, 0)
 
 {-------------------------------
  Finite groups
