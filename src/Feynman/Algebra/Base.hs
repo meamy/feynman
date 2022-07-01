@@ -41,6 +41,8 @@ import GHC.Integer.Logarithms
 import GHC.Types
 import GHC.TypeLits
 
+import Test.QuickCheck hiding ((.&.))
+
 import qualified Feynman.Util.Unicode as Unicode
 
 {-------------------------------
@@ -98,6 +100,15 @@ instance Dyadic Double where
   fromDyadic (Dy a n) = (fromIntegral a) / 2^n
   half                = 0.5
   divTwo              = (* 0.5)
+
+{-------------------------------
+ Euclidean domains
+ -------------------------------}
+
+-- | Euclidean domains
+class Num r => Euclidean r where
+  rank   :: r -> Integer
+  divmod :: r -> r -> (r, r)
 
 {-------------------------------
  Boolean field
@@ -174,7 +185,9 @@ data DyadicRational = Dy !Integer {-# UNPACK #-} !Int deriving (Eq)
 
 instance Show DyadicRational where
   show (Dy a 0) = show a
-  show (Dy a n) = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
+  show (Dy a n)
+    | n > 0 = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
+    | n < 0 = show a ++ "*2" ++ (Unicode.supscript $ toInteger (-n))
 
 instance Ord DyadicRational where
   compare (Dy a n) (Dy b m)
@@ -208,16 +221,20 @@ instance Dyadic DyadicRational where
   half            = Dy 1 1
   divTwo (Dy a n) = Dy a (n+1)
 
+instance Euclidean DyadicRational where
+  rank (Dy a _)            = abs a
+  divmod 0 _               = (0, 0)
+  divmod _ 0               = (0, 0)
+  divmod (Dy a n) (Dy b m) = (dyadic q (n - m), dyadic r n) where
+    (q, r) = divMod a b
+
 -- | Write in a normalized, canonical form
 canonicalize :: DyadicRational -> DyadicRational
 canonicalize (Dy a n)
   | a == 0                  = Dy 0 0
-  | n <  0                  = Dy (a `shiftL` (-n)) 0
-  | a `mod` 2 == 0 && n > 0 =
+  | a `mod` 2 == 0 =
     let lg = I# (integerLog2# $ a .&. complement (a-1)) in
-      if lg > n
-      then Dy (a `shiftR` n) 0
-      else Dy (a `shiftR` lg) (n-lg)
+      Dy (a `shiftR` lg) (n-lg)
   | otherwise               = Dy a n
 
 -- | Construct a canonical dyadic fraction
@@ -274,3 +291,20 @@ instance Dyadic DMod2 where
 -- | Construct a dyadic fraction mod 2
 dMod2 :: Integer -> Int -> DMod2
 dMod2 a = D2 . reduce . dyadic a
+
+{----------------------------
+ Testing
+ ----------------------------}
+
+instance Arbitrary DyadicRational where
+  arbitrary = do
+    a <- arbitrary `suchThat` (/= 0)
+    n <- arbitrary
+    return $ dyadic a n
+
+prop_euclidean_division_rank :: DyadicRational -> DyadicRational -> Bool
+prop_euclidean_division_rank a b = (rank b) > (rank $ snd (divmod a b))
+
+prop_euclidean_division_correct :: DyadicRational -> DyadicRational -> Bool
+prop_euclidean_division_correct a b = a == q*b + r where
+  (q, r) = divmod a b
