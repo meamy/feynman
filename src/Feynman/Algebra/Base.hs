@@ -111,6 +111,15 @@ class Num r => Euclidean r where
   rank   :: r -> Integer
   divmod :: r -> r -> (r, r)
 
+-- | Euclidean algorithm
+euclid :: (Eq r, Euclidean r) => r -> r -> r
+euclid a 0 = a
+euclid a b = euclid b (snd $ divmod a b)
+
+-- | Least common multiple in a Euclidean domain
+lc :: (Eq r, Euclidean r) => r -> r -> r
+lc a b = fst $ divmod (abs (a * b)) (euclid a b)
+
 {-------------------------------
  Boolean field
  -------------------------------}

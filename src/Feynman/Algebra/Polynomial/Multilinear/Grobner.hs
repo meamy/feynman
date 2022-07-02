@@ -45,6 +45,7 @@ reductionTerm (c, m) = find reducible . toTermList where
 
 -- | Reduce a polynomial with respect to another
 reduce :: (Ord v, Eq r, Euclidean r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+reduce 0 _ = 0
 reduce f g = fromMaybe f $ go f g where
   go f g = do
     (c, m) <- leadingTerm g
@@ -53,3 +54,35 @@ reduce f g = fromMaybe f $ go f g where
     t      <- return $ Monomial $ Set.difference (vars n) (vars m)
     return $ (f - ofTerm (d, n)) + ofTerm (r, n) + ofTerm (q, t) * (ofTerm (c, m) - g)
     
+-- | Reduce relative to a set of polynomials
+reduceAll :: (Ord v, Eq r, Euclidean r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
+reduceAll = foldl' reduce
+
+-- | Critical pair computation
+criticalPair :: (Ord v, Eq r, Euclidean r) => PseudoBoolean v r -> PseudoBoolean v r -> Maybe (PseudoBoolean v r, PseudoBoolean v r)
+criticalPair p q = do
+  (c1, m1) <- leadingTerm p
+  (c2, m2) <- leadingTerm q
+  (a, b)   <- return $ if rank c1 >= rank c2 then divmod c1 c2 else divmod c2 c1
+  f1       <- return $ Monomial $ Set.difference (vars m2) (vars m1)
+  f2       <- return $ Monomial $ Set.difference (vars m1) (vars m2)
+  if rank c1 >= rank c2 then
+    return (ofTerm (a, f2) * (ofTerm (c2, m2) - q) + ofTerm (b, m1 <> m2),
+            ofTerm (1, f1) * (ofTerm (c1, m1) - p))
+  else
+    return (ofTerm (a, f1) * (ofTerm (c1, m1) - p) + ofTerm (b, m1 <> m2),
+            ofTerm (1, f2) * (ofTerm (c2, m2) - q))
+
+-- | S-polynomial
+sPoly :: (Ord v, Eq r, Euclidean r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+sPoly p = maybe 0 (\(p, q) -> p - q) . criticalPair p
+
+-- | Buchberger's algorithm
+buchberger :: (Ord v, Eq r, Euclidean r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+buchberger xs = go xs [(p, q) | p <- xs, q <- xs, p /= q] where
+  go basis []         = basis
+  go basis ((p,q):xs) =
+    let s = sPoly p q in
+      case reduceAll s basis of
+        0  -> go basis xs
+        s' -> go (s:basis) (xs ++ [(p, s) | p <- basis])
