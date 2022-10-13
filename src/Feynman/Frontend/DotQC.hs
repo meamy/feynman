@@ -217,6 +217,7 @@ gateToCliffordT (Gate g i p) =
         ("X", [x])      -> [X x]
         ("Y", [x])      -> [Y x]
         ("Z", [x])      -> [Z x]
+        ("Z", [x,y])    -> [CZ x y]
         ("S", [x])      -> [S x]
         ("P", [x])      -> [S x]
         ("S*", [x])     -> [Sinv x]
@@ -238,6 +239,7 @@ gateToCliffordT (Gate g i p) =
                             CNOT y x, Tinv x, CNOT y z, CNOT z x, T x,
                             Tinv z, CNOT y x]
         ("tof", xs)     -> toCliffordT $ mct xs
+        ("X", xs)       -> toCliffordT $ mct xs
         otherwise       -> [Uninterp g p]
   in
     concat $ genericReplicate i circ
