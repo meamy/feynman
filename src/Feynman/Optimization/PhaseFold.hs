@@ -122,8 +122,9 @@ increaseDim = get >>= \st -> do
 exists :: ID -> ExtCtx -> ExtCtx
 exists v st@(Ctx dim ket terms orphans phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v ket
-      (vecs, cnsts) = (map proj1 avecs, map proj2 avecs)
-      (t, o)        = Map.partitionWithKey (\b _ -> inLinearSpan vecs b) terms
+      norm vec      = zeroExtend (dim + 1 - width vec) $ shiftR vec 1
+      (vecs, cnsts) = (map norm avecs, map proj2 avecs)
+      (t, o)        = Map.partitionWithKey (\b _ -> inLinearSpan vecs $ norm b) terms
       (dim', vecs') = addIndependent vecs
       avecs'        = map (\(vec, cnst) -> if cnst then vec .+. inj 0 else vec) $ zip vecs' $ cnsts ++ [False]
       orphans'      = (snd $ unzip $ Map.toList o) ++ orphans
