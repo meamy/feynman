@@ -86,3 +86,13 @@ buchberger xs = go xs [(p, q) | p <- xs, q <- xs, p /= q] where
       case reduceAll s basis of
         0  -> go basis xs
         s' -> go (s:basis) (xs ++ [(p, s) | p <- basis])
+
+-- | Buchberger's algorithm, restricted to
+addToBasis :: (Ord v, Eq r, Euclidean r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
+addToBasis xs p = go (xs ++ [p]) xs where
+  go basis []     = basis
+  go basis (q:xs) =
+    let s = sPoly p q in
+      case reduceAll s basis of
+        0  -> go basis xs
+        s' -> go (s:basis) (xs ++ [s | p <- basis])
