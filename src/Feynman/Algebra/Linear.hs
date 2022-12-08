@@ -64,12 +64,8 @@ instance Num F2Vec where
   negate      = id
   abs         = id
   signum      = id
-  fromInteger = bitVec 32 
+  fromInteger = bitVec 32
 
---zero    = bitVec 32 0
---one = bitVec 32 1
---pow i x = if i `mod` 2 == 0 then bitVec (width x) 0 else x
-  
 instance Matroid F2Vec where
   independent s = (Set.size s) == (rank $ fromList $ Set.toList s)
 

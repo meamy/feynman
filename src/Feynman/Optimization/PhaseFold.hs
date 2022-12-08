@@ -30,33 +30,43 @@ type Term = (Set (Loc, Bool), Angle)
 newtype Analysis repr = Analysis ([ID] -> [ID] -> [Primitive] -> ([Term], Angle))
 
 {- Class of representations of affine parities -}
-class Ord parity => Parity parity where
+class (Eq parity, Ord parity) => Parity parity where
   (.+.) :: parity -> parity -> parity
+  split :: parity -> (parity, Bool)
+  comb  :: (parity, Bool) -> parity
+  nil   :: parity
+  var   :: Int -> parity
   proj1 :: parity -> parity
   proj2 :: parity -> Bool
-  inj   :: Int -> parity
-  nil   :: parity
+  inj1  :: parity -> parity
+  inj2  :: Bool -> parity
   isNil :: parity -> Bool
+  -- Other operators
+  proj1 = fst . split
+  proj2 = snd . split
+  inj1  = \a -> comb (a,False)
+  inj2  = \a -> comb (nil,a)
+  isNil = (nil ==)
+  
 
 instance Parity F2Vec where
-  a .+. b = a + b
-  proj1 a = clearBit a 0
-  proj2 a = testBit a 0
-  inj i   = bitI (i+1) i
-  nil     = 0
-  isNil a = a == 0
+  a .+. b    = a + b
+  split a    = (zeroExtend (-1) $ shiftR a 1, testBit a 0)
+  comb (a,b) = if b then setBit a' 0 else a' where a' = (flip shiftL) 1 $ zeroExtend 1 a
+  nil        = 0
+  var i      = bitI (max 32 (i+1)) i
 
 instance Parity IntSet where
-  a .+. b = symDiff a b
-  proj1 a = IntSet.delete 0 a
-  proj2 a = IntSet.member 0 a
-  inj i   = IntSet.singleton i
-  nil     = IntSet.empty
-  isNil a = a == IntSet.empty
+  a .+. b    = symDiff a b
+  split a    = (IntSet.delete 0 a, IntSet.member 0 a)
+  comb (a,b) = if b then IntSet.insert 0 a else a
+  nil        = IntSet.empty
+  var i      = IntSet.singleton i
 
 {- Symmetric difference implementation for int sets -}
 symDiff :: IntSet -> IntSet -> IntSet
-symDiff = IntSet.foldr (\k s -> (coerce :: Identity IntSet -> IntSet) $ IntSet.alterF (fmap not . pure) k s)
+symDiff = IntSet.foldr (\k s -> c $ IntSet.alterF (fmap not . pure) k s) where
+  c = coerce :: Identity IntSet -> IntSet
 
 {-- Generic algorithm using arbitrary parity representations -}
 
@@ -76,7 +86,7 @@ getSt v = get >>= \st ->
     Nothing -> do put $ st { dim = dim', ket = ket' }
                   return (bv')
       where dim' = dim st + 1
-            bv'  = inj dim'
+            bv'  = var dim'
             ket' = Map.insert v bv' (ket st)
 
 {- Set the state of a variable -}
@@ -92,15 +102,15 @@ increaseDim = get >>= \st -> do
 
 {- Adds a mergeable phase term -}
 addTerm :: Parity parity => Angle -> Loc -> parity -> State (Ctx parity) ()
-addTerm theta loc bv = modify go where
-  theta' = if isNil bv then 0 else theta
-  go st = case proj2 bv of
-    False -> st { terms = Map.alter (add theta') bv $ terms st }
-    True  -> st { terms = Map.alter (add (-theta')) (bv .+. inj 0) $ terms st,
-                  phase = phase st + theta }
+addTerm theta loc aparity = modify go where
+  theta' = if isNil aparity then 0 else theta
+  go st = case split aparity of
+    (parity, False) -> st { terms = Map.alter (add theta') parity $ terms st }
+    (parity, True)  -> st { terms = Map.alter (add (-theta')) parity $ terms st,
+                            phase = phase st + theta }
   add theta t = case t of
-    Just (reps, theta') -> Just (Set.insert (loc, proj2 bv) reps, theta + theta')
-    Nothing             -> Just (Set.singleton (loc, proj2 bv), theta)
+    Just (reps, theta') -> Just (Set.insert (loc, proj2 aparity) reps, theta + theta')
+    Nothing             -> Just (Set.singleton (loc, proj2 aparity), theta)
  
 {- The Phase folding analysis -}
 applyGate :: Parity parity => (Primitive, Loc) -> State (Ctx parity) ()
@@ -111,7 +121,7 @@ applyGate (gate, loc) = case gate of
   Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) loc
   Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) loc
   Rz p v -> getSt v >>= addTerm p loc
-  X v    -> getSt v >>= \bv -> setSt v (bv .+. inj 0)
+  X v    -> getSt v >>= \bv -> setSt v (bv .+. inj2 True)
   CNOT c t -> do
     bv  <- getSt c
     bv' <- getSt t
@@ -125,13 +135,13 @@ applyGate (gate, loc) = case gate of
   _        -> do
     let args = getArgs gate
     _ <- mapM getSt args
-    mapM_ (\v -> increaseDim >>= \k -> setSt v $ inj k) args
+    mapM_ (\v -> increaseDim >>= \k -> setSt v $ var k) args
 
 {- Generates an initial state -}
 initialState :: Parity parity => [ID] -> [ID] -> Ctx parity
 initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
   dim = length inputs
-  ket = (zip inputs [(inj x) | x <- [1..]]) ++ (zip (vars \\ inputs) [nil | x <- [1..]])
+  ket = (zip inputs [(var x) | x <- [1..]]) ++ (zip (vars \\ inputs) [nil | x <- [1..]])
 
 {- Run the analysis on a circuit and state -}
 runCircuit :: Parity parity => [Primitive] -> Ctx parity -> Ctx parity
@@ -181,7 +191,7 @@ phaseFold = phaseFoldGen (mkAnalyzer :: Analysis IntSet)
 fastPhaseFold = phaseFoldGen (mkAnalyzer :: Analysis F2Vec)
 
 {-- Existential quantifiction based -}
-{-  Deprecated, and not working right now -}
+{-  Deprecated -}
 
 type ExtCtx = Ctx F2Vec
 
@@ -191,11 +201,11 @@ type ExtCtx = Ctx F2Vec
 exists :: ID -> ExtCtx -> ExtCtx
 exists v st@(Ctx dim ket terms orphans phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v ket
-      normLen vec   = zeroExtend (dim + 1 - width vec) vec
-      (vecs, cnsts) = (map normLen avecs, map proj2 avecs)
+      normLen vec   = zeroExtend (dim - width vec) vec
+      (vecs, cnsts) = unzip $ map ((\(a,b) -> (normLen a, b)) . split) avecs
       (t, o)        = Map.partitionWithKey (\b _ -> inLinearSpan vecs $ normLen b) terms
       (dim', vecs') = addIndependent vecs
-      avecs'        = map (\(vec, cnst) -> if cnst then vec .+. inj 0 else vec) $ zip vecs' $ cnsts ++ [False]
+      avecs'        = map comb $ zip vecs' (cnsts ++ [False])
       orphans'      = (snd $ unzip $ Map.toList o) ++ orphans
       terms'        = if dim' > dim
                       then Map.mapKeysMonotonic (zeroExtend 1) t
@@ -212,7 +222,7 @@ applyGateExist (gate, loc) = case gate of
   Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) loc
   Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) loc
   Rz p v -> getSt v >>= addTerm p loc
-  X v    -> getSt v >>= \bv -> setSt v (bv .+. inj 0)
+  X v    -> getSt v >>= \bv -> setSt v (bv .+. inj2 True)
   CNOT c t -> do
     bv  <- getSt c
     bv' <- getSt t
