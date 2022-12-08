@@ -1,35 +1,53 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Feynman.Optimization.PhaseFold where
+{-|
+Module      : PhaseFold
+Description : Phase folding optimization
+Copyright   : (c) Matthew Amy, 2022
+Maintainer  : matt.e.amy@gmail.com
+Stability   : experimental
+Portability : portable
 
-import Data.List hiding (transpose)
+The phase folding optimization pass. Different representations of
+affine parity functions can be swapped in a la ML functors
+-}
 
+module Feynman.Optimization.PhaseFold(
+  phaseFold,
+  phaseFoldFast,
+  phaseFoldAlt
+  ) where
+
+import Data.List
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-
 import Data.Set (Set)
 import qualified Data.Set as Set
-
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
-
-import Control.Monad.State.Strict
 import Data.Functor.Identity
 import Data.Coerce
 import Data.Bits
 
+import Control.Monad.State.Strict
+
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
-import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Synthesis.Phase
 
-{-- Phase folding optimization -}
+{-----------------------------------
+ Utilities
+ -----------------------------------}
 
+-- | Terms of the phase polynomial
 type Term = (Set (Loc, Bool), Angle)
+
+-- | The type of an analysis with an underlying parity representation
 newtype Analysis repr = Analysis ([ID] -> [ID] -> [Primitive] -> ([Term], Angle))
 
-{- Class of representations of affine parities -}
+-- | Type class for the representation of affine parities in /n/ variables.
+--   Roughly, isomorphic to \(2^{[n]}\times \mathbb{Z}_2\)
 class (Eq parity, Ord parity) => Parity parity where
   (.+.) :: parity -> parity -> parity
   split :: parity -> (parity, Bool)
@@ -48,7 +66,7 @@ class (Eq parity, Ord parity) => Parity parity where
   inj2  = \a -> comb (nil,a)
   isNil = (nil ==)
   
-
+-- | Defines an instance where the lowest-order bit is the affine value
 instance Parity F2Vec where
   a .+. b    = a + b
   split a    = (zeroExtend (-1) $ shiftR a 1, testBit a 0)
@@ -56,6 +74,7 @@ instance Parity F2Vec where
   nil        = 0
   var i      = bitI (max 32 (i+1)) i
 
+-- | Defines an instance where 0 is the affine value
 instance Parity IntSet where
   a .+. b    = symDiff a b
   split a    = (IntSet.delete 0 a, IntSet.member 0 a)
@@ -63,13 +82,16 @@ instance Parity IntSet where
   nil        = IntSet.empty
   var i      = IntSet.singleton i
 
-{- Symmetric difference implementation for int sets -}
+-- | Symmetric difference implementation for int sets
 symDiff :: IntSet -> IntSet -> IntSet
 symDiff = IntSet.foldr (\k s -> c $ IntSet.alterF (fmap not . pure) k s) where
   c = coerce :: Identity IntSet -> IntSet
 
-{-- Generic algorithm using arbitrary parity representations -}
+{-----------------------------------
+ Optimization algorithm
+ -----------------------------------}
 
+-- | Context maintained during the analysis phase
 data Ctx parity = Ctx {
   dim     :: Int,
   ket     :: Map ID parity,
@@ -78,7 +100,7 @@ data Ctx parity = Ctx {
   phase   :: Angle
 } deriving Show
 
-{- Get the parity for variable v, or otherwise allocate one -}
+-- | Get the (affine) parity for variable v, or otherwise allocate one
 getSt :: Parity parity => ID -> State (Ctx parity) (parity)
 getSt v = get >>= \st ->
   case Map.lookup v (ket st) of
@@ -89,18 +111,18 @@ getSt v = get >>= \st ->
             bv'  = var dim'
             ket' = Map.insert v bv' (ket st)
 
-{- Set the state of a variable -}
+-- | Set the state of a variable as an (affine) parity
 setSt :: Parity parity => ID -> parity -> State (Ctx parity) ()
 setSt v bv = modify $ \st -> st { ket = Map.insert v bv $ ket st }
 
-{- Set the state of a variable -}
+-- | Increases the dimension (i.e. number of variables tracked)
 increaseDim :: State (Ctx parity) (Int)
 increaseDim = get >>= \st -> do
   let dim' = dim st + 1
   put $ st { dim = dim' }
   return dim'
 
-{- Adds a mergeable phase term -}
+-- | Applies a rotation of a given angle on a particular (affine) parity
 addTerm :: Parity parity => Angle -> Loc -> parity -> State (Ctx parity) ()
 addTerm theta loc aparity = modify go where
   theta' = if isNil aparity then 0 else theta
@@ -111,8 +133,8 @@ addTerm theta loc aparity = modify go where
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, proj2 aparity) reps, theta + theta')
     Nothing             -> Just (Set.singleton (loc, proj2 aparity), theta)
- 
-{- The Phase folding analysis -}
+
+-- | Abstract transformers for primitive gates
 applyGate :: Parity parity => (Primitive, Loc) -> State (Ctx parity) ()
 applyGate (gate, loc) = case gate of
   T v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 2) loc
@@ -137,17 +159,17 @@ applyGate (gate, loc) = case gate of
     _ <- mapM getSt args
     mapM_ (\v -> increaseDim >>= \k -> setSt v $ var k) args
 
-{- Generates an initial state -}
+-- | Initial state given a set of variables and specified inputs
 initialState :: Parity parity => [ID] -> [ID] -> Ctx parity
 initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
   dim = length inputs
   ket = (zip inputs [(var x) | x <- [1..]]) ++ (zip (vars \\ inputs) [nil | x <- [1..]])
 
-{- Run the analysis on a circuit and state -}
+-- | Run the analysis on a circuit and state
 runCircuit :: Parity parity => [Primitive] -> Ctx parity -> Ctx parity
 runCircuit circ = execState (mapM_ applyGate $ zip circ [2..])
 
-{- Analysis for a particular parity representation -}
+-- | Encapsulates a parity representation into a generic circuit analyzer
 mkAnalyzer :: forall repr . Parity repr => Analysis repr
 mkAnalyzer = Analysis (analysis)
   where analysis vars inputs circ =
@@ -156,7 +178,7 @@ mkAnalyzer = Analysis (analysis)
           in
             ((snd . unzip . Map.toList $ terms result), phase result)
 
-{- Run the analysis and merge phase gates -}
+-- | Run the analysis with a given analyzer and merge the phase gates
 phaseFoldGen :: Analysis repr -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 phaseFoldGen (Analysis f) vars inputs circ =
   let (phases, gphase0) = f vars inputs circ
@@ -184,20 +206,20 @@ phaseFoldGen (Analysis f) vars inputs circ =
   in
     (fst $ unzip $ circ') ++ (globalPhase (head vars) gphase)
 
-{- Via int sets. Fast and sparse -}
-phaseFold = phaseFoldGen (mkAnalyzer :: Analysis IntSet)
+{-----------------------------------
+ Existential version
+ -----------------------------------}
 
-{- Via bitvectors. Faster but high memory -}
-fastPhaseFold = phaseFoldGen (mkAnalyzer :: Analysis F2Vec)
-
-{-- Existential quantifiction based -}
-{-  Deprecated -}
-
+-- | The analysis context restricted for existential quantification
 type ExtCtx = Ctx F2Vec
 
-{- Existentially quantifies a variable. In particular, any term that no
- - longer has a representative becomes an "orphan" -- a term with
- - no current representative -}
+-- | Existentially quantifies a variable.
+--
+--   Any term that no longer has a representative becomes orphaned after
+--   existential quantification and can no longer participate in any merging.
+--   In theory this could both reduce memory cost and speed things up
+--   if the number of active terms grows too large without quantification.
+--   In practice it seems usually this ends up being slower
 exists :: ID -> ExtCtx -> ExtCtx
 exists v st@(Ctx dim ket terms orphans phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v ket
@@ -213,7 +235,7 @@ exists v st@(Ctx dim ket terms orphans phase) =
   in
     Ctx dim' (Map.fromList $ zip (vars ++ [v]) avecs') terms' orphans' phase
 
-{- The Phase folding analysis -}
+-- | The analysis using existential quantification
 applyGateExist :: (Primitive, Loc) -> State ExtCtx ()
 applyGateExist (gate, loc) = case gate of
   T v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 2) loc
@@ -238,16 +260,26 @@ applyGateExist (gate, loc) = case gate of
     _ <- mapM getSt args
     mapM_ (\v -> modify $ exists v) args
 
-{- Run the analysis on a circuit and state -}
+-- | Run the analysis using existential quantification
 runCircuitAlt :: [Primitive] -> ExtCtx -> ExtCtx
 runCircuitAlt circ = execState (mapM_ applyGateExist $ zip circ [2..])
 
-{- Existential-style analysis -}
+-- | Analyzer using existentials, for use in the generic algorithm
 phaseAnalysisAlt :: Analysis ExtCtx
 phaseAnalysisAlt = Analysis go where
   go vars inputs circ =
     let result = runCircuitAlt circ $ initialState vars inputs in
       ((snd . unzip . Map.toList $ terms result) ++ (orphans result), phase result)
 
-{- Existential version -}
+{-----------------------------------
+ Specific instances
+ -----------------------------------}
+
+-- | Via int sets. Fast and sparse
+phaseFold = phaseFoldGen (mkAnalyzer :: Analysis IntSet)
+
+-- | Via bitvectors. Faster but high memory
+phaseFoldFast = phaseFoldGen (mkAnalyzer :: Analysis F2Vec)
+
+-- | Via minimal-width bitvectors. Slow but best memory usage
 phaseFoldAlt = phaseFoldGen phaseAnalysisAlt
