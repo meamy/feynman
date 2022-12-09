@@ -329,3 +329,16 @@ prop_euclidean_division_rank a b = (rank b) > (rank $ snd (divmod a b))
 prop_euclidean_division_correct :: DyadicRational -> DyadicRational -> Bool
 prop_euclidean_division_correct a b = a == q*b + r where
   (q, r) = divmod a b
+
+instance Arbitrary DMod2 where
+  arbitrary = do
+    a <- arbitrary `suchThat` (/= 0)
+    n <- arbitrary
+    return $ dMod2 a n
+
+prop_euclidean_division_rank_dmod2 :: DMod2 -> DMod2 -> Bool
+prop_euclidean_division_rank_dmod2 a b = (rank b) > (rank $ snd (divmod a b))
+
+prop_euclidean_division_correct_dmod2 :: DMod2 -> DMod2 -> Bool
+prop_euclidean_division_correct_dmod2 a b = a == q*b + r where
+  (q, r) = divmod a b
