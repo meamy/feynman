@@ -226,7 +226,7 @@ dyadic a n = canonicalize $ Dy a n
 
 -- | Reduce a dyadic fraction mod 2
 reduce :: DyadicRational -> DyadicRational
-reduce (Dy a n) = Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
+reduce (Dy a n) = canonicalize $ Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
 
 -- | Get the denominator of a dyadic fraction
 numer :: DyadicRational -> Integer

@@ -354,7 +354,9 @@ hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
 -- | CH gate
 chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
-  where p = lift $ x1 * x2 * y
+  where p = distribute (-half*half) (1 + x1) +
+            distribute half (lift $ (1 + x1) * y) +
+            (lift $ x1 * x2 * y)
         x1 = ofVar $ IVar 0
         x2 = ofVar $ IVar 1
         y = ofVar $ PVar 0
