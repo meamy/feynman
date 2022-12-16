@@ -31,6 +31,7 @@ import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear
+import Feynman.Algebra.Polynomial.Multilinear.Grobner
 
 {-----------------------------------
  Variables
@@ -301,6 +302,10 @@ eta = Pathsum 0 0 2 1 0 [ofVar (PVar 0), ofVar (PVar 0)]
 epsilon :: (Eq g, Abelian g) => Pathsum g
 epsilon = Pathsum 2 2 0 1 p []
   where p = lift $ ofVar (PVar 0) * (ofVar (IVar 0) + ofVar (IVar 1))
+
+-- | I gate
+igate :: (Eq g, Num g) => Pathsum g
+igate = Pathsum 0 1 1 0 0 [ofVar (IVar 0)]
 
 -- | X gate
 xgate :: (Eq g, Num g) => Pathsum g
@@ -795,6 +800,16 @@ applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
           | otherwise = PVar $ j
         varShift v = v
 
+-- | Apply an HH rule. Does not check if the instance is valid. Does not reduce
+--   the phase polynomial modulo /p/
+applyHH :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
+applyHH (PVar i) p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
+  where e' = renameMonotonic varShift . remVar (PVar i) $ e
+        f' = map (renameMonotonic varShift) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+
 -- | Apply an (\omega\) rule. Does not check if the instance is valid
 applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
 applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
@@ -866,6 +881,20 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
     Omega y p        -> go $ applyOmega y p sop
     HHSolved y z p   -> go $ applyHHSolved y z p sop
     _                -> sop
+
+-- | Rewrite system based on Grobner bases
+pulverize :: (Eq g, Periodic g, Dyadic g, Euclidean g) => Pathsum g -> Pathsum g
+pulverize sop = go [] sop where
+  go gBase sop = case sop of
+    Elim y         -> go gBase $ applyElim y sop
+    HHSolved y z p -> go gBase $ applyHHSolved y z p sop
+    Omega y p      -> go gBase $ applyOmega y p sop
+    HH y p         -> go gBase' $ reduce $ applyHH y p sop where
+      gBase'     = addToBasis gBase p
+      reduce (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+        e' = reduceAll e (map lift gBase')
+        f' = map (flip reduceAll gBase') f
+    _              -> sop
 
 {--------------------------
  Simulation
@@ -977,3 +1006,11 @@ verifyTeleT :: () -> IO ()
 verifyTeleT _ = case (channelize tgate == grind (teleportTChannel)) of
   True -> putStrLn "Identity"
   False -> putStrLn "No identity"
+
+-- | Verification challenge circuit
+t12 :: Pathsum DMod2
+t12 = c .> c where
+  c = (xgate <> (tdggate .> sdggate .> hgate .> tdggate)) .>
+      cxgate .>
+      (xgate <> (tgate .> hgate .> sgate .> tgate)) .>
+      cxgate

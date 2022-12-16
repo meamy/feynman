@@ -302,6 +302,13 @@ instance Dyadic DMod2 where
   half          = D2 half
   divTwo (D2 a) = D2 $ divTwo a
 
+instance Euclidean DMod2 where
+  rank (D2 a) = rank a
+  divmod 0 _  = (0, 0)
+  divmod _ 0  = (0, 0)
+  divmod (D2 a) (D2 b) = (fromDyadic x, fromDyadic y) where
+    (x, y) = divmod a b
+
 -- | Construct a dyadic fraction mod 2
 dMod2 :: Integer -> Int -> DMod2
 dMod2 a = D2 . reduce . dyadic a
@@ -321,4 +328,17 @@ prop_euclidean_division_rank a b = (rank b) > (rank $ snd (divmod a b))
 
 prop_euclidean_division_correct :: DyadicRational -> DyadicRational -> Bool
 prop_euclidean_division_correct a b = a == q*b + r where
+  (q, r) = divmod a b
+
+instance Arbitrary DMod2 where
+  arbitrary = do
+    a <- arbitrary `suchThat` (/= 0)
+    n <- arbitrary
+    return $ dMod2 a n
+
+prop_euclidean_division_rank_dmod2 :: DMod2 -> DMod2 -> Bool
+prop_euclidean_division_rank_dmod2 a b = (rank b) > (rank $ snd (divmod a b))
+
+prop_euclidean_division_correct_dmod2 :: DMod2 -> DMod2 -> Bool
+prop_euclidean_division_correct_dmod2 a b = a == q*b + r where
   (q, r) = divmod a b
