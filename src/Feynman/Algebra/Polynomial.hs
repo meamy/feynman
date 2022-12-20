@@ -5,13 +5,13 @@
 {-|
 Module      : Polynomial
 Description : Polynomial base
-Copyright   : (c) Matthew Amy, 2020
+Copyright   : (c) Matthew Amy, 2022
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Algebra.Polynomial(Degree(..), Vars(..)) where
+module Feynman.Algebra.Polynomial where
 
 import Data.Kind
 import Data.Tuple
@@ -45,6 +45,9 @@ class Vars a where
 -- | Class of rings for the purpose of polynomials
 class (Eq r, Num r) => Ring r
 
+-- | Class of Fields for the purpose of polynomials
+class (Ring r, Fractional r) => Field r
+
 -- | Class of groups for the purpose of polynomials
 class (Monoid m) => Group m where
   (./.) :: m -> m -> m
@@ -63,10 +66,20 @@ class Vars a => Symbolic a where
 class (Degree m, Ord (Var m), Ord m, Group m, Symbolic m) => Monomial m where
   unMonomial :: m -> [Var m]
   monomial   :: [Var m] -> m
+  leastCM    :: m -> m -> m
+  divides    :: m -> m -> Bool
   -- Default instance
-  monomial = foldr (\a -> ((ofVar a) <>)) mempty
+  monomial    = foldr (\a -> ((ofVar a) <>)) mempty
+  leastCM m n = monomial (go (unMonomial m) (unMonomial n)) where
+    go [] xs         = xs
+    go xs []         = xs
+    go (x:xs) (y:ys) = case compare x y of
+      LT -> (x:go xs (y:ys))
+      EQ -> (x:go xs ys)
+      GT -> (y:go (x:xs) ys)
+  divides m n = (unMonomial m) `isSubsequenceOf` (unMonomial n)
 
--- | Traditional power producst with graded lexicographic (grevlex) order
+-- | Traditional power products with graded lexicographic (grevlex) order
 newtype GrevlexPP v = GrevlexPP { unPP :: Map v Int }
 
 instance Eq v => Eq (GrevlexPP v) where
@@ -77,10 +90,10 @@ instance Ord v => Ord (GrevlexPP v) where
   {-# INLINABLE compare #-}
   compare m n
     | k /= l    = compare k l
-    | otherwise = case compare (vars n) (vars m) of
-        LT -> GT
-        GT -> LT
-        EQ -> EQ
+    | otherwise = case filter (/= 0) . Map.elems . unPP $ m ./. n of
+        []            -> EQ
+        (x:_) | x < 0 -> GT
+        _             -> LT
     where k = degree m
           l = degree n
 
@@ -108,6 +121,8 @@ instance Ord v => Symbolic (GrevlexPP v) where
 
 instance Ord v => Monomial (GrevlexPP v) where
   unMonomial m = concat [replicate i a | (a,i) <- Map.toList $ unPP m]
+  leastCM m n  = GrevlexPP $ Map.unionWith (max) (unPP m) (unPP n)
+  divides m n  = all (>= 0) . Map.elems . unPP $ n ./. m
 
 instance (Show v) => Show (GrevlexPP v) where
   show = concatMap showVar . Map.toList . Map.filter (/= 0) . unPP where
@@ -122,9 +137,9 @@ instance Ord v => Ord (GrevlexML v) where
   compare m n
     | k /= l    = compare k l
     | otherwise = case compare (unML n) (unML m) of
+        EQ -> EQ
         LT -> GT
         GT -> LT
-        EQ -> EQ
     where k = degree m
           l = degree n
 
@@ -153,6 +168,8 @@ instance Ord v => Symbolic (GrevlexML v) where
 instance Ord v => Monomial (GrevlexML v) where
   unMonomial = Set.toList . unML
   monomial   = GrevlexML . Set.fromList
+  leastCM    = (<>)
+  divides m  = (vars m `Set.isSubsetOf`) . vars
 
 instance (Show v) => Show (GrevlexML v) where
   show = concatMap show . Set.toList . unML
@@ -409,6 +426,15 @@ rename sub = Poly . Map.mapKeys (monomial . map sub . unMonomial) . getTerms
 renameMonotonic :: Monomial m => (Var m -> Var m) -> Polynomial r m -> Polynomial r m
 renameMonotonic sub = Poly . Map.mapKeysMonotonic (monomial . map sub . unMonomial) . getTerms
 
+-- | Substitute a variable with a polynomial
+subst :: (Ring r, Monomial m) => Var m -> Polynomial r m -> Polynomial r m -> Polynomial r m
+subst v p = substMany (\v' -> if v' == v then p else ofVar v')
+
+-- | Simultaneous substitution of variables with polynomials
+substMany :: (Ring r, Monomial m) => (Var m -> Polynomial r m) -> Polynomial r m -> Polynomial r m
+substMany sub = normalize . Map.foldrWithKey (\m a -> add (substInMono (a,m))) zero . getTerms
+  where substInMono (a,m) = scale a $ foldr (mult) one (map sub $ unMonomial m)
+
 {-
 
 -- | Substitute a (Boolean) variable with a (Boolean) polynomial
@@ -544,7 +570,6 @@ invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
 -- | Canonicalize an additive multilinear polynomial
 canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Polynomial v r 'Add -> Polynomial v r 'Add
 canonicalize = fourier . invFourier
-
 -- Constants, for testing
 
 newtype SVar = SVar String deriving (Eq)
@@ -592,4 +617,5 @@ y6 = ofVar (IVar ("y",6)) :: Polynomial IVar DMod2 'Mult
 y7 = ofVar (IVar ("y",7)) :: Polynomial IVar DMod2 'Mult
 y8 = ofVar (IVar ("y",8)) :: Polynomial IVar DMod2 'Mult
 y9 = ofVar (IVar ("y",9)) :: Polynomial IVar DMod2 'Mult
+
 -}
