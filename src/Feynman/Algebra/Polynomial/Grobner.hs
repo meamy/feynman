@@ -104,6 +104,21 @@ addToBasis xs p = go (xs ++ [p]) (zip (repeat p) xs) where
 buchberger :: (Monomial m, Field r) => [Polynomial r m] -> [Polynomial r m]
 buchberger = foldl' addToBasis []
 
+-- | Produces a relatively reduced basis
+addToRBasis :: (Monomial m, Ord r, Field r) => Set (Polynomial r m) -> Polynomial r m -> Set (Polynomial r m)
+addToRBasis basis p = go (Set.insert p basis) (zip (repeat p) $ Set.toList basis) where
+  go basis []         = basis
+  go basis ((p,q):xs) =
+    let s = sPoly p q in
+      case mvd s (Set.toList basis) of
+        0  -> go basis xs
+        s' -> let basis' = Set.map (flip reduce $ s') basis in
+          go (Set.insert s' basis') (xs ++ [(s',p) | p <- Set.toList basis'])
+
+-- | Buchberger's algorithm
+rBuchberger :: (Monomial m, Ord r, Field r) => [Polynomial r m] -> Set (Polynomial r m)
+rBuchberger = foldl' addToRBasis Set.empty
+
 -- Testing
 
 newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
