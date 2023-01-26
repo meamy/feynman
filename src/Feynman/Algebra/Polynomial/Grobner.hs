@@ -104,6 +104,12 @@ addToBasis xs p = go (xs ++ [p]) (zip (repeat p) xs) where
 buchberger :: (Monomial m, Field r) => [Polynomial r m] -> [Polynomial r m]
 buchberger = foldl' addToBasis []
 
+-- | Reduces an existing Grobner basis
+reduceBasis :: (Monomial m, Ord r, Field r) => Set (Polynomial r m) -> Set (Polynomial r m)
+reduceBasis gbasis = Set.fold go Set.empty gbasis where
+  go p          = Set.insert (squashCoeff $ mvd p (Set.toList $ Set.delete p gbasis))
+  squashCoeff p = scale (recip . fromMaybe 1 $ leadingCoefficient p) p
+
 -- | Produces a relatively reduced basis
 addToRBasis :: (Monomial m, Ord r, Field r) => Set (Polynomial r m) -> Polynomial r m -> Set (Polynomial r m)
 addToRBasis basis p = go (Set.insert p basis) (zip (repeat p) $ Set.toList basis) where
