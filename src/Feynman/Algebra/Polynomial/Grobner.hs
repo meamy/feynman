@@ -112,14 +112,18 @@ reduceBasis gbasis = Set.fold go Set.empty gbasis where
 
 -- | Produces a relatively reduced basis
 addToRBasis :: (Monomial m, Ord r, Field r) => Set (Polynomial r m) -> Polynomial r m -> Set (Polynomial r m)
-addToRBasis basis p = go (Set.insert p basis) (zip (repeat p) $ Set.toList basis) where
+addToRBasis basis p = go (Set.insert p' basis) (zip (repeat p') $ Set.toList basis) where
+  squashCoeff q = scale (recip . fromMaybe 1 $ leadingCoefficient q) q
+  p' = squashCoeff $ mvd p (Set.toList basis)
   go basis []         = basis
   go basis ((p,q):xs) =
     let s = sPoly p q in
       case mvd s (Set.toList basis) of
         0  -> go basis xs
-        s' -> let basis' = Set.map (flip reduce $ s') basis in
-          go (Set.insert s' basis') (xs ++ [(s',p) | p <- Set.toList basis'])
+        s' -> let s'' = squashCoeff s'
+                  basis' = Set.map (flip reduce $ s'') basis
+              in
+          go (Set.insert s'' basis') (xs ++ [(s'',p) | p <- Set.toList basis'])
 
 -- | Buchberger's algorithm
 rBuchberger :: (Monomial m, Ord r, Field r) => [Polynomial r m] -> Set (Polynomial r m)
