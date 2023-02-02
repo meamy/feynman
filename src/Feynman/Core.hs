@@ -296,6 +296,6 @@ toffoli = Circuit { qubits = ["x", "y", "z"],
                                     Gate $ Tinv "x", Gate $ Tinv "y", Gate $ T "z",
                                     Gate $ CNOT "y" "x",
                                     Gate $ Tinv "x",
-                                    Gate $ CNOT "y" "z", Gate  $CNOT "z" "x", Gate $ CNOT "x" "y",
+                                    Gate $ CNOT "y" "z", Gate  $ CNOT "z" "x", Gate $ CNOT "x" "y",
                                     Gate $ H "z" ] }
 

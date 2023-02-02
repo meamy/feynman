@@ -79,11 +79,11 @@ daggerDep = reverse . map daggerGateDep where
 
 -- | ID for the ith variable
 qref :: Int -> ExtractionState ID
-qref i = gets ((!i) . fst)
+qref i = gets ((! i) . fst)
 
 -- | index for a qubit ID
 qidx :: ID -> ExtractionState Int
-qidx q = gets ((!q) . snd)
+qidx q = gets ((! q) . snd)
 
 -- | Takes a map from Ints expressed as a list to a map on IDs
 reindex :: [a] -> ExtractionState (Map ID a)
