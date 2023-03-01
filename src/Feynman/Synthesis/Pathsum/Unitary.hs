@@ -21,7 +21,7 @@ import Data.Bits (xor)
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
-import Control.Monad.State.Lazy (StateT, get, gets, put, runState, evalState, evalStateT)
+import Control.Monad.State.Strict (StateT, get, gets, put, runState, evalState, evalStateT)
 
 import Test.QuickCheck (Arbitrary(..),
                         Gen,

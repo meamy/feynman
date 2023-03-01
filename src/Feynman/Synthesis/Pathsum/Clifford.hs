@@ -26,7 +26,7 @@ import qualified Data.Map as Map
 
 import Control.Monad (foldM, mapM, mfilter)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter)
-import Control.Monad.State.Lazy (runState)
+import Control.Monad.State.Strict (runState)
 
 import Test.QuickCheck (Arbitrary(..),
                         Gen,

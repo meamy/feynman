@@ -27,6 +27,8 @@ import qualified Data.Map as Map
 import Data.String (IsString(..))
 import Data.Tuple (swap)
 
+import qualified Debug.Trace as Debug
+
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial (degree)
@@ -374,10 +376,76 @@ czgate = Pathsum 0 2 2 0 p [x0, x1]
         x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
 
+mutate i b xs = map (\(a,j) -> if j == i then b else a) (zip xs [0..])
+
+-- | apply an H gate
+applyH :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyH (Pathsum s d o p pp ovals) i = Pathsum (s+1) d o (p+1) pp' ovals' where
+  pp'    = pp + (lift (ovals!!i) * (ofVar $ PVar p))
+  ovals' = mutate i (ofVar (PVar p)) ovals
+
+-- | apply an X gate
+applyX :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyX (Pathsum s d o p pp ovals) i = Pathsum s d o p pp ovals' where
+  ovals' = mutate i (1 + ovals!!i) ovals
+
+-- | apply a Z gate
+applyZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyZ (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
+  pp' = pp + lift (ovals!!i)
+
+-- | apply a CZ gate
+applyCZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
+applyCZ (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp' ovals where
+  pp' = pp + lift (ovals!!i * ovals!!j)
+
+-- | apply a CCZ gate
+applyCCZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Int -> Pathsum g
+applyCCZ (Pathsum s d o p pp ovals) i j k = Pathsum s d o p pp' ovals where
+  pp' = pp + lift (ovals!!i * ovals!!j * ovals!!k)
+
+-- | apply a CX gate
+applyCX :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
+applyCX (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp ovals' where
+  ovals' = mutate j (ovals!!i + ovals!!j) ovals
+
+-- | apply an S gate
+applyS :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyS (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
+  pp' = pp + scale half (lift $ ovals!!i)
+
+-- | apply an Sdg gate
+applySdg :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applySdg (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
+  pp' = pp + scale (-half) (lift $ ovals!!i)
+
+-- | apply a T gate
+applyT :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyT (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
+  pp' = pp + scale (half*half) (lift $ ovals!!i)
+
+-- | apply a Tdg gate
+applyTdg :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
+applyTdg (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
+  pp' = pp + scale (-half*half) (lift $ ovals!!i)
+
+-- | apply a Swap gate
+applySwap :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
+applySwap (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp ovals' where
+  ovals' = mutate i (ovals!!j) $ mutate j (ovals!!i) ovals
+
 -- | Toffoli gate
 ccxgate :: (Eq g, Num g) => Pathsum g
 ccxgate = Pathsum 0 3 3 0 0 [x0, x1, x2 + x0*x1]
   where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+        x2 = ofVar $ IVar 2
+
+-- | CCZ gate
+cczgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+cczgate = Pathsum 0 3 3 0 p [x0, x1, x2]
+  where p = lift $ x0 * x1 * x2
+        x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
         x2 = ofVar $ IVar 2
 
@@ -598,7 +666,7 @@ times sop sop' = case timesMaybe sop sop' of
 
 -- | Left-to-right composition
 (.>) :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Pathsum g
-(.>) = times
+x .> y = x `seq`  y `seq` times x y
 
 infixr 5 .>
 
@@ -631,7 +699,7 @@ discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
  --------------------------}
   
 instance (Eq g, Num g) => Semigroup (Pathsum g) where
-  (<>) = tensor
+  x <> y = x `seq` y `seq` tensor x y 
 
 instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []
@@ -750,7 +818,7 @@ pattern HH v p <- (matchHH -> (v, p):_)
 
 -- | Pattern synonym for solvable HH instances
 pattern HHSolved :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
+pattern HHSolved v v' p <- (reverse . matchHHSolve -> (v, v', p):_)
 
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
@@ -852,11 +920,15 @@ simplify sop = case sop of
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
 --   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-grind sop = case sop of
+grind sop = Debug.trace ("Num vars: " ++ show vnum ++ ", Num terms: " ++ show num) $ case sop of
   Elim y         -> grind $ applyElim y sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
   Omega y p      -> grind $ applyOmega y p sop
   _              -> sop
+  where vnum = inDeg sop + pathVars sop
+        num = ppTerms + ketTerms
+        ppTerms = length . toTermList . phasePoly $ sop
+	ketTerms = foldr (+) 0 $ map (length . toTermList) (outVals sop)
 
 -- | A normalization procedure for Clifford circuits
 normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
