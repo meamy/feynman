@@ -20,7 +20,9 @@ multiplicative and additive "parity" basis.
 -}
 
 module Feynman.Algebra.Polynomial.Multilinear(
-  Monomial,
+  Monomial(..),
+  PowerProduct,
+  Parity,
   Multilinear,
   PhasePolynomial,
   PseudoBoolean,
@@ -115,6 +117,9 @@ instance ReprC 'Mult where
 
 -- | Monomials with graded lexicographic (grevlex) order
 newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
+
+type PowerProduct v = Monomial v 'Mult
+type Parity v       = Monomial v 'Add
 
 instance Ord v => Ord (Monomial v repr) where
   {-# INLINABLE compare #-}

@@ -34,6 +34,7 @@ library
                        Feynman.Algebra.Polynomial,
                        Feynman.Algebra.Polynomial.Univariate,
                        Feynman.Algebra.Polynomial.Multilinear,
+                       Feynman.Algebra.Polynomial.Multilinear.Groebner
                        Feynman.Algebra.Pathsum.Balanced,
 
                        Feynman.Synthesis.Phase,
@@ -76,7 +77,7 @@ library
 
 executable feynopt
   main-is:             FeynOpt.hs
-  buildable:           True 
+  buildable:           False
   ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
@@ -97,7 +98,7 @@ executable feynopt
 
 executable feynver
   main-is:             FeynVerify.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
@@ -118,7 +119,7 @@ executable feynver
 
 executable qc2qasm
   main-is:             QC2Qasm.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -O2
   hs-source-dirs:      tools
   build-depends:       Feynman,
@@ -129,7 +130,7 @@ executable qc2qasm
 
 executable ar21
   main-is:             ar21.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -O2
   hs-source-dirs:      scripts
   build-depends:       Feynman,
@@ -140,7 +141,7 @@ executable ar21
 
 executable abr22
   main-is:             abr22.hs
-  buildable:           True
+  buildable:           False
   ghc-options:         -O2
   hs-source-dirs:      scripts
   build-depends:       Feynman,
