@@ -126,13 +126,9 @@ reduceBasis gbasis = go [] gbasis where
     0  -> go gbasis' gbasis
     p' -> go (p':gbasis') gbasis
 
--- | Adds a polynomial to a reduced Groebner bases
-addToRBasis :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
-addToRBasis gbasis p = reduceBasis $ addToBasis gbasis p
-
 -- | Buchberger's algorithm, modified to return a reduced Groebner basis
 rbuchberger :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
-rbuchberger = foldl' (\x -> reduceBasis . addToRBasis x) []
+rbuchberger = foldl' (\x -> reduceBasis . addToBasis x) []
 
 -- Testing
 

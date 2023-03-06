@@ -115,19 +115,18 @@ instance ReprC 'Mult where
          of monomials generic so that we can implement monomials with, e.g.,
          int sets for different variable classes -}
 
--- | Monomials with graded lexicographic (grevlex) order
+-- | Monomials with lexicographic order
 newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 
 type PowerProduct v = Monomial v 'Mult
 type Parity v       = Monomial v 'Add
 
+-- Note: this is NOT a monomial order using Set.toList, which is ascending
 instance Ord v => Ord (Monomial v repr) where
   {-# INLINABLE compare #-}
-  compare m n
-    | k /= l    = compare k l
-    | otherwise = compare (getVars m) (getVars n)
-    where k = degree m
-          l = degree n
+  compare m n = compare mvars nvars
+    where mvars = Set.toDescList $ getVars m
+          nvars = Set.toDescList $ getVars n
 
 instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
