@@ -1,7 +1,7 @@
 {-|
 Module      : Multilinear Groebner Bases
 Description : Tools for Groebner basis calculations over multilinear polynomials
-Copyright   : (c) Matthew Amy, 2022
+Copyright   : (c) Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
@@ -40,6 +40,10 @@ leadingCoefficient = fst . leadingTerm
 decomposeLeading :: (Ord v, Eq r, Fractional r) => PseudoBoolean v r -> (PseudoBoolean v r, PseudoBoolean v r)
 decomposeLeading p = (ofTerm lt, p - ofTerm lt)
   where lt = leadingTerm p
+
+-- | Divide one monomial by another. /m/ must be divisible by /n/
+coprime :: Ord v => PowerProduct v -> PowerProduct v -> Bool
+coprime m n = Set.intersection (vars m) (vars n) == Set.empty
 
 -- | Determines whether one monomial is divisible by another
 divides :: Ord v => PowerProduct v -> PowerProduct v -> Bool
@@ -101,7 +105,8 @@ mvd f xs = go f xs where
 --   and add the implicit (multilinear) S-polynomials they generate, (p - LT(p))*v - LT(p)
 addToBasis :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
 addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
-  sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs]
+  nonzero p q = not $ coprime (leadingMonomial p) (leadingMonomial q)
+  sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs, nonzero p q]
   qfPolys     = map (\v -> ofVar v * p) . Set.toList . vars . leadingMonomial
   go basis []     = basis
   go basis (s:xs) = case mvd s basis of
