@@ -2,6 +2,8 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE Rank2Types #-}
 
 {-|
 Module      : Balanced
@@ -26,8 +28,7 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.String (IsString(..))
 import Data.Tuple (swap)
-
-import qualified Debug.Trace as Debug
+import Data.Functor.Identity
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
@@ -163,6 +164,31 @@ dropPhase sop = sop { phasePoly = 0 }
 dropAmplitude :: Pathsum g -> Pathsum g
 dropAmplitude sop = sop { sde = 0 }
 
+{-----------------------------------
+ Lenses
+ -----------------------------------}
+
+-- | The type of lenses. Coincides with the lens library definition
+type Lens a b = forall f. Functor f => (b -> f b) -> a -> f a
+
+-- | Lens for lists
+ix :: Int -> Lens [a] a
+ix i f xs = fmap go $ f (xs!!i) where
+  go a = map (\(b,j) -> if j == i then a else b) (zip xs [0..])
+
+-- | Lens for the output state
+state :: Lens (Pathsum g) [SBool Var]
+state f sop = fmap go $ f (outVals sop) where
+  go vals = sop { outVals = vals }
+
+-- | Setter over a lens. Coincides with the lens library function
+over :: Lens a b -> (b -> b) -> a -> a
+over lens f a = runIdentity $ (lens $ Identity . f) a
+
+-- | Set a value at a point over a lens
+set :: Lens a b -> b -> a -> a
+set lens b = over lens (const b)
+
 {----------------------------
  Constructors
  ----------------------------}
@@ -268,7 +294,7 @@ epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
         f i  = ofVar (PVar i) * (ofVar (IVar i) + ofVar (IVar $ n+i))
 
 {----------------------------
- Constants & gates
+ Constants
  ----------------------------}
 
 -- | \(\sqrt{2}\)
@@ -303,6 +329,10 @@ eta = Pathsum 0 0 2 1 0 [ofVar (PVar 0), ofVar (PVar 0)]
 epsilon :: (Eq g, Abelian g) => Pathsum g
 epsilon = Pathsum 2 2 0 1 p []
   where p = lift $ ofVar (PVar 0) * (ofVar (IVar 0) + ofVar (IVar 1))
+
+{----------------------------
+ Matrices
+ ----------------------------}
 
 -- | X gate
 xgate :: (Eq g, Num g) => Pathsum g
@@ -353,16 +383,6 @@ hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
   where p = lift $ (ofVar $ IVar 0) * (ofVar $ PVar 0)
 
--- | CH gate
-chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
-  where p = distribute (-half*half) (1 + x1) +
-            distribute half (lift $ (1 + x1) * y) +
-            (lift $ x1 * x2 * y)
-        x1 = ofVar $ IVar 0
-        x2 = ofVar $ IVar 1
-        y = ofVar $ PVar 0
-
 -- | CNOT gate
 cxgate :: (Eq g, Num g) => Pathsum g
 cxgate = Pathsum 0 2 2 0 0 [x0, x0+x1]
@@ -375,64 +395,6 @@ czgate = Pathsum 0 2 2 0 p [x0, x1]
   where p = lift $ x0 * x1
         x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
-
-mutate i b xs = map (\(a,j) -> if j == i then b else a) (zip xs [0..])
-
--- | apply an H gate
-applyH :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyH (Pathsum s d o p pp ovals) i = Pathsum (s+1) d o (p+1) pp' ovals' where
-  pp'    = pp + (lift (ovals!!i) * (ofVar $ PVar p))
-  ovals' = mutate i (ofVar (PVar p)) ovals
-
--- | apply an X gate
-applyX :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyX (Pathsum s d o p pp ovals) i = Pathsum s d o p pp ovals' where
-  ovals' = mutate i (1 + ovals!!i) ovals
-
--- | apply a Z gate
-applyZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyZ (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
-  pp' = pp + lift (ovals!!i)
-
--- | apply a CZ gate
-applyCZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
-applyCZ (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp' ovals where
-  pp' = pp + lift (ovals!!i * ovals!!j)
-
--- | apply a CCZ gate
-applyCCZ :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Int -> Pathsum g
-applyCCZ (Pathsum s d o p pp ovals) i j k = Pathsum s d o p pp' ovals where
-  pp' = pp + lift (ovals!!i * ovals!!j * ovals!!k)
-
--- | apply a CX gate
-applyCX :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
-applyCX (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp ovals' where
-  ovals' = mutate j (ovals!!i + ovals!!j) ovals
-
--- | apply an S gate
-applyS :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyS (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
-  pp' = pp + scale half (lift $ ovals!!i)
-
--- | apply an Sdg gate
-applySdg :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applySdg (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
-  pp' = pp + scale (-half) (lift $ ovals!!i)
-
--- | apply a T gate
-applyT :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyT (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
-  pp' = pp + scale (half*half) (lift $ ovals!!i)
-
--- | apply a Tdg gate
-applyTdg :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Pathsum g
-applyTdg (Pathsum s d o p pp ovals) i = Pathsum s d o p pp' ovals where
-  pp' = pp + scale (-half*half) (lift $ ovals!!i)
-
--- | apply a Swap gate
-applySwap :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> Int -> Pathsum g
-applySwap (Pathsum s d o p pp ovals) i j = Pathsum s d o p pp ovals' where
-  ovals' = mutate i (ovals!!j) $ mutate j (ovals!!i) ovals
 
 -- | Toffoli gate
 ccxgate :: (Eq g, Num g) => Pathsum g
@@ -451,21 +413,122 @@ cczgate = Pathsum 0 3 3 0 p [x0, x1, x2]
 
 -- | k-control Toffoli gate
 mctgate :: (Eq g, Num g) => Int -> Pathsum g
-mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (controls ++ [t + foldr (*) 1 controls])
-  where controls = [ofVar (IVar i) | i <- [0..k-1]]
-        t        = ofVar $ IVar k
+mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (ctrls ++ [t + foldr (*) 1 ctrls])
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        t     = ofVar $ IVar k
 
 -- | n-qubit R_z gate
 rzNgate :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g
-rzNgate theta k = Pathsum 0 k k 0 p controls
-  where controls = [ofVar (IVar i) | i <- [0..k-1]]
-        p        = scale theta (lift $ foldr (*) 1 controls)
+rzNgate theta k = Pathsum 0 k k 0 p ctrls
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        p     = scale theta (lift $ foldr (*) 1 ctrls)
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g
 swapgate = Pathsum 0 2 2 0 0 [x1, x0]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
+
+-- | CH gate
+chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
+  where p = distribute (-half*half) (1 + x1) +
+            distribute half (lift $ (1 + x1) * y) +
+            (lift $ x1 * x2 * y)
+        x1 = ofVar $ IVar 0
+        x2 = ofVar $ IVar 1
+        y = ofVar $ PVar 0
+
+{----------------------------
+ Applicative style
+ ----------------------------}
+
+-- | apply an X gate
+applyX :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyX i (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals'
+  where ovals' = over (ix i) (+ 1) ovals
+
+-- | apply a Z gate
+applyZ :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyZ i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + lift (ovals!!i)
+
+-- | apply a Y gate
+applyY :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyY i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals'
+  where ovals' = over (ix i) (+ 1) ovals
+        pp'    = pp + lift (ovals!!i) + constant half
+
+-- | apply an S gate
+applyS :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyS i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale half (lift $ ovals!!i)
+
+-- | apply an Sdg gate
+applySdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applySdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale (-half) (lift $ ovals!!i)
+
+-- | apply a T gate
+applyT :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyT i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale (half*half) (lift $ ovals!!i)
+
+-- | apply a Tdg gate
+applyTdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyTdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale (-half*half) (lift $ ovals!!i)
+
+-- | apply an Rk gate
+applyRk :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyRk k i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale (fromDyadic $ dyadic 1 k) (lift $ ovals!!i)
+
+-- | apply an Rz gate
+applyRz :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g -> Pathsum g
+applyRz theta i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + scale (theta) (lift $ ovals!!i)
+
+-- | apply an H gate
+applyH :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyH i (Pathsum s d o p pp ovals) = Pathsum (s+1) d o (p+1) pp' ovals'
+  where pp'    = pp + (lift (ovals!!i) * (ofVar $ PVar p))
+        ovals' = set (ix i) (ofVar (PVar p)) ovals
+
+-- | apply a CZ gate
+applyCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCZ i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + lift (ovals!!i * ovals!!j)
+
+-- | apply a CX gate
+applyCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCX i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix j) (+ ovals!!i) ovals
+
+-- | apply a CCZ gate
+applyCCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCZ i j k (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + lift (ovals!!i * ovals!!j * ovals!!k)
+
+-- | apply a CCX gate
+applyCCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCX i j k (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix k) (+ ovals!!i * ovals!!j) ovals
+
+-- | apply a Swap gate
+applySwap :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applySwap i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = set (ix i) (ovals!!j) $ set (ix j) (ovals!!i) ovals
+
+-- | apply a multiply controlled Toffoli gate
+applyMCT :: (Eq g, Abelian g, Dyadic g) => [Int] -> Int -> Pathsum g -> Pathsum g
+applyMCT xs t (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix t) (+ foldr (*) 1 (map (ovals!!) xs)) ovals
+
+-- | apply a multiply controlled Rz gate
+applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
+applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
+  pp' = pp + scale (theta) (lift $ foldr (*) 1 (map (ovals!!) xs))
 
 {----------------------------
  Channels
@@ -920,15 +983,11 @@ simplify sop = case sop of
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
 --   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-grind sop = Debug.trace ("Num vars: " ++ show vnum ++ ", Num terms: " ++ show num) $ case sop of
+grind sop = case sop of
   Elim y         -> grind $ applyElim y sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
   Omega y p      -> grind $ applyOmega y p sop
   _              -> sop
-  where vnum = inDeg sop + pathVars sop
-        num = ppTerms + ketTerms
-        ppTerms = length . toTermList . phasePoly $ sop
-	ketTerms = foldr (+) 0 $ map (length . toTermList) (outVals sop)
 
 -- | A normalization procedure for Clifford circuits
 normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g

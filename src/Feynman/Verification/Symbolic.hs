@@ -17,8 +17,6 @@ import Data.Semigroup
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import qualified Debug.Trace as Debug
-
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
@@ -32,24 +30,26 @@ import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 type Context = Map ID Int
 
 -- | Retrieve the path sum representation of a primitive gate
+--
+--   Deprecated
 primitiveAction :: Primitive -> Pathsum DMod2
 primitiveAction gate = case gate of
-  H _           -> hgate
-  X _           -> xgate
-  Y _           -> ygate
-  Z _           -> zgate
-  CNOT _ _      -> cxgate
-  CZ _ _        -> czgate
-  S _           -> sgate
-  Sinv _        -> sdggate
-  T _           -> tgate
-  Tinv _        -> tdggate
-  Swap _ _      -> swapgate
-  Rz theta _    -> rzgate $ fromDyadic $ discretize theta
-  Rx theta _    -> hgate * rzgate (fromDyadic $ discretize theta) * hgate
-  Ry theta _    -> rzgate (fromDyadic $ discretize theta) * hgate * rzgate (fromDyadic $ discretize theta) * hgate
+  H _               -> hgate
+  X _               -> xgate
+  Y _               -> ygate
+  Z _               -> zgate
+  CNOT _ _          -> cxgate
+  CZ _ _            -> czgate
+  S _               -> sgate
+  Sinv _            -> sdggate
+  T _               -> tgate
+  Tinv _            -> tdggate
+  Swap _ _          -> swapgate
+  Rz theta _        -> rzgate $ fromDyadic $ discretize theta
+  Rx theta _        -> hgate * rzgate (fromDyadic $ discretize theta) * hgate
+  Ry theta _        -> rzgate (fromDyadic $ discretize theta) * hgate * rzgate (fromDyadic $ discretize theta) * hgate
   Uninterp "CCZ" _  -> cczgate
-  Uninterp _ _  -> error "Uninterpreted gates not supported"
+  Uninterp _ _      -> error "Uninterpreted gates not supported"
 
 -- | Find the relevant index or allocate one for the given qubit
 findOrAlloc :: ID -> State Context Int
@@ -59,25 +59,61 @@ findOrAlloc x = do
     Just i  -> return i
     Nothing -> gets Map.size >>= \i -> modify (Map.insert x i) >> return i
 
-foldM' :: (Monad m) => (a -> b -> m a) -> a -> [b] -> m a
-foldM' _ z [] = return z
-foldM' f z (x:xs) = do
-  z' <- f z x
-  z' `seq` foldM' f z' xs
+-- | Applicative-style
+applyPrimitive :: Primitive -> Pathsum DMod2 -> State Context (Pathsum DMod2)
+applyPrimitive gate sop = case gate of
+  H x               -> findOrAlloc x >>= \i -> return $ applyH i sop
+  X x               -> findOrAlloc x >>= \i -> return $ applyX i sop
+  Y x               -> findOrAlloc x >>= \i -> return $ applyY i sop
+  Z x               -> findOrAlloc x >>= \i -> return $ applyZ i sop
+  S x               -> findOrAlloc x >>= \i -> return $ applyS i sop
+  Sinv x            -> findOrAlloc x >>= \i -> return $ applySdg i sop
+  T x               -> findOrAlloc x >>= \i -> return $ applyT i sop
+  Tinv x            -> findOrAlloc x >>= \i -> return $ applyTdg i sop
+  CNOT x y          -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    return $ applyCX i j sop
+  CZ x y            -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    return $ applyCZ i j sop
+  Swap x y          -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    return $ applySwap i j sop
+  Rz theta x        -> do
+    i <- findOrAlloc x
+    let theta' = fromDyadic $ discretize theta
+    return $ applyRz theta' i sop
+  Rx theta x        -> do
+    i <- findOrAlloc x
+    let theta' = fromDyadic $ discretize theta
+    return $ applyH i . applyRz theta' i . applyH i $ sop
+  Ry theta x        -> do
+    i <- findOrAlloc x
+    let theta' = fromDyadic $ discretize theta
+    return $ applyRz theta' i . applyH i . applyRz theta' i . applyH i $ sop
+  Uninterp "CCZ" [x,y,z] -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    k <- findOrAlloc z
+    return $ applyCCZ i j k sop
+  Uninterp "CCX" [x,y,z] -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    k <- findOrAlloc z
+    return $ applyCCX i j k sop
+  Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
 
 -- | Apply a circuit to a state
 applyCircuit :: Pathsum DMod2 -> [Primitive] -> State Context (Pathsum DMod2)
-applyCircuit = foldM' absorbGate
+applyCircuit = foldM absorbGate
   where sizeof = show . length . toTermList . phasePoly
-        absorbGate sop gate = Debug.trace (sizeof sop) $ do
+        absorbGate sop gate = do
           args <- mapM findOrAlloc $ getArgs gate
           nOut <- gets Map.size
-          let sop' = sop <> identity (nOut - outDeg sop)
-          let g    = embed (primitiveAction gate)
-                           (nOut - length args)
-                           ((Map.fromList $ zip [0..] args)!)
-                           ((Map.fromList $ zip [0..] args)!)
-          return $ sop' .> g
+          applyPrimitive gate $ sop <> identity (nOut - outDeg sop)
 
 -- | Create an initial state given a set of variables and inputs
 makeInitial :: [ID] -> [ID] -> State Context ([SBool ID])
@@ -113,24 +149,6 @@ complexAction vars inputs circ = evalState st Map.empty where
     init <- makeInitial vars inputs
     action <- computeAction circ
     return $ ket init .> action
-
-strictAction :: [ID] -> [ID] -> [Primitive] -> Pathsum DMod2
-strictAction vars inputs circ = foldl' applyGate inSt circ where
-  n    = length vars
-  inSt = ket [if v `elem` inputs then ofVar v else 0 | v <- vars]
-  ctx  = Map.fromList $ zip vars [0..]
-  applyGate sop gate = case gate of
-    H x                     -> applyH sop (ctx!x)
-    X x                     -> applyX sop (ctx!x)
-    Z x                     -> applyZ sop (ctx!x)
-    CNOT x y                -> applyCX sop (ctx!x) (ctx!y)
-    CZ x y                  -> applyCZ sop (ctx!x) (ctx!y)
-    S x                     -> applyS sop (ctx!x)
-    Sinv x                  -> applySdg sop (ctx!x)
-    T x                     -> applyT sop (ctx!x)
-    Tinv x                  -> applyTdg sop (ctx!x)
-    Swap x y                -> applySwap sop (ctx!x) (ctx!y)
-    Uninterp "CCZ" [x,y,z]  -> applyCCZ sop (ctx!x) (ctx!y) (ctx!z)
 
 {------------------------------------
  Verification methods
