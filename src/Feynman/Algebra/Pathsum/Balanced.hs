@@ -451,54 +451,54 @@ applyX i (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals'
 -- | apply a Z gate
 applyZ :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyZ i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + lift (ovals!!i)
+  where pp' = pp + distribute 1 (ovals!!i)
 
 -- | apply a Y gate
 applyY :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyY i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals'
   where ovals' = over (ix i) (+ 1) ovals
-        pp'    = pp + lift (ovals!!i) + constant half
+        pp'    = pp + distribute 1 (ovals!!i) + constant half
 
 -- | apply an S gate
 applyS :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyS i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale half (lift $ ovals!!i)
+  where pp' = pp + distribute half (ovals!!i)
 
 -- | apply an Sdg gate
 applySdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applySdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale (-half) (lift $ ovals!!i)
+  where pp' = pp + distribute (-half) (ovals!!i)
 
 -- | apply a T gate
 applyT :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyT i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale (half*half) (lift $ ovals!!i)
+  where pp' = pp + distribute (half*half) (ovals!!i)
 
 -- | apply a Tdg gate
 applyTdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyTdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale (-half*half) (lift $ ovals!!i)
+  where pp' = pp + distribute (-half*half) (ovals!!i)
 
 -- | apply an Rk gate
 applyRk :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
 applyRk k i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale (fromDyadic $ dyadic 1 k) (lift $ ovals!!i)
+  where pp' = pp + distribute (fromDyadic $ dyadic 1 k) (ovals!!i)
 
 -- | apply an Rz gate
 applyRz :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g -> Pathsum g
 applyRz theta i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + scale (theta) (lift $ ovals!!i)
+  where pp' = pp + distribute (theta) (ovals!!i)
 
 -- | apply an H gate
 applyH :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
 applyH i (Pathsum s d o p pp ovals) = Pathsum (s+1) d o (p+1) pp' ovals'
-  where pp'    = pp + (lift (ovals!!i) * (ofVar $ PVar p))
+  where pp'    = pp + distribute 1 ((ovals!!i) * (ofVar $ PVar p))
         ovals' = set (ix i) (ofVar (PVar p)) ovals
 
 -- | apply a CZ gate
 applyCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
 applyCZ i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + lift (ovals!!i * ovals!!j)
+  where pp' = pp + distribute 1 (ovals!!i * ovals!!j)
 
 -- | apply a CX gate
 applyCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
@@ -508,7 +508,7 @@ applyCX i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
 -- | apply a CCZ gate
 applyCCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
 applyCCZ i j k (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
-  where pp' = pp + lift (ovals!!i * ovals!!j * ovals!!k)
+  where pp' = pp + distribute 1 (ovals!!i * ovals!!j * ovals!!k)
 
 -- | apply a CCX gate
 applyCCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
@@ -528,7 +528,7 @@ applyMCT xs t (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
 -- | apply a multiply controlled Rz gate
 applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
 applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
-  pp' = pp + scale (theta) (lift $ foldr (*) 1 (map (ovals!!) xs))
+  pp' = pp + distribute (theta) (foldr (*) 1 (map (ovals!!) xs))
 
 {----------------------------
  Channels

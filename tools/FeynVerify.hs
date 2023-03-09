@@ -40,7 +40,7 @@ checkEquivalence options (qc, qc') =
   
 -- | Get the (reduced) path sum of a DotQC circuit
 getSOP :: DotQC -> Pathsum DMod2
-getSOP qc = grind $ strictAction vars inpts circ where
+getSOP qc = grind $ complexAction vars inpts circ where
   vars  = qubits qc
   inpts = Set.toList (inputs qc)
   circ  = toCliffordT $ toGatelist qc
