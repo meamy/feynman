@@ -729,7 +729,7 @@ times sop sop' = case timesMaybe sop sop' of
 
 -- | Left-to-right composition
 (.>) :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Pathsum g
-x .> y = x `seq`  y `seq` times x y
+(.>) = times
 
 infixr 5 .>
 
@@ -762,7 +762,7 @@ discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
  --------------------------}
   
 instance (Eq g, Num g) => Semigroup (Pathsum g) where
-  x <> y = x `seq` y `seq` tensor x y 
+  (<>) = tensor
 
 instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []

@@ -19,7 +19,7 @@ source-repository head
   location:          https://github.com/meamy/feynman
 
 library
-  ghc-options:         -O2 -rtsopts
+  ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -154,7 +154,7 @@ executable abr22
 executable hs
   main-is:             hs.hs
   buildable:           True
-  ghc-options:         -O2 -rtsopts
+  ghc-options:         -O2
   hs-source-dirs:      scripts
   build-depends:       Feynman,
                        base,
