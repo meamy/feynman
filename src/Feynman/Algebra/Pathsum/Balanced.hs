@@ -299,7 +299,7 @@ epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
 
 -- | \(\sqrt{2}\)
 root2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-root2 = Pathsum 0 0 0 1 ((-constant (half * half)) + scale half (lift $ ofVar (PVar 0))) []
+root2 = Pathsum 0 0 0 1 ((-constant (half * half)) + distribute half (ofVar (PVar 0))) []
 
 -- | \(1/\sqrt{2}\)
 roothalf :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -351,32 +351,32 @@ ygate = Pathsum 0 1 1 0 p [1 + ofVar (IVar 0)]
 -- | S gate
 sgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale half (lift $ ofVar (IVar 0))
+  where p = distribute half (ofVar (IVar 0))
 
 -- | S* gate
 sdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (-half) (lift $ ofVar (IVar 0))
+  where p = distribute (-half) (ofVar (IVar 0))
 
 -- | T gate
 tgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (half*half) (lift $ ofVar (IVar 0))
+  where p = distribute (half*half) (ofVar (IVar 0))
 
 -- | T* gate
 tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (-half*half) (lift $ ofVar (IVar 0))
+  where p = distribute (-half*half) (ofVar (IVar 0))
 
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
+  where p = distribute (fromDyadic $ dyadic 1 k) (ofVar (IVar 0))
 
 -- | R_z gate
 rzgate :: (Eq g, Abelian g, Dyadic g) => g -> Pathsum g
 rzgate theta = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale theta (lift $ ofVar (IVar 0))
+  where p = distribute theta (ofVar (IVar 0))
 
 -- | H gate
 hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -421,7 +421,7 @@ mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (ctrls ++ [t + foldr (*) 1 ctrls])
 rzNgate :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g
 rzNgate theta k = Pathsum 0 k k 0 p ctrls
   where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
-        p     = scale theta (lift $ foldr (*) 1 ctrls)
+        p     = distribute theta (foldr (*) 1 ctrls)
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g
@@ -1052,6 +1052,44 @@ isPure sop
   | inDeg sop /= outDeg sop = False
   | otherwise               = purity == identity 0 where
       purity = trace $ sop .> sop
+
+{--------------------------
+ Testing
+ --------------------------}
+
+-- | Test suite for internal use
+runTests :: () -> IO ()
+runTests _ = do
+  print $ isIdentity (applyX 0 (xgate :: Pathsum DMod2))
+  print $ isIdentity (applyY 0 (ygate :: Pathsum DMod2))
+  print $ isIdentity (applyZ 0 (zgate :: Pathsum DMod2))
+  print $ isIdentity (applyS 0 (sdggate :: Pathsum DMod2))
+  print $ isIdentity (applySdg 0 (sgate :: Pathsum DMod2))
+  print $ isIdentity (applyT 0 (tdggate :: Pathsum DMod2))
+  print $ isIdentity (applyTdg 0 (tgate :: Pathsum DMod2))
+  print $ isIdentity (applyH 0 (hgate :: Pathsum DMod2))
+  print $ isIdentity (applyCZ 0 1 (czgate :: Pathsum DMod2))
+  print $ isIdentity (applyCX 0 1 (cxgate :: Pathsum DMod2))
+  print $ isIdentity (applySwap 0 1 (swapgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCZ 0 1 2 (cczgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCX 0 1 2 (ccxgate :: Pathsum DMod2))
+  print $ isIdentity (applyMCT [0,1,2] 3 (mctgate 3 :: Pathsum DMod2))
+  print $ isIdentity (applyCX 1 0 (swapgate .> cxgate .> swapgate :: Pathsum DMod2))
+  print $ applyX 0 (identity 1) == (xgate :: Pathsum DMod2)
+  print $ applyY 0 (identity 1) == (ygate :: Pathsum DMod2)
+  print $ applyZ 0 (identity 1) == (zgate :: Pathsum DMod2)
+  print $ applyS 0 (identity 1) == (sgate :: Pathsum DMod2)
+  print $ applySdg 0 (identity 1) == (sdggate :: Pathsum DMod2)
+  print $ applyT 0 (identity 1) == (tgate :: Pathsum DMod2)
+  print $ applyTdg 0 (identity 1) == (tdggate :: Pathsum DMod2)
+  print $ applyH 0 (identity 1) == (hgate :: Pathsum DMod2)
+  print $ applyCZ 0 1 (identity 2) == (czgate :: Pathsum DMod2)
+  print $ applyCX 0 1 (identity 2) == (cxgate :: Pathsum DMod2)
+  print $ applySwap 0 1 (identity 2) == (swapgate :: Pathsum DMod2)
+  print $ applyCCZ 0 1 2 (identity 3) == (cczgate :: Pathsum DMod2)
+  print $ applyCCX 0 1 2 (identity 3) == (ccxgate :: Pathsum DMod2)
+  print $ applyMCT [0,1,2] 3 (identity 4) == (mctgate 3 :: Pathsum DMod2)
+  print $ applyCX 1 0 (identity 2) == (swapgate .> cxgate .> swapgate :: Pathsum DMod2)
 
 {--------------------------
  Examples
