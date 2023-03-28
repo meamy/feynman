@@ -2,6 +2,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE Rank2Types #-}
 
 {-|
 Module      : Named
@@ -26,6 +27,7 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.String (IsString(..))
 import Data.Tuple (swap)
+import Data.Functor.Identity
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
@@ -159,6 +161,31 @@ inDeg = length . inVals
 outDeg :: Pathsum g -> Int
 outDeg = length . outVals
 
+{-----------------------------------
+ Lenses
+ -----------------------------------}
+
+-- | The type of lenses. Coincides with the lens library definition
+type Lens a b = forall f. Functor f => (b -> f b) -> a -> f a
+
+-- | Lens for lists
+ix :: Int -> Lens [a] a
+ix i f xs = fmap go $ f (xs!!i) where
+  go a = map (\(b,j) -> if j == i then a else b) (zip xs [0..])
+
+-- | Lens for the output state
+state :: Lens (Pathsum g) [SBool Var]
+state f sop = fmap go $ f (outVals sop) where
+  go vals = sop { outVals = vals }
+
+-- | Setter over a lens. Coincides with the lens library function
+over :: Lens a b -> (b -> b) -> a -> a
+over lens f a = runIdentity $ (lens $ Identity . f) a
+
+-- | Set a value at a point over a lens
+set :: Lens a b -> b -> a -> a
+set lens b = over lens (const b)
+
 {----------------------------
  Constructors
  ----------------------------}
@@ -211,7 +238,7 @@ epsilonN n = Pathsum (2*n) ivars pvars (lift poly) []
         f i   = ofVar (pvar i) * (ofVar (ivar i) + ofVar (ivar $ n+i))
 
 {----------------------------
- Constants & gates
+ Constants
  ----------------------------}
 
 -- | \(\sqrt{2}\)
@@ -247,6 +274,10 @@ eta = Pathsum 0 [] [pvar 0] 0 [ofVar (pvar 0), ofVar (pvar 0)]
 epsilon :: (Eq g, Abelian g) => Pathsum g
 epsilon = Pathsum 2 [ivar 0, ivar 1] [pvar 1] p []
   where p = lift $ ofVar (pvar 0) * (ofVar (ivar 0) + ofVar (ivar 1))
+
+{----------------------------
+ Matrices
+ ----------------------------}
 
 -- | X gate
 xgate :: (Eq g, Num g) => Pathsum g
@@ -297,16 +328,6 @@ hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 hgate = Pathsum 1 [ivar 0] [pvar 0] p [ofVar (pvar 0)]
   where p = lift $ (ofVar $ ivar 0) * (ofVar $ pvar 0)
 
--- | CH gate
-chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-chgate = Pathsum 1 [ivar 0, ivar 1] [pvar 0] p [x1, x2 + x1*x2 + x1*y]
-  where p = distribute (-half*half) (1 + x1) +
-            distribute half (lift $ (1 + x1) * y) +
-            (lift $ x1 * x2 * y)
-        x1 = ofVar $ ivar 0
-        x2 = ofVar $ ivar 1
-        y = ofVar $ pvar 0
-
 -- | CNOT gate
 cxgate :: (Eq g, Num g) => Pathsum g
 cxgate = Pathsum 0 [ivar 0, ivar 1] [] 0 [x0, x0+x1]
@@ -324,6 +345,14 @@ czgate = Pathsum 0 [ivar 0, ivar 1] [] p [x0, x1]
 ccxgate :: (Eq g, Num g) => Pathsum g
 ccxgate = Pathsum 0 [ivar 0, ivar 1, ivar 2] [] 0 [x0, x1, x2 + x0*x1]
   where x0 = ofVar $ ivar 0
+        x1 = ofVar $ ivar 1
+        x2 = ofVar $ ivar 2
+
+-- | CCZ gate
+cczgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+cczgate = Pathsum 0 [ivar 0, ivar 1, ivar 2] [] p [x0, x1, x2]
+  where p = lift $ x0 * x1 * x2
+        x0 = ofVar $ ivar 0
         x1 = ofVar $ ivar 1
         x2 = ofVar $ ivar 2
 
@@ -346,6 +375,126 @@ swapgate :: (Eq g, Num g) => Pathsum g
 swapgate = Pathsum 0 [ivar 0, ivar 1] [] 0 [x1, x0]
   where x0 = ofVar $ ivar 0
         x1 = ofVar $ ivar 1
+
+-- | CH gate
+chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+chgate = Pathsum 1 [ivar 0, ivar 1] [pvar 0] p [x1, x2 + x1*x2 + x1*y]
+  where p = distribute (-half*half) (1 + x1) +
+            distribute half (lift $ (1 + x1) * y) +
+            (lift $ x1 * x2 * y)
+        x1 = ofVar $ ivar 0
+        x2 = ofVar $ ivar 1
+        y = ofVar $ pvar 0
+
+{----------------------------
+ Applicative style
+ ----------------------------}
+
+-- | apply an X gate
+applyX :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyX i sop = sop { outVals = outVals' }
+  where outVals' = over (ix i) (+ 1) $ outVals sop
+
+-- | apply a Z gate
+applyZ :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyZ i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute 1 ((outVals sop)!!i)
+
+-- | apply a Y gate
+applyY :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyY i sop = sop { phasePoly = phasePoly', outVals = outVals' }
+  where outVals'   = over (ix i) (+ 1) $ outVals sop
+        phasePoly' = phasePoly sop + distribute 1 ((outVals sop)!!i) + constant half
+
+-- | apply an S gate
+applyS :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyS i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute half ((outVals sop)!!i)
+
+-- | apply an Sdg gate
+applySdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applySdg i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute (-half) ((outVals sop)!!i)
+
+-- | apply a T gate
+applyT :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyT i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute (half*half) ((outVals sop)!!i)
+
+-- | apply a Tdg gate
+applyTdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyTdg i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute (-half*half) ((outVals sop)!!i)
+
+-- | apply an Rk gate
+applyRk :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyRk k i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute angle ((outVals sop)!!i)
+        angle      = fromDyadic $ dyadic 1 k
+
+-- | apply an Rz gate
+applyRz :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g -> Pathsum g
+applyRz theta i sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute theta ((outVals sop)!!i)
+
+-- | apply an H gate
+applyH :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyH i sop0 = sop { sde = sde',
+                      pathVars = pathVars',
+                      phasePoly = phasePoly',
+                      outVals = outVals' }
+  where (v, sop)   = newPVar sop0
+        sde'       = 1 + sde sop
+        pathVars'  = pathVars sop ++ [v]
+        phasePoly' = phasePoly sop + distribute 1 (((outVals sop)!!i) * (ofVar v))
+        outVals'   = set (ix i) (ofVar v) $ outVals sop
+              
+
+-- | apply a CZ gate
+applyCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCZ i j sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute 1 (outI * outJ)
+        outI       = (outVals sop)!!i
+        outJ       = (outVals sop)!!j
+
+-- | apply a CX gate
+applyCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCX i j sop = sop { outVals = outVals' }
+  where outVals' = over (ix j) (+ (outVals sop)!!i) $ outVals sop
+
+-- | apply a CCZ gate
+applyCCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCZ i j k sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute 1 (outI * outJ * outK)
+        outI       = (outVals sop)!!i
+        outJ       = (outVals sop)!!j
+        outK       = (outVals sop)!!k
+
+-- | apply a CCX gate
+applyCCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCX i j k sop = sop { outVals = outVals' }
+  where outVals' = over (ix k) (+ outI * outJ) $ outVals sop
+        outI     = (outVals sop)!!i
+        outJ     = (outVals sop)!!j
+
+-- | apply a Swap gate
+applySwap :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applySwap i j sop = sop { outVals = outVals' }
+  where outVals' = set (ix i) outJ $ set (ix j) outI $ outVals sop
+        outI     = (outVals sop)!!i
+        outJ     = (outVals sop)!!j
+
+-- | apply a multiply controlled Toffoli gate
+applyMCT :: (Eq g, Abelian g, Dyadic g) => [Int] -> Int -> Pathsum g -> Pathsum g
+applyMCT xs t sop = sop { outVals = outVals' }
+  where outVals'  = over (ix t) (+ products) $ outVals sop
+        products  = foldr (*) 1 (map ((outVals sop)!!) xs)
+
+-- | apply a multiply controlled Rz gate
+applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
+applyMCRz theta xs sop = sop { phasePoly = phasePoly' }
+  where phasePoly' = phasePoly sop + distribute (theta) products
+        products   = foldr (*) 1 (map ((outVals sop)!!) xs)
 
 {----------------------------
  Channels
@@ -399,6 +548,7 @@ substitute :: (Eq g, Abelian g) => [Var] -> SBool Var -> Pathsum g -> Pathsum g
 substitute xs p sop = sop { phasePoly = substMonomial xs p (phasePoly sop),
                             outVals   = map (substMonomial xs p) (outVals sop) }
 
+-- | Rename all input and path variables to be canonical
 inCanon :: (Eq g, Abelian g) => Int -> Int -> Pathsum g -> Pathsum g
 inCanon ishift pshift sop = sop { inVals    = ivars,
                                   pathVars  = pvars,
@@ -409,6 +559,13 @@ inCanon ishift pshift sop = sop { inVals    = ivars,
         sub v   = Map.findWithDefault (ofVar v) v nameMap
         nameMap = Map.fromList $ (zip (inVals sop) (map ofVar ivars)) ++
                                  (zip (pathVars sop) (map ofVar pvars))
+
+-- | Allocate a new path variable
+newPVar :: (Eq g, Abelian g) => Pathsum g -> (Var, Pathsum g)
+newPVar sop = case v `elem` (pathVars sop) of
+  False -> (v, sop)
+  True  -> (v, inCanon 0 0 sop)
+  where v = pvar (length $ pathVars sop)
 
 {----------------------------
  Operators
@@ -788,3 +945,40 @@ isPure sop
   | otherwise               = purity == identity 0 where
       purity = trace $ sop .> sop
 
+{--------------------------
+ Testing
+ --------------------------}
+
+-- | Test suite for internal use
+runTests :: () -> IO ()
+runTests _ = do
+  print $ isIdentity (applyX 0 (xgate :: Pathsum DMod2))
+  print $ isIdentity (applyY 0 (ygate :: Pathsum DMod2))
+  print $ isIdentity (applyZ 0 (zgate :: Pathsum DMod2))
+  print $ isIdentity (applyS 0 (sdggate :: Pathsum DMod2))
+  print $ isIdentity (applySdg 0 (sgate :: Pathsum DMod2))
+  print $ isIdentity (applyT 0 (tdggate :: Pathsum DMod2))
+  print $ isIdentity (applyTdg 0 (tgate :: Pathsum DMod2))
+  print $ isIdentity (applyH 0 (hgate :: Pathsum DMod2))
+  print $ isIdentity (applyCZ 0 1 (czgate :: Pathsum DMod2))
+  print $ isIdentity (applyCX 0 1 (cxgate :: Pathsum DMod2))
+  print $ isIdentity (applySwap 0 1 (swapgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCZ 0 1 2 (cczgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCX 0 1 2 (ccxgate :: Pathsum DMod2))
+  print $ isIdentity (applyMCT [0,1,2] 3 (mctgate 3 :: Pathsum DMod2))
+  print $ isIdentity (applyCX 1 0 (swapgate .> cxgate .> swapgate :: Pathsum DMod2))
+  print $ applyX 0 (identity 1) == (xgate :: Pathsum DMod2)
+  print $ applyY 0 (identity 1) == (ygate :: Pathsum DMod2)
+  print $ applyZ 0 (identity 1) == (zgate :: Pathsum DMod2)
+  print $ applyS 0 (identity 1) == (sgate :: Pathsum DMod2)
+  print $ applySdg 0 (identity 1) == (sdggate :: Pathsum DMod2)
+  print $ applyT 0 (identity 1) == (tgate :: Pathsum DMod2)
+  print $ applyTdg 0 (identity 1) == (tdggate :: Pathsum DMod2)
+  print $ applyH 0 (identity 1) == (hgate :: Pathsum DMod2)
+  print $ applyCZ 0 1 (identity 2) == (czgate :: Pathsum DMod2)
+  print $ applyCX 0 1 (identity 2) == (cxgate :: Pathsum DMod2)
+  print $ applySwap 0 1 (identity 2) == (swapgate :: Pathsum DMod2)
+  print $ applyCCZ 0 1 2 (identity 3) == (cczgate :: Pathsum DMod2)
+  print $ applyCCX 0 1 2 (identity 3) == (ccxgate :: Pathsum DMod2)
+  print $ applyMCT [0,1,2] 3 (identity 4) == (mctgate 3 :: Pathsum DMod2)
+  print $ applyCX 1 0 (identity 2) == (swapgate .> cxgate .> swapgate :: Pathsum DMod2)
