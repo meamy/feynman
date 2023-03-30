@@ -15,8 +15,11 @@ import Feynman.Algebra.Linear
 import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear hiding (zero, one, terms)
 import qualified Feynman.Algebra.Polynomial.Multilinear as P
+import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
+
+import Debug.Trace
 
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
@@ -77,9 +80,9 @@ addTerm theta loc bexp = modify go where
   bexp'  = dropConstant $ bexp
 
 -- Adds a quadratic phase term
-addQuadTerm :: Int -> SBool String -> State Ctx ()
-addQuadTerm n bexp = modify $ \st -> st { pp = pp st + poly } where
-  poly = P.lift $ ofVar (var n) * bexp
+addQuadTerm :: SBool String -> SBool String -> State Ctx ()
+addQuadTerm bexp bexp' = modify $ \st -> st { pp = pp st + poly } where
+  poly = P.lift $ bexp * bexp'
 
 -- Finding [HH] reductions
 applyReductions :: Maybe Int -> State Ctx ()
@@ -118,6 +121,40 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
     Just d  -> degree sub <= d && Set.member (unvar u) paths
     Nothing -> Set.member (unvar u) paths
 
+-- Constructs the most general ideal possible from the I rule
+constructIdeal :: PseudoBoolean String Angle -> Set Int -> [SBool String]
+constructIdeal pp cand = catMaybes . map (go . var) $ Set.toDescList cand
+  where go v = toBooleanPoly . quotVar v $ pp
+
+-- Computes the internal variables
+internalVars :: Ctx -> Set Int
+internalVars ctx = Set.difference pathVars outVars
+  where outVars  = Set.unions . map (Set.map unvar . vars) . Map.elems . ket $ ctx
+        pathVars = paths ctx
+
+-- Reduce via a Groebner basis
+computeMaximalGroebner :: Ctx -> [SBool String]
+computeMaximalGroebner ctx = go [] [] ctx
+  where go rbasis sbasis ctx =
+          let eqs     = constructIdeal (pp ctx) (internalVars ctx)
+              sbasis' = trace ("eqs: " ++ show eqs) $ reduceBasis $ foldl addToBasis sbasis eqs
+              rbasis' = trace ("lifted eqs: " ++ show xs) $ reduceBasis $ foldl addToBasis rbasis xs where xs = map P.lift eqs
+              ctx'    = ctx { pp = mvd (pp ctx) rbasis',
+                              ket = Map.map (flip mvd sbasis') (ket ctx) }
+          in
+            trace ("ctx: " ++ show ctx ++ "\nbasis: " ++ show sbasis' ++ "\nlifted: " ++ show rbasis ++ "\n") $ 
+            if Set.fromList sbasis == Set.fromList sbasis'
+            then sbasis
+            else go rbasis' sbasis' ctx'
+  
+-- Finding [I] reductions
+applyGReductions :: State Ctx ()
+applyGReductions = do
+  st <- get
+  let gbasis = computeMaximalGroebner st
+  let comb (s,a) (t,b) = (Set.union s t, a + b)
+  put $ st { terms = Map.mapKeysWith comb (flip mvd gbasis) $ terms st }
+
 {- The Super phase folding analysis -}
 applyGate :: (Primitive, Loc) -> State Ctx ()
 applyGate (gate, l) = case gate of
@@ -131,7 +168,10 @@ applyGate (gate, l) = case gate of
     bexp  <- getSt c
     bexp' <- getSt t
     setSt t (bexp + bexp')
-  CZ c t -> return () -- no-op for phase folding
+  CZ c t -> do
+    bexp  <- getSt c
+    bexp' <- getSt t
+    addQuadTerm bexp bexp'
   X v -> do
     bexp <- getSt v
     setSt v (1 + bexp)
@@ -139,7 +179,7 @@ applyGate (gate, l) = case gate of
     bexp <- getSt v
     n <- alloc
     modify $ \st -> st { paths = Set.insert n $ paths st }
-    addQuadTerm n bexp
+    addQuadTerm (ofVar (var n)) bexp
     setSt v (ofVar $ var n)
   Swap u v -> do
     bexp  <- getSt u
@@ -152,9 +192,10 @@ applyGate (gate, l) = case gate of
 runCircuit :: [Primitive] -> Ctx -> Ctx
 runCircuit circ = execState $ do
   mapM_ applyGate (zip circ [2..])
-  applyReductions (Just 1) -- linear reductions
-  applyReductions (Just 2) -- quadratic reductions
-  applyReductions Nothing -- all other reductions
+  applyGReductions
+  --applyReductions (Just 1) -- linear reductions
+  --applyReductions (Just 2) -- quadratic reductions
+  --applyReductions Nothing -- all other reductions
 
 {- Generates an initial state -}
 initialState :: [ID] -> [ID] -> Ctx

@@ -196,12 +196,12 @@ identity n = Pathsum 0 ivars [] 0 (map ofVar ivars)
   where ivars = [ivar i | i <- [0..n-1]]
 
 -- | Construct a (symbolic) state
-ket :: (Eq g, Num g) => [SBool String] -> Pathsum g
-ket xs = Pathsum 0 [] [] 0 $ map (rename (\x -> Var x FVar)) xs
+ofKet :: (Eq g, Num g) => [SBool String] -> Pathsum g
+ofKet xs = Pathsum 0 [] [] 0 $ map (rename (\x -> Var x FVar)) xs
 
 -- | Initialize a fresh ancilla
 initialize :: (Eq g, Num g) => FF2 -> Pathsum g
-initialize b = ket [constant b]
+initialize b = ofKet [constant b]
 
 {-# INLINE initialize #-}
 
@@ -216,8 +216,8 @@ etaN n = Pathsum 0 [] pvars 0 $ xs ++ xs
  ----------------------------}
 
 -- | Construct a (symbolic) state destructor
-bra :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
-bra xs = Pathsum (2*(length xs)) ivars pvars (lift poly) []
+ofBra :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
+ofBra xs = Pathsum (2*(length xs)) ivars pvars (lift poly) []
   where ivars = [ivar i | i <- [0..length xs - 1]]
         pvars = [pvar i | i <- [0..length xs - 1]]
         poly      = foldr (+) 0 . map go $ zip [0..] xs
@@ -225,7 +225,7 @@ bra xs = Pathsum (2*(length xs)) ivars pvars (lift poly) []
 
 -- | Dagger of initialize -- i.e. unnormalized post-selection
 postselect :: (Eq g, Abelian g) => FF2 -> Pathsum g
-postselect b = bra [constant b]
+postselect b = ofBra [constant b]
 
 {-# INLINE postselect #-}
 
@@ -933,8 +933,8 @@ isIdentity sop
   | isTrivial sop = True
   | otherwise     = case inDeg sop of
       0 -> False
-      i -> let p0 = (grind $ identity (i-1) <> ket [0] .> sop .> identity (i-1) <> bra [0])
-               p1 = (grind $ identity (i-1) <> ket [1] .> sop .> identity (i-1) <> bra [1])
+      i -> let p0 = (grind $ identity (i-1) <> ofKet [0] .> sop .> identity (i-1) <> ofBra [0])
+               p1 = (grind $ identity (i-1) <> ofKet [1] .> sop .> identity (i-1) <> ofBra [1])
            in
              isIdentity p0 && isIdentity p1
 

@@ -19,6 +19,8 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
 import qualified Feynman.Util.Unicode as Unicode
 
+import Debug.Trace
+
 {-------------------------------
  Utilities
  -------------------------------}
@@ -91,10 +93,10 @@ leadReduce f g
         (d, n) = leadingTerm f
 
 -- | Compute the fixpoint of a reduction
-mvd :: (Ord v, Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
+mvd :: (Show v, Show r, Ord v, Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
 mvd f xs = go f xs where
   go 0 _  = 0
-  go f xs =
+  go f xs = trace ("\nMVD reducing " ++ show f) $
     let f' = foldl' leadReduce f xs in
       if f == f' then (\(r,p) -> r + go p xs) $ decomposeLeading f
       else go f' xs
@@ -103,22 +105,22 @@ mvd f xs = go f xs where
 --
 --   Rather than include the quadratic polynomials x^2 - x in the basis, we include them implicitly
 --   and add the implicit (multilinear) S-polynomials they generate, (p - LT(p))*v - LT(p)
-addToBasis :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
+addToBasis :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
 addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
   nonzero p q = not $ coprime (leadingMonomial p) (leadingMonomial q)
   sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs, nonzero p q]
   qfPolys     = map (\v -> ofVar v * p) . Set.toList . vars . leadingMonomial
   go basis []     = basis
-  go basis (s:xs) = case mvd s basis of
+  go basis (s:xs) = trace ("\nCurrent basis: " ++ show basis ++ "\nRemaining: " ++ show (s:xs)) $ case mvd s basis of
     0  -> go basis xs
     s' -> go (basis ++ [s']) (xs ++ (sPolys s' basis))
 
 -- | Buchberger's algorithm
-buchberger :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+buchberger :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 buchberger = foldl' addToBasis []
 
 -- | Reduces an existing Groebner basis
-reduceBasis :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+reduceBasis :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 reduceBasis gbasis = go [] gbasis where
   squashCoeff p         = scale (recip $ leadingCoefficient p) p
   go gbasis' []         = gbasis'
@@ -127,7 +129,7 @@ reduceBasis gbasis = go [] gbasis where
     p' -> go (p':gbasis') gbasis
 
 -- | Buchberger's algorithm, modified to return a reduced Groebner basis
-rbuchberger :: (Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+rbuchberger :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 rbuchberger = foldl' (\x -> reduceBasis . addToBasis x) []
 
 -- Testing

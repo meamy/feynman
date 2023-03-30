@@ -66,6 +66,11 @@ instance Periodic Angle where
   order (Discrete a)   = order a
   order (Continuous _) = 0
 
+instance Fractional Angle where
+  fromRational = Continuous . fromRational
+  recip (Discrete a) = Continuous (recip $ fromRational $ toRational a)
+  recip (Continuous a) = Continuous (recip a)
+
 {- Circuits -}
 data Primitive =
     H        ID
