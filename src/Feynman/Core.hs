@@ -16,7 +16,7 @@ type Loc = Int
 
 {- Phase angles -}
 -- Phase angles either have the form pi*(a/2^b) reduced mod 2, or theta
-data Angle = Discrete DMod2 | Continuous Double deriving (Eq, Ord)
+data Angle = Discrete DMod2 | Continuous Double
 
 apply :: (forall a. Num a => a -> a) -> Angle -> Angle
 apply f (Discrete a)   = Discrete $ f a
@@ -28,7 +28,6 @@ apply2 f a b = case (a,b) of
   (Discrete a, Continuous b)   -> Continuous $ f (toDouble a) b
   (Continuous a, Discrete b)   -> Continuous $ f a (toDouble b)
   (Continuous a, Continuous b) -> Continuous $ f a b
-  where toDouble = fromRational . toRational
 
 discretize :: Angle -> DyadicRational
 discretize (Discrete a)   = unpack a
@@ -41,6 +40,22 @@ dyadicPhase = Discrete . fromDyadic
 -- Phase of theta
 continuousPhase :: Double -> Angle
 continuousPhase = Continuous
+
+-- Convert dyadic to a real
+toDouble :: DMod2 -> Double
+toDouble = fromRational . toRational
+
+instance Eq Angle where
+  (Discrete a)   == (Discrete b)   = a == b
+  (Discrete a)   == (Continuous b) = toDouble a == b
+  (Continuous a) == (Discrete b)   = a == toDouble b
+  (Continuous a) == (Continuous b) = a == b
+
+instance Ord Angle where
+  compare (Discrete a) (Discrete b)     = compare a b
+  compare (Discrete a) (Continuous b)   = compare (toDouble a) b
+  compare (Continuous a) (Discrete b)   = compare a (toDouble b)
+  compare (Continuous a) (Continuous b) = compare a b
 
 instance Show Angle where
   show (Discrete a)
@@ -68,7 +83,7 @@ instance Periodic Angle where
 
 instance Fractional Angle where
   fromRational = Continuous . fromRational
-  recip (Discrete a) = Continuous (recip $ fromRational $ toRational a)
+  recip (Discrete a) = Continuous (recip $ toDouble a)
   recip (Continuous a) = Continuous (recip a)
 
 {- Circuits -}

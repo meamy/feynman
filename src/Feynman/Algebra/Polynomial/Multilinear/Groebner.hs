@@ -96,7 +96,7 @@ leadReduce f g
 mvd :: (Show v, Show r, Ord v, Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
 mvd f xs = go f xs where
   go 0 _  = 0
-  go f xs = trace ("\nMVD reducing " ++ show f) $
+  go f xs = trace ("MVD reduce: " ++ show f) $
     let f' = foldl' leadReduce f xs in
       if f == f' then (\(r,p) -> r + go p xs) $ decomposeLeading f
       else go f' xs
@@ -111,7 +111,7 @@ addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
   sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs, nonzero p q]
   qfPolys     = map (\v -> ofVar v * p) . Set.toList . vars . leadingMonomial
   go basis []     = basis
-  go basis (s:xs) = trace ("\nCurrent basis: " ++ show basis ++ "\nRemaining: " ++ show (s:xs)) $ case mvd s basis of
+  go basis (s:xs) = case mvd s basis of
     0  -> go basis xs
     s' -> go (basis ++ [s']) (xs ++ (sPolys s' basis))
 

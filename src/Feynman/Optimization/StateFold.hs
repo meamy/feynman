@@ -19,8 +19,6 @@ import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
-import Debug.Trace
-
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
    to help find extra T reductions. Allows identification of
@@ -137,12 +135,11 @@ computeMaximalGroebner :: Ctx -> [SBool String]
 computeMaximalGroebner ctx = go [] [] ctx
   where go rbasis sbasis ctx =
           let eqs     = constructIdeal (pp ctx) (internalVars ctx)
-              sbasis' = trace ("eqs: " ++ show eqs) $ reduceBasis $ foldl addToBasis sbasis eqs
-              rbasis' = trace ("lifted eqs: " ++ show xs) $ reduceBasis $ foldl addToBasis rbasis xs where xs = map P.lift eqs
+              sbasis' = reduceBasis $ foldl addToBasis sbasis eqs
+              rbasis' = reduceBasis $ foldl addToBasis rbasis xs where xs = map P.lift eqs
               ctx'    = ctx { pp = mvd (pp ctx) rbasis',
                               ket = Map.map (flip mvd sbasis') (ket ctx) }
           in
-            trace ("ctx: " ++ show ctx ++ "\nbasis: " ++ show sbasis' ++ "\nlifted: " ++ show rbasis ++ "\n") $ 
             if Set.fromList sbasis == Set.fromList sbasis'
             then sbasis
             else go rbasis' sbasis' ctx'
