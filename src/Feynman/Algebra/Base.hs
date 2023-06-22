@@ -22,6 +22,7 @@ module Feynman.Algebra.Base(
   Z8,
   DyadicRational(..),
   DMod2,
+  RMod2,
   zero,
   one,
   dyadic,
@@ -254,6 +255,38 @@ instance Real DMod2 where
 
 instance Num DMod2 where
   (D2 a) + (D2 a') = D2 . reduce $ a + a'
+  (D2 a) * (D2 a') = D2 $ a * a'
+  negate (D2 a)    = D2 . reduce $ negate a
+  abs (D2 a)       = D2 $ abs a
+  signum (D2 a)    = D2 $ signum a
+  fromInteger i    = D2 . reduce $ fromInteger i
+
+instance Abelian DMod2 where
+  power i (D2 a) = D2 . reduce $ power i a
+
+instance Periodic DMod2 where
+  order (D2 a)   = 2 * denom a
+
+instance Dyadic DMod2 where
+  fromDyadic    = D2 . reduce
+  half          = D2 half
+  divTwo (D2 a) = D2 $ divTwo a
+
+-- | Construct a dyadic fraction mod 2
+dMod2 :: Integer -> Int -> DMod2
+dMod2 a = D2 . reduce . dyadic a
+
+-- | Real numbers between 0 and 2
+newtype RMod2 = R2 { unpack :: Double } deriving (Eq, Ord)
+
+instance Show RMod2 where
+  show = show . unpack
+
+instance Real RMod2 where
+  toRational = toRational . unpack
+
+instance Num RMod2 where
+  (+) = curry (  (D2 a) + (D2 a') = D2 . reduce $ a + a'
   (D2 a) * (D2 a') = D2 $ a * a'
   negate (D2 a)    = D2 . reduce $ negate a
   abs (D2 a)       = D2 $ abs a
