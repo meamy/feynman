@@ -104,6 +104,9 @@ applyPrimitive gate sop = case gate of
     j <- findOrAlloc y
     k <- findOrAlloc z
     return $ applyCCX i j k sop
+  Uninterp "MCZ" xs -> do
+    args <- mapM findOrAlloc $ getArgs gate
+    return $ applyMCZ args sop
   Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
 
 -- | Apply a circuit to a state

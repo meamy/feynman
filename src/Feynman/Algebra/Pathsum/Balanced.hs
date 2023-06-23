@@ -417,6 +417,12 @@ mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (ctrls ++ [t + foldr (*) 1 ctrls])
   where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
         t     = ofVar $ IVar k
 
+-- | k-control Z gate
+mczgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
+mczgate k = Pathsum 0 k k 0 p ctrls
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        p     = lift $ (foldr (*) 1 ctrls)
+
 -- | n-qubit R_z gate
 rzNgate :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g
 rzNgate theta k = Pathsum 0 k k 0 p ctrls
@@ -524,6 +530,11 @@ applySwap i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
 applyMCT :: (Eq g, Abelian g, Dyadic g) => [Int] -> Int -> Pathsum g -> Pathsum g
 applyMCT xs t (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
   ovals' = over (ix t) (+ foldr (*) 1 (map (ovals!!) xs)) ovals
+
+-- | apply a multiply controlled Z gate
+applyMCZ :: (Eq g, Abelian g, Dyadic g) => [Int] -> Pathsum g -> Pathsum g
+applyMCZ xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
+  pp' = pp + distribute 1 (foldr (*) 1 (map (ovals!!) xs))
 
 -- | apply a multiply controlled Rz gate
 applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
@@ -867,6 +878,10 @@ matchVar sop = do
  Pattern synonyms
  --------------------------}
 
+-- | Ordering of solvable hh instances
+hhOrder :: (Var, Var, SBool Var) -> (Var, Var, SBool Var) -> Ordering
+hhOrder (_,_,p) (_,_,q) = compare (length $ toTermList p) (length $ toTermList q)
+
 -- | Pattern synonym for Elim
 pattern Triv :: (Eq g, Num g) => Pathsum g
 pattern Triv <- (isTrivial -> True)
@@ -881,7 +896,7 @@ pattern HH v p <- (matchHH -> (v, p):_)
 
 -- | Pattern synonym for solvable HH instances
 pattern HHSolved :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHSolved v v' p <- (reverse . matchHHSolve -> (v, v', p):_)
+pattern HHSolved v v' p <- (sortBy hhOrder . matchHHSolve -> (v, v', p):_)
 
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
