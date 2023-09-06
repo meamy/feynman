@@ -164,6 +164,11 @@ dropPhase sop = sop { phasePoly = 0 }
 dropAmplitude :: Pathsum g -> Pathsum g
 dropAmplitude sop = sop { sde = 0 }
 
+-- | (For debugging) Returns the number of terms in a path sum
+numTerms :: Pathsum g -> Int
+numTerms sop = foldl' (+) (countTerms $ phasePoly sop) [countTerms f | f <- outVals sop]
+  where countTerms = length . toTermList
+
 {-----------------------------------
  Lenses
  -----------------------------------}
@@ -900,11 +905,11 @@ pattern HHSolved v v' p <- (sortBy hhOrder . matchHHSolve -> (v, v', p):_)
 
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
+pattern HHLinear v v' p <- (sortBy hhOrder . matchHHLinear -> (v, v', p):_)
 
 -- | Pattern synonym for internal HH instances
 pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
+pattern HHInternal v v' p <- (sortBy hhOrder . matchHHInternal -> (v, v', p):_)
 
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables

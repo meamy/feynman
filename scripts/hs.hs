@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-|
 Module      : Main
 Description : Hidden shift
@@ -20,10 +21,11 @@ import Control.Monad
 import Test.QuickCheck
 
 import System.IO
-import System.Environment (getArgs)
+import System.Environment               (getArgs)
+import System.CPUTime                   (getCPUTime)
 
-import Feynman.Core hiding (getArgs)
-import Feynman.Algebra.Linear hiding (identity)
+import Feynman.Core hiding              (getArgs)
+import Feynman.Algebra.Linear hiding    (identity)
 import qualified Feynman.Core as Core
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Verification.Symbolic
@@ -71,7 +73,7 @@ genMaioranaGDeg3 xs f 0 = return []
 genMaioranaGDeg3 xs f i = do
   ccz   <- genCCZ xs
   cliff <- replicateM f $ oneof [genCZ xs, genZ xs]
-  next  <- genMaioranaG xs f (i-1)
+  next  <- genMaioranaGDeg3 xs f (i-1)
   return $ concat (ccz:cliff) ++ next
 
 genMaioranaG :: [String] -> Int -> Int -> Gen [Primitive]
@@ -132,14 +134,23 @@ hiddenShift n freq alternations = do
         vars = ["x" ++ show i | i <- [0..n-1]]
 
 simulateHiddenShift n c a () = do
-  (circ, string) <- generate $ hiddenShift n c a
-  putStrLn $ "Simulating random Hidden Shift, n=" ++ show n
+  (circ, string) <- generate $ hiddenShiftBG n c a
+  putStrLn $ "Simulating random Hidden Shift, n="
+    ++ show n
     ++ ", Freq=" ++ show c
     ++ ", CCZ=" ++ show a
     ++ ", shift=" ++ show (fromBits . map (`elem` string) . reverse $ vars)
   putStrLn $ "Circuit length: " ++ show (length circ)
-  let sop = circ `seq` (complexAction vars vars circ)
-  print $ grind sop
+  start <- getCPUTime
+  let !sop  = complexAction vars [] circ
+  mid   <- getCPUTime
+  let !sop' = simplify sop
+  end   <- getCPUTime
+  let t1 = (fromIntegral $ mid - start) / 10^9
+  let t2 = (fromIntegral $ end - mid) / 10^9
+  putStrLn $ "Generation time: " ++ show t1
+  putStrLn $ "Simplification time: " ++ show t2
+  putStrLn $ "Final state: " ++ show sop'
   where vars = ["x" ++ show i | i <- [0..n-1]]
 
 -- | Main script

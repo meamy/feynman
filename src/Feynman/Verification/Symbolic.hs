@@ -116,7 +116,9 @@ applyCircuit = foldM absorbGate
         absorbGate sop gate = do
           args <- mapM findOrAlloc $ getArgs gate
           nOut <- gets Map.size
-          applyPrimitive gate $ sop <> identity (nOut - outDeg sop)
+          if (nOut /= outDeg sop)
+            then applyPrimitive gate $ sop <> identity (nOut - outDeg sop)
+            else applyPrimitive gate $ sop
 
 -- | Create an initial state given a set of variables and inputs
 makeInitial :: [ID] -> [ID] -> State Context ([SBool ID])
