@@ -901,15 +901,15 @@ pattern HH v p <- (matchHH -> (v, p):_)
 
 -- | Pattern synonym for solvable HH instances
 pattern HHSolved :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHSolved v v' p <- (sortBy hhOrder . matchHHSolve -> (v, v', p):_)
+pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
 
 -- | Pattern synonym for linear HH instances
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHLinear v v' p <- (sortBy hhOrder . matchHHLinear -> (v, v', p):_)
+pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
 
 -- | Pattern synonym for internal HH instances
 pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
-pattern HHInternal v v' p <- (sortBy hhOrder . matchHHInternal -> (v, v', p):_)
+pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
@@ -1005,8 +1005,8 @@ simplify sop = case sop of
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
   Elim y         -> grind $ applyElim y sop
-  HHSolved y z p -> grind $ applyHHSolved y z p sop
   Omega y p      -> grind $ applyOmega y p sop
+  HHSolved y z p -> grind $ applyHHSolved y z p sop
   _              -> sop
 
 -- | A normalization procedure for Clifford circuits
