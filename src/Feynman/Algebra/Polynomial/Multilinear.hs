@@ -121,7 +121,7 @@ newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 type PowerProduct v = Monomial v 'Mult
 type Parity v       = Monomial v 'Add
 
--- Note: this is NOT a monomial order using Set.toList, which is ascending
+-- Note: this is NOT a monomial order with respect to multilinear monomials
 instance Ord v => Ord (Monomial v repr) where
   {-# INLINABLE compare #-}
   compare m n = compare mvars nvars
@@ -184,9 +184,9 @@ instance (Show v, Eq r, Num r, Show r, ReprC repr) => Show (Multilinear v r repr
             | otherwise        = show coeff ++ show mono
 
 instance Degree (Multilinear v r repr) where
-  degree (M t) = case Map.lookupMax t of
-    Nothing      -> -1
-    Just (m, _a) -> degree m
+  degree poly = case support poly of
+    [] -> -1
+    xs -> maximum . map degree $ xs
 
 instance Ord v => Vars (Multilinear v r repr) where
   type Var (Multilinear v r repr) = v
@@ -306,13 +306,20 @@ multM wit p q = case wit of
   WitAdd  -> error "Error: multiplying additive phase polynomials"
   WitMult -> multImpl p q
 
+-- Note on implementation: with a monomial order we wouldn't need the
+-- intermediate sorting step, but multilinear monomials appear to
+-- hence no valid monomial order over <>. This version maintains
+-- some efficiency since most of the time the terms will already
+-- be sorted. Can drop it when we do have a monomial order.
 multImpl :: (Ord v, Eq r, Num r) =>
             Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 multImpl p
   | p == 0           = \_ -> 0
   | otherwise        = Map.foldrWithKey (\m a acc -> addM acc $ multTerm m a) zero . getTerms
-  where multTerm m a = M . Map.fromAscList . sumUp . groupMono . multBy m a . Map.toAscList $ tms
+  where multTerm m a = M . Map.fromAscList . process m a . Map.toAscList $ tms
+        process m a  = sumUp . groupMono . sortMono . multBy m a
         multBy m a   = map $ \(m',a') -> (m<>m', a*a')
+        sortMono     = sortBy $ \(m,a) (m',a') -> compare m m'
         groupMono    = groupBy (\t t' -> fst t == fst t')
         sumUp        = map $ foldr1 (\(m,a) (_,a') -> (m,a+a'))
         tms          = getTerms p
@@ -544,3 +551,12 @@ y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DMod2 'Mult
 y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DMod2 'Mult
 y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DMod2 'Mult
 y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DMod2 'Mult
+
+powerSet :: [a] -> [[a]]
+powerSet []     = [[]]
+powerSet (x:xs) = [x:ps | ps <- powerSet xs] ++ powerSet xs
+
+allPolynomials :: (Ord v, Eq r, Abelian r) => [Multilinear v r 'Mult] -> [Multilinear v r 'Mult]
+allPolynomials = polynomials . monomials where
+  monomials = map (foldr (*) 1) . powerSet
+  polynomials = map (foldr (+) 0) . powerSet
