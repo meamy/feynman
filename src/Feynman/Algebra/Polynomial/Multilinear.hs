@@ -27,6 +27,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   PhasePolynomial,
   PseudoBoolean,
   SBool,
+  monomial,
   coefficients,
   support,
   toTermList,

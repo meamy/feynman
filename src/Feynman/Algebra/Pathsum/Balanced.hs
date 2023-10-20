@@ -987,6 +987,15 @@ rewriteVar sop = case sop of
   Var v p -> applyVar v p sop
   _       -> sop
 
+-- | Abstracts a monomial into a fresh path variable. The reverse of an HH
+abstractMono :: (Eq g, Abelian g) => [Var] -> Pathsum g -> Pathsum g
+abstractMono m (Pathsum a b c d e f) = Pathsum a' b c (d + 2) e' f' where
+  y = ofVar $ PVar d
+  z = ofVar $ PVar (d+1)
+  a' = a + 2
+  e' = substMonomial m z e + (distribute 1 $ y*(ofMonomial (monomial m) + z))
+  f' = map (substMonomial m z) f
+
 {--------------------------
  Reduction procedures
  --------------------------}
@@ -1175,3 +1184,120 @@ verifyTeleT :: () -> IO ()
 verifyTeleT _ = case (channelize tgate == grind (teleportTChannel)) of
   True -> putStrLn "Identity"
   False -> putStrLn "No identity"
+
+-- | Relation 13 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT13 :: Pathsum DMod2
+cliffordT13 = c .> c where
+  c = cxgate .>
+      xgate <> (tgate .> hgate .> tgate .> hgate .> tdggate) .>
+      cxgate .>
+      xgate <> (tgate .> hgate .> tdggate .> hgate .> tdggate)
+
+-- | Pipeline for applying rewrites in sequence
+(|>) :: a -> (a -> b) -> b
+a |> f = f a
+
+infixl 1 |>
+
+-- | A manual proof of 13
+cliffordT13_is_identity () = case isIdentity reducedSOP of
+  True -> putStrLn "Identity"
+  False -> putStrLn "Not identity"
+  where reducedSOP =
+          let c1      = vectorize cliffordT13
+              c2      = abstractMono [PVar 0, PVar 5] c1
+              (a,b,c) = head $ tail $ matchHHSolve c2
+              c3      = applyHHSolved a b c c2
+              c4      = rewriteElim c3
+              c5      = rewriteOmega c4
+              c6      = applyVar (PVar 0) (ofVar (PVar 0) + 1) c5
+              c7      = abstractMono [PVar 0, PVar 5] c6
+              (e,f,g) = head $ matchHHSolve c7
+              c8      = applyHHSolved e f g c7
+              c9      = rewriteElim c8
+              c10     = rewriteHH c9
+              c11     = rewriteElim c10
+              c12     = grind c11
+          in
+            grind $ (identity 2 <> c12) .> (epsilonN 2 <> identity 2)
+              
+-- | Relation 14 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT14 :: Pathsum DMod2
+cliffordT14 =
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  h2 .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  cxgate .>
+  sdg1 .>
+  t2 .>
+  h1 .>
+  h2 .>
+  tdg1 .>
+  s2 .>
+  tdg2 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  t2 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg1 .>
+  tdg2 .>
+  cxgate .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  h2 .>
+  tdg2 .>
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  t1 .>
+  h2 .>
+  sdg1 .>
+  s2 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  h1 .>
+  tdg1 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg2
+  where x1 = xgate <> identity 1
+        x2 = identity 1 <> xgate
+        h1 = hgate <> identity 1
+        h2 = identity 1 <> hgate
+        t1 = tgate <> identity 1
+        t2 = identity 1 <> tgate
+        s1 = sgate <> identity 1
+        s2 = identity 1 <> sgate
+        tdg1 = tdggate <> identity 1
+        tdg2 = identity 1 <> tdggate
+        sdg1 = sdggate <> identity 1
+        sdg2 = identity 1 <> sdggate
+        xcgate = swapgate .> cxgate .> swapgate
