@@ -451,6 +451,56 @@ chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
         y = ofVar $ PVar 0
 
 {----------------------------
+ Paulis
+ ----------------------------}
+
+data PauliGate = I | X | Z | XZ deriving (Eq, Ord)
+data PauliPhase = I0 | I1 | I2 | I3 deriving (Eq, Ord)
+type Pauli = (PauliPhase, [PauliGate])
+
+-- | Projects a pauli to the X part
+pauliProjX :: PauliGate -> PauliGate
+pauliProjX pauli = case pauli of
+  I -> I
+  X -> X
+  Z -> I
+  XZ -> X
+
+-- | Projects a pauli to the Z part
+pauliProjZ :: PauliGate -> PauliGate
+pauliProjZ pauli = case pauli of
+  I -> I
+  X -> I
+  Z -> Z
+  XZ -> Z
+
+-- | Maps a pauli gate to its X and Z strings
+unzipPauli :: [PauliGate] -> ([PauliGate], [PauliGate])
+unzipPauli pauli = (map pauliProjX pauli, map pauliProjZ pauli)
+
+-- | Pauli exponential gate
+pauliExp :: (Eq g, Abelian g, Dyadic g) => g -> Pauli -> Pathsum g
+pauliExp theta (phase, pauli) = Pathsum (2*k) n n (2*k) pp outvals
+  where (x, z) = unzipPauli pauli
+        k = length $ filter (== X) x
+        n = length pauli
+
+        xidx = filter ((== X) . snd) $ zip [0..] x
+        zidx = filter ((/= I) . snd) $ zip [0..] pauli
+
+        pp = xBasisIn + zRotation + xBasisOut + globalPhase where
+          xBasisIn  = distribute 1 $ foldr (+) 0 . map (\(idx, _) -> ofVar (IVar idx) * ofVar (PVar idx)) $ xidx
+          xBasisOut = distribute 1 $ foldr (+) 0 . map (\(idx, _) -> ofVar (PVar idx) * ofVar (PVar $ idx + k)) $ xidx
+          zRotation = distribute theta $ foldr (+) 0 . map (\(idx, _) -> ofVar (PVar idx)) $ zidx
+          globalPhase = case phase of
+            I0 -> 0
+            I1 -> distribute half 1
+            I2 -> 1
+            I3 -> distribute (-half) 1
+
+        outvals = map (\(idx, g) -> if g == I then ofVar (IVar idx) else ofVar (PVar $ idx + k)) $ zip [0..] x
+
+{----------------------------
  Applicative style
  ----------------------------}
 
