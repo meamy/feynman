@@ -1,5 +1,3 @@
-[![Build Status](https://travis-ci.org/meamy/feynman.svg?branch=master)](https://travis-ci.org/meamy/feynman)
-
 # Feynman
 
 Feynman is a toolkit for quantum circuit analysis in the path integral
