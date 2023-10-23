@@ -454,25 +454,25 @@ chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
  Paulis
  ----------------------------}
 
-data PauliGate = I | X | Z | XZ deriving (Eq, Ord)
-data PauliPhase = I0 | I1 | I2 | I3 deriving (Eq, Ord)
+data PauliGate = PauliI | PauliX | PauliZ | PauliXZ deriving (Eq, Ord, Show)
+data PauliPhase = I0 | I1 | I2 | I3 deriving (Eq, Ord, Show)
 type Pauli = (PauliPhase, [PauliGate])
 
 -- | Projects a pauli to the X part
 pauliProjX :: PauliGate -> PauliGate
 pauliProjX pauli = case pauli of
-  I -> I
-  X -> X
-  Z -> I
-  XZ -> X
+  PauliI -> PauliI
+  PauliX -> PauliX
+  PauliZ -> PauliI
+  PauliXZ -> PauliX
 
 -- | Projects a pauli to the Z part
 pauliProjZ :: PauliGate -> PauliGate
 pauliProjZ pauli = case pauli of
-  I -> I
-  X -> I
-  Z -> Z
-  XZ -> Z
+  PauliI -> PauliI
+  PauliX -> PauliI
+  PauliZ -> PauliZ
+  PauliXZ -> PauliZ
 
 -- | Maps a pauli gate to its X and Z strings
 unzipPauli :: [PauliGate] -> ([PauliGate], [PauliGate])
@@ -482,23 +482,33 @@ unzipPauli pauli = (map pauliProjX pauli, map pauliProjZ pauli)
 pauliExp :: (Eq g, Abelian g, Dyadic g) => g -> Pauli -> Pathsum g
 pauliExp theta (phase, pauli) = Pathsum (2*k) n n (2*k) pp outvals
   where (x, z) = unzipPauli pauli
-        k = length $ filter (== X) x
+        k = length $ filter (== PauliX) x
         n = length pauli
 
-        xidx = filter ((== X) . snd) $ zip [0..] x
-        zidx = filter ((/= I) . snd) $ zip [0..] pauli
+        xidx = fst . unzip . filter ((== PauliX) . snd) $ zip [0..] x
+        zidx = fst . unzip . filter ((/= PauliI) . snd) $ zip [0..] pauli
+
+        x2p     = zip xidx [0..]
+        mapx1 (i,i') = ofVar (IVar i) * ofVar (PVar i')
+        mapx2 (i,i') = ofVar (PVar i') * ofVar (PVar $ i' + k)
+        mapz i  = case lookup i x2p of
+          Nothing -> ofVar (IVar i)
+          Just i' -> ofVar (PVar i')
+        mapo i  = case lookup i x2p of
+          Nothing -> ofVar (IVar i)
+          Just i' -> ofVar (PVar $ i' + k)
 
         pp = xBasisIn + zRotation + xBasisOut + globalPhase where
-          xBasisIn  = distribute 1 $ foldr (+) 0 . map (\(idx, _) -> ofVar (IVar idx) * ofVar (PVar idx)) $ xidx
-          xBasisOut = distribute 1 $ foldr (+) 0 . map (\(idx, _) -> ofVar (PVar idx) * ofVar (PVar $ idx + k)) $ xidx
-          zRotation = distribute theta $ foldr (+) 0 . map (\(idx, _) -> ofVar (PVar idx)) $ zidx
+          xBasisIn  = distribute 1 $ foldr (+) 0 . map mapx1 $ x2p
+          xBasisOut = distribute 1 $ foldr (+) 0 . map mapx2 $ x2p
+          zRotation = distribute theta $ foldr (+) 0 . map mapz $ zidx
           globalPhase = case phase of
             I0 -> 0
             I1 -> distribute half 1
             I2 -> 1
             I3 -> distribute (-half) 1
 
-        outvals = map (\(idx, g) -> if g == I then ofVar (IVar idx) else ofVar (PVar $ idx + k)) $ zip [0..] x
+        outvals = map mapo [0..n-1]
 
 {----------------------------
  Applicative style
