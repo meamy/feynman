@@ -9,9 +9,10 @@ Portability : portable
 
 module Main where
 
-import Data.List                               (splitAt,find,unfoldr)
+import Data.List                               (splitAt,find,unfoldr,nub)
 import qualified Data.Map as Map
 import Data.Semigroup                          ((<>))
+import Data.Bits
 
 import Control.Monad
 import Control.Concurrent
@@ -59,6 +60,15 @@ allPauliExponentialStrings n = go where
   go 0 = [[]]
   go k = [p:pp | p <- allNonzeroPaulis n, pp <- go (k-1)]
 
+unpackInteger :: Int -> Int -> Integer -> [Pauli]
+unpackInteger n k i = map go [0..k-1] where
+  go p    = (I0, map (go' p) [0..n-1])
+  go' p q = case (i `shiftR` (2*(n*p + q))) `mod` 4 of
+    0 -> PauliI
+    1 -> PauliX
+    2 -> PauliZ
+    3 -> PauliXZ
+
 checkPauli :: Pathsum DMod2 -> Bool
 checkPauli sop =
   let n    = inDeg sop
@@ -93,6 +103,31 @@ parFindClifford t n k =
   in
     parFind t (checkClifford . computePathsum) toCheck
 
+parFindCliffordGen :: Int -> Int -> Int -> IO (Maybe [Pauli])
+parFindCliffordGen t n k = do
+  let checkInteger i = 
+        let pauliString = unpackInteger n k i
+            skip pauli = (I0, replicate n PauliI) `elem` pauli ||
+                         length (nub pauli) /= length pauli
+        in
+          case skip pauliString of
+            True -> False
+            _    -> checkClifford . computePathsum $ pauliString
+  resultV <- newEmptyMVar
+  runningV <- newMVar t
+  comparisonsV <- newMVar 0
+  threads <- forM [0..t-1] $ \i -> forkIO $ do
+    case find checkInteger (thin i t [1..4^(n*k)-1]) of
+      Just x -> void (tryPutMVar resultV (Just x))
+      Nothing -> do m <- takeMVar runningV
+                    if m == 1
+                      then void (tryPutMVar resultV Nothing)
+                      else putMVar runningV (m-1)
+  result <- readMVar resultV
+  mapM_ killThread threads
+  return $ liftM (unpackInteger n k) result
+  where computePathsum = foldl (.>) (identity n) . map (pauliExp (dMod2 1 2))
+
 -- | Main script
 
 main :: IO ()
@@ -101,7 +136,7 @@ main = do
   putStrLn $ "...I am your pauli exponential helper, beep boop..."
   putStrLn $ "...I will check if a " ++ n ++ " qubit string of " ++ k ++
              " pauli exponentials is clifford"
-  ps <- parFindClifford (read t) (read n) (read k)
+  ps <- parFindCliffordGen (read t) (read n) (read k)
   case ps of
     Nothing    -> putStrLn "...Nope!"
-    Just pauli -> putStrLn $ "...Found one: " ++ show pauli
+    Just pauli -> putStrLn $ "...Found one: " ++ (show pauli)
