@@ -34,12 +34,15 @@ library
                        Feynman.Algebra.Polynomial,
                        Feynman.Algebra.Polynomial.Univariate,
                        Feynman.Algebra.Polynomial.Multilinear,
+                       Feynman.Algebra.Polynomial.Multilinear.Groebner
                        Feynman.Algebra.Pathsum.Balanced,
 
                        Feynman.Synthesis.Phase,
                        Feynman.Synthesis.Reversible,
                        Feynman.Synthesis.Reversible.Parallel,
                        Feynman.Synthesis.Reversible.Gray,
+                       Feynman.Synthesis.Pathsum.Clifford,
+                       Feynman.Synthesis.Pathsum.Unitary,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
@@ -47,6 +50,7 @@ library
                        Feynman.Optimization.TPar,
                        Feynman.Optimization.ReedMuller,
                        Feynman.Optimization.Gadgetize,
+                       Feynman.Optimization.Clifford,
 
                        Feynman.Verification.Symbolic,
 
@@ -58,10 +62,10 @@ library
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,
                        array >= 0.5.1.0,
-                       base >= 4.9 && < 4.13,
+                       base >= 4.9,
                        bv,
                        bytestring,
-                       containers >= 0.5.8.1,
+                       containers >= 0.6.3.1,
                        mtl,
                        fast-digits >= 0.2.1.0,
                        fin >= 0.1.1,
@@ -75,8 +79,8 @@ library
 
 executable feynopt
   main-is:             FeynOpt.hs
-  buildable:           True 
-  ghc-options:         -O2 -Wall
+  buildable:           True
+  ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -90,14 +94,14 @@ executable feynopt
                        base,
                        bv,
                        bytestring,
-                       containers >= 0.5.8.1,
+                       containers >= 0.6.3.1,
                        deepseq
   default-language:    Haskell2010
 
 executable feynver
   main-is:             FeynVerify.hs
   buildable:           True
-  ghc-options:         -O2 -Wall
+  ghc-options:         -O2
   default-extensions:  GADTs,
                        ExistentialQuantification,
                        FlexibleContexts,
@@ -110,7 +114,7 @@ executable feynver
                        base,
                        bv,
                        bytestring,
-                       containers >= 0.5.8.1,
+                       containers >= 0.6.3.1,
                        parsec >= 3.0,
                        transformers >= 0.5.2.0
   default-language:    Haskell2010
@@ -118,9 +122,45 @@ executable feynver
 executable qc2qasm
   main-is:             QC2Qasm.hs
   buildable:           True
-  ghc-options:         -O2 -Wall
+  ghc-options:         -O2
   hs-source-dirs:      tools
   build-depends:       Feynman,
                        base,
-                       bytestring
+                       bytestring,
+                       filepath
+  default-language:    Haskell2010
+
+executable ar21
+  main-is:             ar21.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.6.3.1
+  default-language:    Haskell2010
+
+executable abr22
+  main-is:             abr22.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.6.3.1,
+                       QuickCheck >= 2.8.2
+  default-language:    Haskell2010
+
+executable hs
+  main-is:             hs.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.6.3.1,
+                       QuickCheck >= 2.8.2
   default-language:    Haskell2010

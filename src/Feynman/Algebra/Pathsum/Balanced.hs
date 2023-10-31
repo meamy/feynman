@@ -2,6 +2,8 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE Rank2Types #-}
 
 {-|
 Module      : Balanced
@@ -26,6 +28,7 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.String (IsString(..))
 import Data.Tuple (swap)
+import Data.Functor.Identity
 
 import qualified Feynman.Util.Unicode as U
 import Feynman.Algebra.Base
@@ -150,12 +153,46 @@ isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
 isTrivial sop = sop == identity (inDeg sop)
 
 -- | (To be deprecated) Drops constant term from the phase polynomial
+dropGlobalPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
+dropGlobalPhase sop = sop { phasePoly = dropConstant $ phasePoly sop }
+
+-- | (To be deprecated) Drops the phase polynomial
 dropPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
-dropPhase sop = sop { phasePoly = dropConstant $ phasePoly sop }
+dropPhase sop = sop { phasePoly = 0 }
 
 -- | (To be deprecated) Drops normalization
 dropAmplitude :: Pathsum g -> Pathsum g
 dropAmplitude sop = sop { sde = 0 }
+
+-- | (For debugging) Returns the number of terms in a path sum
+numTerms :: Pathsum g -> Int
+numTerms sop = foldl' (+) (countTerms $ phasePoly sop) [countTerms f | f <- outVals sop]
+  where countTerms = length . toTermList
+
+{-----------------------------------
+ Lenses
+ -----------------------------------}
+
+-- | The type of lenses. Coincides with the lens library definition
+type Lens a b = forall f. Functor f => (b -> f b) -> a -> f a
+
+-- | Lens for lists
+ix :: Int -> Lens [a] a
+ix i f xs = fmap go $ f (xs!!i) where
+  go a = map (\(b,j) -> if j == i then a else b) (zip xs [0..])
+
+-- | Lens for the output state
+state :: Lens (Pathsum g) [SBool Var]
+state f sop = fmap go $ f (outVals sop) where
+  go vals = sop { outVals = vals }
+
+-- | Setter over a lens. Coincides with the lens library function
+over :: Lens a b -> (b -> b) -> a -> a
+over lens f a = runIdentity $ (lens $ Identity . f) a
+
+-- | Set a value at a point over a lens
+set :: Lens a b -> b -> a -> a
+set lens b = over lens (const b)
 
 {----------------------------
  Constructors
@@ -262,12 +299,12 @@ epsilonN n = Pathsum (2*n) (2*n) 0 n (lift poly) []
         f i  = ofVar (PVar i) * (ofVar (IVar i) + ofVar (IVar $ n+i))
 
 {----------------------------
- Constants & gates
+ Constants
  ----------------------------}
 
 -- | \(\sqrt{2}\)
 root2 :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-root2 = Pathsum 0 0 0 1 ((-constant (half * half)) + scale half (lift $ ofVar (PVar 0))) []
+root2 = Pathsum 0 0 0 1 ((-constant (half * half)) + distribute half (ofVar (PVar 0))) []
 
 -- | \(1/\sqrt{2}\)
 roothalf :: (Eq g, Abelian g, Dyadic g) => Pathsum g
@@ -298,6 +335,10 @@ epsilon :: (Eq g, Abelian g) => Pathsum g
 epsilon = Pathsum 2 2 0 1 p []
   where p = lift $ ofVar (PVar 0) * (ofVar (IVar 0) + ofVar (IVar 1))
 
+{----------------------------
+ Matrices
+ ----------------------------}
+
 -- | X gate
 xgate :: (Eq g, Num g) => Pathsum g
 xgate = Pathsum 0 1 1 0 0 [1 + ofVar (IVar 0)]
@@ -315,50 +356,49 @@ ygate = Pathsum 0 1 1 0 p [1 + ofVar (IVar 0)]
 -- | S gate
 sgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale half (lift $ ofVar (IVar 0))
+  where p = distribute half (ofVar (IVar 0))
 
 -- | S* gate
 sdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 sdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (3*half) (lift $ ofVar (IVar 0))
+  where p = distribute (-half) (ofVar (IVar 0))
 
 -- | T gate
 tgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tgate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (half*half) (lift $ ofVar (IVar 0))
+  where p = distribute (half*half) (ofVar (IVar 0))
 
 -- | T* gate
 tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (7*half*half) (lift $ ofVar (IVar 0))
+  where p = distribute (-half*half) (ofVar (IVar 0))
 
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (fromDyadic $ dyadic 1 k) (lift $ ofVar (IVar 0))
+  where p = distribute (fromDyadic $ dyadic 1 k) (ofVar (IVar 0))
 
 -- | R_z gate
-rzgate :: (Eq g, Abelian g, Dyadic g) => DyadicRational -> Pathsum g
+rzgate :: (Eq g, Abelian g, Dyadic g) => g -> Pathsum g
 rzgate theta = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
-  where p = scale (fromDyadic theta) (lift $ ofVar (IVar 0))
+  where p = distribute theta (ofVar (IVar 0))
 
 -- | H gate
 hgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 hgate = Pathsum 1 1 1 1 p [ofVar (PVar 0)]
   where p = lift $ (ofVar $ IVar 0) * (ofVar $ PVar 0)
 
--- | CH gate
-chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
-chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
-  where p = lift $ x1 * x2 * y
-        x1 = ofVar $ IVar 0
-        x2 = ofVar $ IVar 1
-        y = ofVar $ PVar 0
-
 -- | CNOT gate
 cxgate :: (Eq g, Num g) => Pathsum g
 cxgate = Pathsum 0 2 2 0 0 [x0, x0+x1]
   where x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+
+-- | CZ gate
+czgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+czgate = Pathsum 0 2 2 0 p [x0, x1]
+  where p = lift $ x0 * x1
+        x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
 
 -- | Toffoli gate
@@ -368,17 +408,143 @@ ccxgate = Pathsum 0 3 3 0 0 [x0, x1, x2 + x0*x1]
         x1 = ofVar $ IVar 1
         x2 = ofVar $ IVar 2
 
+-- | CCZ gate
+cczgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+cczgate = Pathsum 0 3 3 0 p [x0, x1, x2]
+  where p = lift $ x0 * x1 * x2
+        x0 = ofVar $ IVar 0
+        x1 = ofVar $ IVar 1
+        x2 = ofVar $ IVar 2
+
 -- | k-control Toffoli gate
 mctgate :: (Eq g, Num g) => Int -> Pathsum g
-mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (controls ++ [t + foldr (*) 1 controls])
-  where controls = [ofVar (IVar i) | i <- [0..k-1]]
-        t        = ofVar $ IVar k
+mctgate k = Pathsum 0 (k+1) (k+1) 0 0 (ctrls ++ [t + foldr (*) 1 ctrls])
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        t     = ofVar $ IVar k
+
+-- | k-control Z gate
+mczgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
+mczgate k = Pathsum 0 k k 0 p ctrls
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        p     = lift $ (foldr (*) 1 ctrls)
+
+-- | n-qubit R_z gate
+rzNgate :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g
+rzNgate theta k = Pathsum 0 k k 0 p ctrls
+  where ctrls = [ofVar (IVar i) | i <- [0..k-1]]
+        p     = distribute theta (foldr (*) 1 ctrls)
 
 -- | SWAP gate
 swapgate :: (Eq g, Num g) => Pathsum g
 swapgate = Pathsum 0 2 2 0 0 [x1, x0]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
+
+-- | CH gate
+chgate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
+  where p = distribute (-half*half) (1 + x1) +
+            distribute half (lift $ (1 + x1) * y) +
+            (lift $ x1 * x2 * y)
+        x1 = ofVar $ IVar 0
+        x2 = ofVar $ IVar 1
+        y = ofVar $ PVar 0
+
+{----------------------------
+ Applicative style
+ ----------------------------}
+
+-- | apply an X gate
+applyX :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyX i (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals'
+  where ovals' = over (ix i) (+ 1) ovals
+
+-- | apply a Z gate
+applyZ :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyZ i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute 1 (ovals!!i)
+
+-- | apply a Y gate
+applyY :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyY i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals'
+  where ovals' = over (ix i) (+ 1) ovals
+        pp'    = pp + distribute 1 (ovals!!i) + constant half
+
+-- | apply an S gate
+applyS :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyS i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute half (ovals!!i)
+
+-- | apply an Sdg gate
+applySdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applySdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute (-half) (ovals!!i)
+
+-- | apply a T gate
+applyT :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyT i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute (half*half) (ovals!!i)
+
+-- | apply a Tdg gate
+applyTdg :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyTdg i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute (-half*half) (ovals!!i)
+
+-- | apply an Rk gate
+applyRk :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyRk k i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute (fromDyadic $ dyadic 1 k) (ovals!!i)
+
+-- | apply an Rz gate
+applyRz :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Pathsum g -> Pathsum g
+applyRz theta i (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute (theta) (ovals!!i)
+
+-- | apply an H gate
+applyH :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyH i (Pathsum s d o p pp ovals) = Pathsum (s+1) d o (p+1) pp' ovals'
+  where pp'    = pp + distribute 1 ((ovals!!i) * (ofVar $ PVar p))
+        ovals' = set (ix i) (ofVar (PVar p)) ovals
+
+-- | apply a CZ gate
+applyCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCZ i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute 1 (ovals!!i * ovals!!j)
+
+-- | apply a CX gate
+applyCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyCX i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix j) (+ ovals!!i) ovals
+
+-- | apply a CCZ gate
+applyCCZ :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCZ i j k (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals
+  where pp' = pp + distribute 1 (ovals!!i * ovals!!j * ovals!!k)
+
+-- | apply a CCX gate
+applyCCX :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Int -> Pathsum g -> Pathsum g
+applyCCX i j k (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix k) (+ ovals!!i * ovals!!j) ovals
+
+-- | apply a Swap gate
+applySwap :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applySwap i j (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = set (ix i) (ovals!!j) $ set (ix j) (ovals!!i) ovals
+
+-- | apply a multiply controlled Toffoli gate
+applyMCT :: (Eq g, Abelian g, Dyadic g) => [Int] -> Int -> Pathsum g -> Pathsum g
+applyMCT xs t (Pathsum s d o p pp ovals) = Pathsum s d o p pp ovals' where
+  ovals' = over (ix t) (+ foldr (*) 1 (map (ovals!!) xs)) ovals
+
+-- | apply a multiply controlled Z gate
+applyMCZ :: (Eq g, Abelian g, Dyadic g) => [Int] -> Pathsum g -> Pathsum g
+applyMCZ xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
+  pp' = pp + distribute 1 (foldr (*) 1 (map (ovals!!) xs))
+
+-- | apply a multiply controlled Rz gate
+applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
+applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
+  pp' = pp + distribute (theta) (foldr (*) 1 (map (ovals!!) xs))
 
 {----------------------------
  Channels
@@ -396,7 +562,7 @@ measure :: (Eq g, Abelian g) => Pathsum g
 measure = unChoi measureChoi
 
 {----------------------------
- Bind and unbind
+ Bind, unbind, and subst
  ----------------------------}
 
 -- | Bind some collection of free variables in a path sum
@@ -426,6 +592,15 @@ unbind xs (Pathsum a b c d e f) = Pathsum a (b - length xs) c d e' f' where
 -- | Open a path sum by instantiating all inputs
 open :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 open sop = unbind [0..(inDeg sop) - 1] sop
+
+-- | Substitute a monomial with a symbolic Boolean expression throughout
+--
+--   This is generally not a very safe thing to do. Convenience for certain
+--   local transformations
+substitute :: (Eq g, Abelian g) => [Var] -> SBool Var -> Pathsum g -> Pathsum g
+substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e' = substMonomial xs p e
+  f' = map (substMonomial xs p) f
 
 {----------------------------
  Operators
@@ -671,11 +846,22 @@ matchHHSolve sop = do
 -- | Instances of the HH rule with a linear substitution
 matchHHLinear :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHLinear sop = do
-  (v, p)   <- filter (\(_, p) -> degree p <= 1) $ matchHH sop
+  (v, p)   <- filter ((<= 1) . degree . snd) $ matchHH sop
   (v', p') <- solveForX p
-  return (v, v', p')
+  case v' of
+    PVar _ -> return (v, v', p')
+    _      -> mzero
 
--- | Instances of the (\omega\) rule
+-- | Instances of the HH rule with only internal substitutions
+matchHHInternal :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
+matchHHInternal sop = do
+  (v, p)   <- matchHH sop
+  (v', p') <- filter ((flip elem) (internalPaths sop) . fst) $ solveForX p
+  case v' of
+    PVar _ -> return (v, v', p')
+    _      -> mzero
+
+-- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
   v <- internalPaths sop
@@ -683,9 +869,23 @@ matchOmega sop = do
   return (v, p)
   where addFactor v p = constant (fromDyadic $ dyadic 3 1) + quotVar v p
 
+-- | Instances of the var rule
+matchVar :: Eq g => Pathsum g -> [(Var, SBool Var)]
+matchVar sop = do
+  p       <- outVals sop
+  (v, p') <- solveForX p
+  case (v, p') of
+    (_, 0)      -> mzero
+    (PVar _, p) -> return (v, ofVar v + p')
+    _           -> mzero
+  
 {--------------------------
  Pattern synonyms
  --------------------------}
+
+-- | Ordering of solvable hh instances
+hhOrder :: (Var, Var, SBool Var) -> (Var, Var, SBool Var) -> Ordering
+hhOrder (_,_,p) (_,_,q) = compare (length $ toTermList p) (length $ toTermList q)
 
 -- | Pattern synonym for Elim
 pattern Triv :: (Eq g, Num g) => Pathsum g
@@ -707,6 +907,10 @@ pattern HHSolved v v' p <- (matchHHSolve -> (v, v', p):_)
 pattern HHLinear :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
 
+-- | Pattern synonym for internal HH instances
+pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
+pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
+
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
 pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
@@ -715,6 +919,10 @@ pattern HHKill v p <- (filter (all (not . isP) . vars . snd) . matchHH -> (v, p)
 -- | Pattern synonym for Omega instances
 pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
 pattern Omega v p <- (matchOmega -> (v, p):_)
+
+-- | Pattern synonym for var instances
+pattern Var :: Eq g => Var -> SBool Var -> Pathsum g
+pattern Var v p <- (matchVar -> (v, p):_)
 
 {--------------------------
  Applying reductions
@@ -751,6 +959,10 @@ applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
           | otherwise = PVar $ j
         varShift v = v
 
+-- | Apply a var rule. Does not check if the instance is valid
+applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
+applyVar v p (Pathsum a b c d e f) = Pathsum a b c d (subst v p e) (map (subst v p) f)
+
 -- | Finds and applies the first elimination instance
 rewriteElim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
 rewriteElim sop = case sop of
@@ -769,6 +981,21 @@ rewriteOmega sop = case sop of
   Omega v p -> applyOmega v p sop
   _         -> sop
 
+-- | Finds and applies the first var instance
+rewriteVar :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+rewriteVar sop = case sop of
+  Var v p -> applyVar v p sop
+  _       -> sop
+
+-- | Abstracts a monomial into a fresh path variable. The reverse of an HH
+abstractMono :: (Eq g, Abelian g) => [Var] -> Pathsum g -> Pathsum g
+abstractMono m (Pathsum a b c d e f) = Pathsum a' b c (d + 2) e' f' where
+  y = ofVar $ PVar d
+  z = ofVar $ PVar (d+1)
+  a' = a + 2
+  e' = substMonomial m z e + (distribute 1 $ y*(ofMonomial (monomial m) + z))
+  f' = map (substMonomial m z) f
+
 {--------------------------
  Reduction procedures
  --------------------------}
@@ -776,32 +1003,41 @@ rewriteOmega sop = case sop of
 -- | Performs basic simplifications
 simplify :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 simplify sop = case sop of
-  Elim y         -> grind $ applyElim y sop
-  HHLinear y z p -> grind $ applyHHSolved y z p sop
-  Omega y p      -> grind $ applyOmega y p sop
+  Elim y         -> simplify $ applyElim y sop
+  HHLinear y z p -> simplify $ applyHHSolved y z p sop
+  Omega y p      -> simplify $ applyOmega y p sop
   _              -> sop
 
--- | A complete normalization procedure for Clifford circuits. Originally described in
---   the paper M. Amy,
+-- | The rewrite system of M. Amy,
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
+--   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
   Elim y         -> grind $ applyElim y sop
-  HHSolved y z p -> grind $ applyHHSolved y z p sop
   Omega y p      -> grind $ applyOmega y p sop
+  HHSolved y z p -> grind $ applyHHSolved y z p sop
   _              -> sop
 
--- | A single step of 'grind'
-grindStep :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-grindStep sop = case sop of
-  Elim y         -> applyElim y sop
-  HHSolved y z p -> applyHHSolved y z p sop
-  Omega y p      -> applyOmega y p sop
-  _              -> sop
+-- | A normalization procedure for Clifford circuits
+normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
+normalizeClifford sop = go $ sop .> hLayer .> hLayer where
+  hLayer = foldr (<>) mempty $ replicate (outDeg sop) hgate
+  go sop = case sop of
+    Elim y           -> go $ applyElim y sop
+    HHInternal y z p -> go $ applyHHSolved y z p sop
+    Omega y p        -> go $ applyOmega y p sop
+    HHSolved y z p   -> go $ applyHHSolved y z p sop
+    _                -> sop
 
 {--------------------------
  Simulation
  --------------------------}
+
+-- | Gets the cofactors of some path variable
+expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
+expand (Pathsum a b c d e f) v = (p0, p1) where
+  p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
+  p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
 
 -- | Simulates a pathsum on a given input
 simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
@@ -827,6 +1063,62 @@ simulate sop xs = go $ sop * ket (map constant xs)
 -- | Evaluates a pathsum on a given input and output
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
+
+-- | Checks identity by checking inputs iteratively
+isIdentity :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isIdentity sop
+  | isTrivial sop = True
+  | otherwise     = case inDeg sop of
+      0 -> False
+      i -> let p0 = (grind $ identity (i-1) <> ket [0] .> sop .> identity (i-1) <> bra [0])
+               p1 = (grind $ identity (i-1) <> ket [1] .> sop .> identity (i-1) <> bra [1])
+           in
+             isIdentity p0 && isIdentity p1
+
+-- | Checks whether a state is the density matrix of a pure state by computing the purity
+isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isPure sop
+  | inDeg sop /= outDeg sop = False
+  | otherwise               = purity == identity 0 where
+      purity = trace $ sop .> sop
+
+{--------------------------
+ Testing
+ --------------------------}
+
+-- | Test suite for internal use
+runTests :: () -> IO ()
+runTests _ = do
+  print $ isIdentity (applyX 0 (xgate :: Pathsum DMod2))
+  print $ isIdentity (applyY 0 (ygate :: Pathsum DMod2))
+  print $ isIdentity (applyZ 0 (zgate :: Pathsum DMod2))
+  print $ isIdentity (applyS 0 (sdggate :: Pathsum DMod2))
+  print $ isIdentity (applySdg 0 (sgate :: Pathsum DMod2))
+  print $ isIdentity (applyT 0 (tdggate :: Pathsum DMod2))
+  print $ isIdentity (applyTdg 0 (tgate :: Pathsum DMod2))
+  print $ isIdentity (applyH 0 (hgate :: Pathsum DMod2))
+  print $ isIdentity (applyCZ 0 1 (czgate :: Pathsum DMod2))
+  print $ isIdentity (applyCX 0 1 (cxgate :: Pathsum DMod2))
+  print $ isIdentity (applySwap 0 1 (swapgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCZ 0 1 2 (cczgate :: Pathsum DMod2))
+  print $ isIdentity (applyCCX 0 1 2 (ccxgate :: Pathsum DMod2))
+  print $ isIdentity (applyMCT [0,1,2] 3 (mctgate 3 :: Pathsum DMod2))
+  print $ isIdentity (applyCX 1 0 (swapgate .> cxgate .> swapgate :: Pathsum DMod2))
+  print $ applyX 0 (identity 1) == (xgate :: Pathsum DMod2)
+  print $ applyY 0 (identity 1) == (ygate :: Pathsum DMod2)
+  print $ applyZ 0 (identity 1) == (zgate :: Pathsum DMod2)
+  print $ applyS 0 (identity 1) == (sgate :: Pathsum DMod2)
+  print $ applySdg 0 (identity 1) == (sdggate :: Pathsum DMod2)
+  print $ applyT 0 (identity 1) == (tgate :: Pathsum DMod2)
+  print $ applyTdg 0 (identity 1) == (tdggate :: Pathsum DMod2)
+  print $ applyH 0 (identity 1) == (hgate :: Pathsum DMod2)
+  print $ applyCZ 0 1 (identity 2) == (czgate :: Pathsum DMod2)
+  print $ applyCX 0 1 (identity 2) == (cxgate :: Pathsum DMod2)
+  print $ applySwap 0 1 (identity 2) == (swapgate :: Pathsum DMod2)
+  print $ applyCCZ 0 1 2 (identity 3) == (cczgate :: Pathsum DMod2)
+  print $ applyCCX 0 1 2 (identity 3) == (ccxgate :: Pathsum DMod2)
+  print $ applyMCT [0,1,2] 3 (identity 4) == (mctgate 3 :: Pathsum DMod2)
+  print $ applyCX 1 0 (identity 2) == (swapgate .> cxgate .> swapgate :: Pathsum DMod2)
 
 {--------------------------
  Examples
@@ -892,3 +1184,120 @@ verifyTeleT :: () -> IO ()
 verifyTeleT _ = case (channelize tgate == grind (teleportTChannel)) of
   True -> putStrLn "Identity"
   False -> putStrLn "No identity"
+
+-- | Relation 13 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT13 :: Pathsum DMod2
+cliffordT13 = c .> c where
+  c = cxgate .>
+      xgate <> (tgate .> hgate .> tgate .> hgate .> tdggate) .>
+      cxgate .>
+      xgate <> (tgate .> hgate .> tdggate .> hgate .> tdggate)
+
+-- | Pipeline for applying rewrites in sequence
+(|>) :: a -> (a -> b) -> b
+a |> f = f a
+
+infixl 1 |>
+
+-- | A manual proof of 13
+cliffordT13_is_identity () = case isIdentity reducedSOP of
+  True -> putStrLn "Identity"
+  False -> putStrLn "Not identity"
+  where reducedSOP =
+          let c1      = vectorize cliffordT13
+              c2      = abstractMono [PVar 0, PVar 5] c1
+              (a,b,c) = head $ tail $ matchHHSolve c2
+              c3      = applyHHSolved a b c c2
+              c4      = rewriteElim c3
+              c5      = rewriteOmega c4
+              c6      = applyVar (PVar 0) (ofVar (PVar 0) + 1) c5
+              c7      = abstractMono [PVar 0, PVar 5] c6
+              (e,f,g) = head $ matchHHSolve c7
+              c8      = applyHHSolved e f g c7
+              c9      = rewriteElim c8
+              c10     = rewriteHH c9
+              c11     = rewriteElim c10
+              c12     = grind c11
+          in
+            grind $ (identity 2 <> c12) .> (epsilonN 2 <> identity 2)
+              
+-- | Relation 14 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT14 :: Pathsum DMod2
+cliffordT14 =
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  h2 .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  cxgate .>
+  sdg1 .>
+  t2 .>
+  h1 .>
+  h2 .>
+  tdg1 .>
+  s2 .>
+  tdg2 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  t2 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg1 .>
+  tdg2 .>
+  cxgate .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  h2 .>
+  tdg2 .>
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  t1 .>
+  h2 .>
+  sdg1 .>
+  s2 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  h1 .>
+  tdg1 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg2
+  where x1 = xgate <> identity 1
+        x2 = identity 1 <> xgate
+        h1 = hgate <> identity 1
+        h2 = identity 1 <> hgate
+        t1 = tgate <> identity 1
+        t2 = identity 1 <> tgate
+        s1 = sgate <> identity 1
+        s2 = identity 1 <> sgate
+        tdg1 = tdggate <> identity 1
+        tdg2 = identity 1 <> tdggate
+        sdg1 = sdggate <> identity 1
+        sdg2 = identity 1 <> sdggate
+        xcgate = swapgate .> cxgate .> swapgate

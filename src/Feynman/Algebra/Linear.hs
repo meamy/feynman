@@ -64,12 +64,8 @@ instance Num F2Vec where
   negate      = id
   abs         = id
   signum      = id
-  fromInteger = bitVec 32 
+  fromInteger = bitVec 32
 
---zero    = bitVec 32 0
---one = bitVec 32 1
---pow i x = if i `mod` 2 == 0 then bitVec (width x) 0 else x
-  
 instance Matroid F2Vec where
   independent s = (Set.size s) == (rank $ fromList $ Set.toList s)
 
@@ -114,6 +110,11 @@ fromList vecs@(x:xs) =
     then F2Mat (length vecs) n vecs
     else error "Vectors have differing lengths"
   where n = width x
+
+fromListSafe :: [F2Vec] -> F2Mat
+fromListSafe xs = fromList (map go xs) where
+  go bv = if width bv < n then zeroExtend (n - width bv) bv else bv
+  n     = maximum $ map width xs
 
 fromVec :: F2Vec -> F2Mat
 fromVec x = F2Mat 1 n [x]
@@ -527,17 +528,21 @@ toReducedEchelonSqr :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelonSqr mat = censor transposeROps . toEchelon . transpose =<< toEchelon mat
 
 toReducedEchelonPMH :: F2Mat -> Writer [ROp] F2Mat
-toReducedEchelonPMH mat =
-  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
-    censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
+toReducedEchelonPMH mat
+  | n mat < 2 = toReducedEchelonSqr mat
+  | otherwise =
+    let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+      censor transposeROps . (toEchelonPMH width) . transpose =<< (toEchelonPMH width) mat
 
 toReducedEchelonA :: F2Mat -> Writer [ROp] F2Mat
 toReducedEchelonA mat = censor transposeROps . toEchelon . transpose =<< toEchelonA mat
 
 toReducedEchelonPMHA :: F2Mat -> Writer [ROp] F2Mat
-toReducedEchelonPMHA mat =
-  let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
-    censor transposeROps . (toEchelonPMH width) . transpose =<< toEchelonPMHA width mat
+toReducedEchelonPMHA mat
+  | n mat < 2 = toReducedEchelonA mat
+  | otherwise =
+    let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
+      censor transposeROps . (toEchelonPMH width) . transpose =<< toEchelonPMHA width mat
 
 rank :: F2Mat -> Int
 rank mat =

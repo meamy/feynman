@@ -1,4 +1,7 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {-|
 Module      : Base
@@ -14,6 +17,9 @@ module Feynman.Algebra.Base(
   Periodic(..),
   Dyadic(..),
   FF2,
+  Zmod,
+  Z4,
+  Z8,
   DyadicRational(..),
   DMod2,
   zero,
@@ -29,9 +35,11 @@ where
 
 import Data.Bits
 import Data.Ratio
+import Data.Proxy
 
 import GHC.Integer.Logarithms
 import GHC.Types
+import GHC.TypeLits
 
 import qualified Feynman.Util.Unicode as Unicode
 
@@ -125,6 +133,39 @@ instance Fractional FF2 where
   fromRational a    = (fromInteger $ numerator a) / (fromInteger $ denominator a)
 
 {-------------------------------
+ Finite groups
+ -------------------------------}
+
+-- | The ring of integers modulo n \(\mathbb{Z}_n\)
+data Zmod (n :: Nat) where
+  Zmod :: (KnownNat n) => Int -> Zmod n
+
+instance Show (Zmod n) where
+  show (Zmod i) = show i
+
+instance forall n. (KnownNat n) => Num (Zmod n) where
+  (Zmod x) + (Zmod y) = Zmod $ (x + y) `mod` (fromInteger $ natVal (Proxy::Proxy n))
+  (Zmod x) * (Zmod y) = Zmod $ (x * y) `mod` (fromInteger $ natVal (Proxy::Proxy n))
+  negate (Zmod x)     = Zmod $ (-x) `mod` (fromInteger $ natVal (Proxy::Proxy n))
+  abs x               = x
+  signum x            = x
+  fromInteger x       = Zmod $ (fromInteger x) `mod` (fromInteger $ natVal (Proxy::Proxy n))
+
+instance (KnownNat n) => Abelian (Zmod n) where
+  power i (Zmod x)    = Zmod $ (fromInteger i) * x `mod` (fromInteger $ natVal (Proxy::Proxy n))
+
+instance (KnownNat n) => Periodic (Zmod n) where
+  order (Zmod x) = toInteger $ (lcm x (fromInteger $ natVal (Proxy::Proxy n))) `div` x
+
+-- | Convenience types
+type Z4 = Zmod 4
+type Z8 = Zmod 8
+
+-- | Inject a modular number into \(\mathbb{Z}\)
+injectMod :: Zmod n -> Integer
+injectMod (Zmod x) = toInteger x
+
+{-------------------------------
  Dyadics
  -------------------------------}
 
@@ -185,7 +226,7 @@ dyadic a n = canonicalize $ Dy a n
 
 -- | Reduce a dyadic fraction mod 2
 reduce :: DyadicRational -> DyadicRational
-reduce (Dy a n) = Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
+reduce (Dy a n) = canonicalize $ Dy (a .&. ((1 `shiftL` (n+1)) - 1)) n
 
 -- | Get the denominator of a dyadic fraction
 numer :: DyadicRational -> Integer

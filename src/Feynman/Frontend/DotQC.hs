@@ -2,6 +2,7 @@ module Feynman.Frontend.DotQC where
 
 import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
 import Feynman.Algebra.Base
+import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..))
 
 import Data.List
 
@@ -216,6 +217,7 @@ gateToCliffordT (Gate g i p) =
         ("X", [x])      -> [X x]
         ("Y", [x])      -> [Y x]
         ("Z", [x])      -> [Z x]
+        ("Z", [x,y])    -> [CZ x y]
         ("S", [x])      -> [S x]
         ("P", [x])      -> [S x]
         ("S*", [x])     -> [Sinv x]
@@ -226,7 +228,7 @@ gateToCliffordT (Gate g i p) =
         ("tof", [x,y])  -> [CNOT x y]
         ("cnot", [x,y]) -> [CNOT x y]
         ("swap", [x,y]) -> [Swap x y]
-        ("cz", [x,y])   -> [H y, CNOT x y, H y]
+        ("cz", [x,y])   -> [CZ x y]
         ("tof", [x,y,z])-> [H z, T x, T y, CNOT z x, Tinv x, CNOT y z, Tinv z,
                             CNOT y x, T x, CNOT y z, CNOT z x, Tinv x,
                             T z, CNOT y x, H z]
@@ -237,6 +239,7 @@ gateToCliffordT (Gate g i p) =
                             CNOT y x, Tinv x, CNOT y z, CNOT z x, T x,
                             Tinv z, CNOT y x]
         ("tof", xs)     -> toCliffordT $ mct xs
+        ("X", xs)       -> toCliffordT $ mct xs
         otherwise       -> [Uninterp g p]
   in
     concat $ genericReplicate i circ
@@ -263,6 +266,7 @@ gateFromCliffordT g = case g of
   T x           -> Gate "T" 1 [x]
   Tinv x        -> Gate "T*" 1 [x]
   CNOT x y      -> Gate "cnot" 1 [x, y]
+  CZ x y        -> Gate "cz" 1 [x, y]
   Swap x y      -> Gate "swap" 1 [x, y]
   Rz f x        -> ParamGate "Rz" 1 f [x]
   Rx f x        -> ParamGate "Rx" 1 f [x]
@@ -271,6 +275,16 @@ gateFromCliffordT g = case g of
 
 fromCliffordT :: [Primitive] -> [Gate]
 fromCliffordT = map gateFromCliffordT
+
+gateFromExtractionBasis :: ExtractionGates -> Gate
+gateFromExtractionBasis g = case g of
+  Hadamard x    -> Gate "H" 1 [x]
+  MCT xs x      -> Gate "tof" 1 $ xs ++ [x]
+  Phase f xs    -> ParamGate "Rz" 1 (Discrete f) $ xs
+  Swapper x y   -> Gate "swap" 1 [x, y]
+
+fromExtractionBasis :: [ExtractionGates] -> [Gate]
+fromExtractionBasis = map gateFromExtractionBasis
 
 {- Statistics -}
 

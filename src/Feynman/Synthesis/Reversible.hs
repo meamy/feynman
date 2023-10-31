@@ -70,6 +70,38 @@ linearSynth input output =
       then error "Fatal: map keys not equal"
       else reverse $ concatMap f (if counta rops > counta rops' then rops' else rops)
 
+affineSynth :: AffineTrans -> AffineTrans -> [Primitive]
+affineSynth input output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      inX  = f input
+      outX = f output
+      circ = linearSynth (Map.map fst input) (Map.map fst output)
+  in
+    inX ++ circ ++ outX
+
+-- Applies linear simplifications
+simplifyLinear :: LinearTrans -> [Primitive]
+simplifyLinear output =
+  let (ids, ovecs) = unzip $ Map.toList output
+      mat  = fromListSafe ovecs
+      {- Significant area for improvement here. We can't use any of bi-directional (i.e. column ops)
+         methods since we don't have a transformation matrix. -}
+      rops = snd $ runWriter $ toReducedEchelon mat
+      f op = case op of
+        Add i j      -> [CNOT (ids !! i) (ids !! j)]
+        Exchange i j -> [Swap (ids !! i) (ids !! j)]
+  in
+      reverse $ concatMap f rops
+
+-- Affine simplifications
+simplifyAffine :: AffineTrans -> [Primitive]
+simplifyAffine output =
+  let f    = Map.foldrWithKey (\id (_, b) xs -> if b then (X id):xs else xs) []
+      outX = f output
+      circ = simplifyLinear (Map.map fst output)
+  in
+    circ ++ outX
+
 liftMatOp :: (F2Mat -> F2Mat) -> LinearTrans -> LinearTrans
 liftMatOp f = Map.fromList . uncurry zip . go . unzip . Map.toList where
   go (ids,vecs) = (ids, toList . f . fromList $ vecs)

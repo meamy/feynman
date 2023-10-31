@@ -15,6 +15,8 @@ import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
+import Feynman.Optimization.Clifford
+import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
 import System.Environment (getArgs)
@@ -45,6 +47,8 @@ data Pass = Triv
           | Statefold
           | CNOTMin
           | TPar
+          | Cliff
+          | Decompile
 
 {- DotQC -}
 
@@ -57,6 +61,17 @@ optimizeDotQC f qc = qc { decls = map go $ decls qc }
           in
             decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
+decompileDotQC :: DotQC -> DotQC
+decompileDotQC qc = qc { decls = map go $ decls qc }
+  where go decl =
+          let circuitQubits  = qubits qc ++ params decl
+              circuitInputs  = (Set.toList $ inputs qc) ++ params decl
+              resynthesize c = case resynthesizeCircuit $ toCliffordT c of
+                Nothing -> c
+                Just c' -> fromExtractionBasis c'
+          in
+            decl { body = resynthesize $ body decl }
+
 dotQCPass :: Pass -> (DotQC -> DotQC)
 dotQCPass pass = case pass of
   Triv      -> id
@@ -68,6 +83,8 @@ dotQCPass pass = case pass of
   Statefold -> optimizeDotQC stateFold
   CNOTMin   -> optimizeDotQC rmOpt
   TPar      -> optimizeDotQC tpar
+  Cliff     -> optimizeDotQC (\_ _ -> simplifyCliffords)
+  Decompile -> decompileDotQC
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheckDotQC qc qc' =
@@ -127,6 +144,7 @@ qasmPass pass = case pass of
   Statefold -> applyOpt stateFold
   CNOTMin   -> applyOpt minCNOT
   TPar      -> applyOpt tpar
+  Cliff     -> applyOpt (\_ _ -> simplifyCliffords)
 
 runQASM :: [Pass] -> Bool -> String -> String -> IO ()
 runQASM passes verify fname src = do
@@ -172,6 +190,7 @@ printHelp = mapM_ putStrLn lines
           "  -statefold\tSlightly more powerful phase folding",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
+          "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
           "  -O3\t\tPhase folding + state folding + simplify",
           "",
@@ -198,6 +217,8 @@ parseArgs passes verify (x:xs) = case x of
   "-statefold"   -> parseArgs (Statefold:Simplify:passes) verify xs
   "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
   "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
+  "-clifford"    -> parseArgs (Cliff:Simplify:passes) verify xs
+  "-decompile"   -> parseArgs (Decompile:passes) verify xs
   "-O2"          -> parseArgs (Simplify:Phasefold:Simplify:passes) verify xs
   "-O3"          -> parseArgs (Simplify:Phasefold:Statefold:Simplify:passes) verify xs
   "-verify"      -> parseArgs passes True xs

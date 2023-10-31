@@ -73,6 +73,7 @@ data Primitive =
   | Y        ID
   | Z        ID
   | CNOT     ID ID
+  | CZ       ID ID
   | S        ID
   | Sinv     ID
   | T        ID
@@ -111,6 +112,7 @@ getArgs gate = case gate of
   Y x           -> [x]
   Z x           -> [x]
   CNOT x y      -> [x,y]
+  CZ x y        -> [x,y]
   S x           -> [x]
   Sinv x        -> [x]
   T x           -> [x]
@@ -130,6 +132,7 @@ daggerGate x = case x of
   Y _           -> x -- WARNING: this is incorrect
   Z _           -> x
   CNOT _ _      -> x
+  CZ _ _        -> x
   S x           -> Sinv x
   Sinv x        -> S x
   T x           -> Tinv x
@@ -150,6 +153,7 @@ substGate f gate = case gate of
   Y x           -> Y $ f x
   Z x           -> Z $ f x
   CNOT x y      -> CNOT (f x) (f y)
+  CZ x y        -> CZ (f x) (f y)
   S x           -> S $ f x
   Sinv x        -> Sinv $ f x
   T x           -> T $ f x
@@ -172,6 +176,7 @@ ids = Set.toList . foldr f Set.empty
           Y x           -> [x]
           Z x           -> [x]
           CNOT x y      -> [x,y]
+          CZ x y        -> [x,y]
           S x           -> [x]
           Sinv x        -> [x]
           T x           -> [x]
@@ -210,7 +215,24 @@ simplifyPrimitive circ =
   in
     fst . unzip . (converge simplify) $ circ'
 
+-- Removes all swap gates by re-indexing
+removeSwaps :: [Primitive] -> [Primitive]
+removeSwaps = reverse . go (Map.empty, []) where
+  get ctx q = Map.findWithDefault q q ctx
+  go (ctx, acc) []        = acc
+  go (ctx, acc) (x:xs)    = case x of
+    Swap q1 q2 ->
+      let (q1', q2') = (get ctx q1, get ctx q2) in
+        go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
+    _          -> go (ctx, (substGate (get ctx) x):acc) xs
+
 -- Builtin circuits
+
+cs :: ID -> ID -> [Primitive]
+cs x y = [T x, T y, CNOT x y, Tinv y, CNOT x y]
+
+cz :: ID -> ID -> [Primitive]
+cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
 
 ccx :: ID -> ID -> ID -> [Primitive]
 ccx x y z = [H z] ++ ccz x y z ++ [H z]
@@ -220,9 +242,6 @@ ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
              CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
              Tinv x, CNOT y z, CNOT z x, CNOT x y]
 
-cz  :: ID -> ID -> [Primitive]
-cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
-
 -- Printing
 
 instance Show Primitive where
@@ -230,12 +249,13 @@ instance Show Primitive where
   show (X x)           = "X " ++ x
   show (Z x)           = "Z " ++ x
   show (Y x)           = "Y " ++ x
-  show (CNOT x y)      = "tof " ++ x ++ " " ++ y
+  show (CNOT x y)      = "CNOT " ++ x ++ " " ++ y
+  show (CZ x y)        = "CZ " ++ x ++ " " ++ y
   show (S x)           = "S " ++ x
   show (Sinv x)        = "S* " ++ x
   show (T x)           = "T " ++ x
   show (Tinv x)        = "T* " ++ x
-  show (Swap x y)      = "swap " ++ x ++ " " ++ y
+  show (Swap x y)      = "Swap " ++ x ++ " " ++ y
   show (Rz theta x)    = "Rz(" ++ show theta ++ ") " ++ x
   show (Rx theta x)    = "Rx(" ++ show theta ++ ") " ++ x
   show (Ry theta x)    = "Ry(" ++ show theta ++ ") " ++ x
@@ -276,6 +296,6 @@ toffoli = Circuit { qubits = ["x", "y", "z"],
                                     Gate $ Tinv "x", Gate $ Tinv "y", Gate $ T "z",
                                     Gate $ CNOT "y" "x",
                                     Gate $ Tinv "x",
-                                    Gate $ CNOT "y" "z", Gate  $CNOT "z" "x", Gate $ CNOT "x" "y",
+                                    Gate $ CNOT "y" "z", Gate  $ CNOT "z" "x", Gate $ CNOT "x" "y",
                                     Gate $ H "z" ] }
 

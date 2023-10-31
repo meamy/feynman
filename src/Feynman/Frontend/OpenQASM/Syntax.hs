@@ -5,6 +5,7 @@ import Feynman.Frontend.DotQC (DotQC)
 import qualified Feynman.Frontend.DotQC as DotQC
 
 import Data.List
+import Data.Char (isDigit, isAlpha)
 
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -498,7 +499,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
                 ("tdg", [], x:[])           -> ((Tinv x):gates, gateMap, qubitMap')
                 ("cx", [], x:y:[])          -> ((CNOT x y):gates, gateMap, qubitMap')
                 ("id", [], x:[])            -> (gates, gateMap, qubitMap')
-                ("cz", [], x:y:[])          -> (cz x y ++ gates, gateMap, qubitMap')
+                ("cz", [], x:y:[])          -> ((CZ x y):gates, gateMap, qubitMap')
                 ("ccx", [], x:y:z:[])       -> (ccx x y z ++ gates, gateMap, qubitMap')
                 ("rz", [theta], x:[])
                   | Just a <- evalExp theta -> ((Rz (Continuous a) x):gates, gateMap, qubitMap')
@@ -519,6 +520,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           T x                      -> QStmt . GateExp $ CallGate "t" [] [qubitMap!x]
           Tinv x                   -> QStmt . GateExp $ CallGate "tdg" [] [qubitMap!x]
           CNOT x y                 -> QStmt . GateExp $ CXGate (qubitMap!x) (qubitMap!y)
+          CZ x y                   -> QStmt . GateExp $ CallGate "cz" [] [qubitMap!x, qubitMap!y]
           Swap x y                 -> QStmt . GateExp $ CallGate "swap" [] [qubitMap!x, qubitMap!y]
           Rz (Continuous t) x      -> QStmt . GateExp $ CallGate "rz" [FloatExp t] [qubitMap!x]
           Uninterp "measure" [x,y] -> QStmt $ MeasureExp (qubitMap!x) (qubitMap!y)
@@ -537,6 +539,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
           T x            -> CallGate "t" [] [qubitMap!x]
           Tinv x         -> CallGate "tdg" [] [qubitMap!x]
           CNOT x y       -> CXGate (qubitMap!x) (qubitMap!y)
+          CZ x y         -> CallGate "cz" [] [qubitMap!x, qubitMap!y]
           Swap x y       -> CallGate "swap" [] [qubitMap!x, qubitMap!y]
           Uninterp "barrier" xs -> BarrierGate $ map (qubitMap!) xs
           Uninterp id xs        -> gateMap!id $ map (qubitMap!) xs
@@ -625,6 +628,17 @@ regify y subs x = case Map.lookup x subs of
   Nothing -> Var x
   Just i  -> Offset y i
 
+isValidIDChar :: Char -> Bool
+isValidIDChar c = isAlpha c || isDigit c || c == '_'
+
+validate :: ID -> ID
+validate [] = []
+validate (x:xs)
+  | isAlpha x = foldr go [] (x:xs)
+  | otherwise = "q" ++ foldr go [] (x:xs)
+  where go x acc | isValidIDChar x = x:acc
+                 | otherwise       = acc
+
 qcGateToQASM :: (ID -> Arg) -> DotQC.Gate -> [UExp]
 qcGateToQASM sub (DotQC.Gate g i p) =
   let circ = case (g, p) of
@@ -666,9 +680,11 @@ qcGateToQASM sub (DotQC.ParamGate g i theta p) =
 qcGatesToQASM :: Map ID Int -> [DotQC.Gate] -> [UExp]
 qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
-fromDotQC :: DotQC -> QASM
-fromDotQC dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
+fromDotQC :: String -> DotQC -> QASM
+fromDotQC mainName dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
   stmts = map go $ DotQC.decls dotqc
-  go (DotQC.Decl name loc body) = DecStmt $ GateDec name [] (glob ++ loc) (convert body)
-  glob = DotQC.qubits dotqc
-  convert = concatMap (qcGateToQASM Var)
+  go (DotQC.Decl name loc body)
+    | name == "main" = DecStmt $ GateDec (validate mainName) [] (glob ++ map validate loc) (convert body)
+    | otherwise      = DecStmt $ GateDec (validate name) [] (glob ++ map validate loc) (convert body)
+  glob = map validate $ DotQC.qubits dotqc
+  convert = concatMap (qcGateToQASM $ Var . validate)

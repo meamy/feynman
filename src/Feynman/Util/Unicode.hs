@@ -35,12 +35,17 @@ module Feynman.Util.Unicode(
   delta,
   zeta,
   omega,
-  pi
+  pi,
+  ulambda,
+  bullet,
+  star,
+  setUTF8
   ) where
 
 import Prelude hiding (and, sum, pi)
 
 import Data.FastDigits
+import System.IO
 
 {-------------------------------
  Sub & super scripts
@@ -103,11 +108,11 @@ sup s j = s ++ supscript j
 
 -- | Build a ket from a string
 ket :: String -> String
-ket s = "|" ++ s ++ langle
+ket s = "|" ++ s ++ rangle
 
 -- | Build a bra from a string
 bra :: String -> String
-bra s = rangle ++ s ++ "|"
+bra s = langle ++ s ++ "|"
 
 {------------------------------
  Constants
@@ -123,13 +128,13 @@ and :: String
 and = "\x22C0"
 
 mapsto :: String
-mapsto = "\x27FC"
+mapsto = "\x21A6" -- or "\x27FC"
 
 langle :: String
-langle = "\x27E9"
+langle = "\x27E8"
 
 rangle :: String
-rangle = "\x27E8"
+rangle = "\x27E9"
 
 sum :: String
 sum = "\x03A3" -- or "\x2211"
@@ -175,3 +180,20 @@ omega = "\x03C9"
 
 pi :: String
 pi = "\x03C0"
+
+ulambda :: String
+ulambda = "\x039B"
+
+bullet :: String
+bullet = "\x2022"
+
+star :: String
+star = "\x2605"
+
+{------------------------------
+ Utilities
+ ------------------------------}
+-- | Sets output encoding explicitly to UTF8
+--
+--   Note: for utf8 support in Windows
+setUTF8 () = hSetEncoding stdout utf8

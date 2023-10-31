@@ -1,8 +1,11 @@
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 {-|
 Module      : Multilinear
@@ -17,12 +20,16 @@ multiplicative and additive "parity" basis.
 -}
 
 module Feynman.Algebra.Polynomial.Multilinear(
-  Monomial,
+  Monomial(..),
+  PowerProduct,
+  Parity,
   Multilinear,
   PhasePolynomial,
   PseudoBoolean,
   SBool,
+  monomial,
   coefficients,
+  support,
   toTermList,
   vars,
   getConstant,
@@ -35,6 +42,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   ofMonomial,
   ofTerm,
   ofTermList,
+  asVar,
   scale,
   divVar,
   quotVar,
@@ -46,10 +54,12 @@ module Feynman.Algebra.Polynomial.Multilinear(
   castMaybe,
   collectBy,
   collectVar,
+  collectVars,
   rename,
   renameMonotonic,
   subst,
   substMany,
+  substMonomial,
   solveForX,
   allSolutions,
   getSolution,
@@ -106,21 +116,27 @@ instance ReprC 'Mult where
          of monomials generic so that we can implement monomials with, e.g.,
          int sets for different variable classes -}
 
--- | Monomials with graded lexicographic (grevlex) order
+-- | Monomials with lexicographic order
 newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 
+type PowerProduct v = Monomial v 'Mult
+type Parity v       = Monomial v 'Add
+
+-- Note: this is NOT a monomial order with respect to multilinear monomials
 instance Ord v => Ord (Monomial v repr) where
   {-# INLINABLE compare #-}
-  compare m n
-    | k /= l    = compare k l
-    | otherwise = compare (getVars m) (getVars n)
-    where k = degree m
-          l = degree n
+  compare m n = compare mvars nvars
+    where mvars = Set.toDescList $ getVars m
+          nvars = Set.toDescList $ getVars n
 
 instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
   degree = Set.size . getVars
 
+instance Ord v => Vars (Monomial v repr) where
+  type Var (Monomial v repr) = v
+  {-# INLINABLE vars #-}
+  vars = getVars
 
 showImpl :: Show v => ReprWit repr -> Monomial v repr -> String
 showImpl WitAdd  = intercalate Unicode.oplus . map show . Set.toList . getVars
@@ -169,9 +185,14 @@ instance (Show v, Eq r, Num r, Show r, ReprC repr) => Show (Multilinear v r repr
             | otherwise        = show coeff ++ show mono
 
 instance Degree (Multilinear v r repr) where
-  degree (M t) = case Map.lookupMax t of
-    Nothing      -> -1
-    Just (m, _a) -> degree m
+  degree poly = case support poly of
+    [] -> -1
+    xs -> maximum . map degree $ xs
+
+instance Ord v => Vars (Multilinear v r repr) where
+  type Var (Multilinear v r repr) = v
+  {-# INLINABLE vars #-}
+  vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
 
 instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   (+) = \p -> normalize . addM p
@@ -183,7 +204,7 @@ instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   fromInteger i = M . Map.singleton (Monomial Set.empty) $ fromInteger i
 
 instance (Ord v, Eq r, Abelian r, ReprC repr) => Abelian (Multilinear v r repr) where
-  power i = M . Map.map (power i) . getTerms
+  power i = normalize . M . Map.map (power i) . getTerms
 
 instance (Ord v, Eq r, Periodic r, ReprC repr) => Periodic (Multilinear v r repr) where
   order = Map.foldr (\a -> lcm (order a)) 1 . getTerms
@@ -197,13 +218,13 @@ instance (Ord v, IsString v, Eq r, Num r, ReprC repr) => IsString (Multilinear v
 coefficients :: Multilinear v r repr -> [r]
 coefficients = Map.elems . getTerms
 
+-- | Get the support in grevlex order
+support :: Multilinear v r repr -> [Monomial v repr]
+support = Map.keys . getTerms
+
 -- | Get the terms in grevlex order
 toTermList :: Multilinear v r repr -> [(r, Monomial v repr)]
 toTermList = map swap . Map.toList . getTerms
-
--- | Get a list of variables contained in the polynomial
-vars :: Ord v => Multilinear v r repr -> Set v
-vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
 
 -- | Retrieve the constant term
 getConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> r
@@ -226,6 +247,14 @@ isConst = (== [Monomial Set.empty]) . Map.keys . getTerms
 -- | Check if a variable is used in the polynomial
 contains :: Ord v => v -> Multilinear v r repr -> Bool
 contains v = any (Set.member v . getVars) . Map.keys . getTerms
+
+{- Special forms -}
+
+-- | Check if the polynomial is of the form /v/ for some variable /v/
+asVar :: (Eq r, Num r) => Multilinear v r repr -> Maybe v
+asVar p = case map (Set.toList . getVars . snd) . filter ((1 ==) . fst) $ toTermList p of
+  ([v]):[]  -> Just v
+  otherwise -> Nothing
 
 {- Constructors -}
 
@@ -278,13 +307,20 @@ multM wit p q = case wit of
   WitAdd  -> error "Error: multiplying additive phase polynomials"
   WitMult -> multImpl p q
 
+-- Note on implementation: with a monomial order we wouldn't need the
+-- intermediate sorting step, but multilinear monomials appear to
+-- hence no valid monomial order over <>. This version maintains
+-- some efficiency since most of the time the terms will already
+-- be sorted. Can drop it when we do have a monomial order.
 multImpl :: (Ord v, Eq r, Num r) =>
             Multilinear v r 'Mult -> Multilinear v r 'Mult -> Multilinear v r 'Mult
 multImpl p
   | p == 0           = \_ -> 0
   | otherwise        = Map.foldrWithKey (\m a acc -> addM acc $ multTerm m a) zero . getTerms
-  where multTerm m a = M . Map.fromAscList . sumUp . groupMono . multBy m a . Map.toAscList $ tms
+  where multTerm m a = M . Map.fromAscList . process m a . Map.toAscList $ tms
+        process m a  = sumUp . groupMono . sortMono . multBy m a
         multBy m a   = map $ \(m',a') -> (m<>m', a*a')
+        sortMono     = sortBy $ \(m,a) (m',a') -> compare m m'
         groupMono    = groupBy (\t t' -> fst t == fst t')
         sumUp        = map $ foldr1 (\(m,a) (_,a') -> (m,a+a'))
         tms          = getTerms p
@@ -356,7 +392,11 @@ collectBy f = M . Map.filterWithKey (curry $ f . swap) . getTerms
 -- | Collects the terms of a polynomial containing a particular variable
 collectVar :: Ord v => v -> Multilinear v r repr -> Multilinear v r repr
 collectVar v = collectBy (\(_a, m) -> Set.member v $ getVars m)
-  
+
+-- | Collects the terms of a polynomial containing a set of variables
+collectVars :: Ord v => Set v -> Multilinear v r repr -> Multilinear v r repr
+collectVars s = collectBy (\(_a, m) -> (getVars m) `Set.isSubsetOf` s)
+
 {- Substitutions -}
 
 -- | Rename variables according to a variable map
@@ -376,10 +416,18 @@ substMany :: (Ord v, Eq r, Abelian r) => (v -> SBool v) -> Multilinear v r 'Mult
 substMany sub = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substInMono m a) zero . getTerms
   where substInMono m a = distribute a $ foldr (multImpl) one (map sub . Set.toList $ getVars m)
 
+-- | Substitute a (Boolean, multiplicative) monomial with a (Boolean) polynomial
+substMonomial :: (Ord v, Eq r, Abelian r) => [v] -> SBool v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+substMonomial xs p = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substMonoInMono m a) zero . getTerms
+  where m = Set.fromList xs
+        substMonoInMono m' a
+          | not (m `Set.isSubsetOf` (getVars m')) = ofTerm (a,m')
+          | otherwise = distribute a $ p * ofMonomial (Monomial $ Set.difference (getVars m') m)
+
 -- | Substitute a variable with a monomial
-substMono :: (Ord v, Eq r, Num r, ReprC repr) =>
+substVarMono :: (Ord v, Eq r, Num r, ReprC repr) =>
              v -> Monomial v repr -> Multilinear v r repr -> Multilinear v r repr
-substMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
+substVarMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
   where substVar v' acc
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
@@ -435,7 +483,7 @@ unDistribute a' = go a' . Set.toList . getVars
           let recTerm = go (negate $ divTwo a) $ x:xs
               sub     = Monomial $ Set.fromList [x, y]
           in
-            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substMono x sub recTerm
+            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substVarMono x sub recTerm
 
 -- | Non-recursive exclusion-inclusion formula
 excInc :: (Ord v, Eq r, Dyadic r) => Monomial v 'Mult -> Multilinear v r 'Add
@@ -476,36 +524,40 @@ invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
 canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Add
 canonicalize = fourier . invFourier
 
-{- Constants, for testing
+-- Constants, for testing
 
 newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
 
 instance Show IVar where
   show (IVar (x, i)) = Unicode.sub x i
 
-x0 = ofVar (IVar ("x",0)) :: Multilinear IVar DyadicRational 'Mult
-x1 = ofVar (IVar ("x",1)) :: Multilinear IVar DyadicRational 'Mult
-x2 = ofVar (IVar ("x",2)) :: Multilinear IVar DyadicRational 'Mult
-x3 = ofVar (IVar ("x",3)) :: Multilinear IVar DyadicRational 'Mult
-x4 = ofVar (IVar ("x",4)) :: Multilinear IVar DyadicRational 'Mult
-x5 = ofVar (IVar ("x",5)) :: Multilinear IVar DyadicRational 'Mult
-x6 = ofVar (IVar ("x",6)) :: Multilinear IVar DyadicRational 'Mult
-x7 = ofVar (IVar ("x",7)) :: Multilinear IVar DyadicRational 'Mult
-x8 = ofVar (IVar ("x",8)) :: Multilinear IVar DyadicRational 'Mult
-x9 = ofVar (IVar ("x",9)) :: Multilinear IVar DyadicRational 'Mult
+x0 = ofVar (IVar ("x",0)) :: SBool IVar
+x1 = ofVar (IVar ("x",1)) :: SBool IVar
+x2 = ofVar (IVar ("x",2)) :: SBool IVar
+x3 = ofVar (IVar ("x",3)) :: SBool IVar
+x4 = ofVar (IVar ("x",4)) :: SBool IVar
+x5 = ofVar (IVar ("x",5)) :: SBool IVar
+x6 = ofVar (IVar ("x",6)) :: SBool IVar
+x7 = ofVar (IVar ("x",7)) :: SBool IVar
+x8 = ofVar (IVar ("x",8)) :: SBool IVar
+x9 = ofVar (IVar ("x",9)) :: SBool IVar
 
-y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DyadicRational 'Add
-y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DyadicRational 'Add
-y2 = ofVar (IVar ("y",2)) :: Multilinear IVar DyadicRational 'Add
-y3 = ofVar (IVar ("y",3)) :: Multilinear IVar DyadicRational 'Add
-y4 = ofVar (IVar ("y",4)) :: Multilinear IVar DyadicRational 'Add
-y5 = ofVar (IVar ("y",5)) :: Multilinear IVar DyadicRational 'Add
-y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DyadicRational 'Add
-y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DyadicRational 'Add
-y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DyadicRational 'Add
-y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DyadicRational 'Add
+y0 = ofVar (IVar ("y",0)) :: Multilinear IVar DMod2 'Mult
+y1 = ofVar (IVar ("y",1)) :: Multilinear IVar DMod2 'Mult
+y2 = ofVar (IVar ("y",2)) :: Multilinear IVar DMod2 'Mult
+y3 = ofVar (IVar ("y",3)) :: Multilinear IVar DMod2 'Mult
+y4 = ofVar (IVar ("y",4)) :: Multilinear IVar DMod2 'Mult
+y5 = ofVar (IVar ("y",5)) :: Multilinear IVar DMod2 'Mult
+y6 = ofVar (IVar ("y",6)) :: Multilinear IVar DMod2 'Mult
+y7 = ofVar (IVar ("y",7)) :: Multilinear IVar DMod2 'Mult
+y8 = ofVar (IVar ("y",8)) :: Multilinear IVar DMod2 'Mult
+y9 = ofVar (IVar ("y",9)) :: Multilinear IVar DMod2 'Mult
 
-y1234 :: Multilinear IVar DMod2 'Add
-y1234 = ofTerm (dMod2 1 2, Monomial $ Set.fromList xs)
-  where xs = [IVar ("y", 1), IVar ("y", 2), IVar ("y", 3), IVar ("y", 4)]
--}
+powerSet :: [a] -> [[a]]
+powerSet []     = [[]]
+powerSet (x:xs) = [x:ps | ps <- powerSet xs] ++ powerSet xs
+
+allPolynomials :: (Ord v, Eq r, Abelian r) => [Multilinear v r 'Mult] -> [Multilinear v r 'Mult]
+allPolynomials = polynomials . monomials where
+  monomials = map (foldr (*) 1) . powerSet
+  polynomials = map (foldr (+) 0) . powerSet
