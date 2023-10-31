@@ -790,6 +790,33 @@ sameSpace a b =
   in
     all solveA b && all solveB a
 
+{- Lempel's factorization algorithm -}
+{-
+lempel :: F2Mat -> F2Mat
+lempel mat = go mat where
+  target = rank $ multT mat (transpose mat)
+
+  findDependent mat =
+    let (mat', _) = runWriter . toReducedEchelon $ transpose mat in
+      case find (\bv -> x > 0 && x < (m mat) where x = wt bv) $ toList mat' of
+        Just bv' -> bv'
+        Nothing  -> error "No non-constant vectors in null space!"
+
+  findIndices bv = (
+
+  go mat
+    | m mat == target = mat
+    | otherwise       = do
+        let y = findDependent mat
+        let (mat', y') = case (wt y) `mod` 2 of
+              0 -> (mat, y)
+              1 -> (resizeMat (m mat + 1) (n mat), oneExtend y)
+        let (a,b) = findIndices y'
+        let z     = (row mat' a) + (row mat' b)
+        let mat'' = add mat (multT (fromVec z) (transpose $ fromVec y'))
+        return $ fromList . snd . unzip . filter (\(i,v) -> i /= a && i /= b) . zip [0..] $ toList mat'
+-}
+
 {- Testing -}
 rowRange = (10, 100)
 colRange = (10, 100)
