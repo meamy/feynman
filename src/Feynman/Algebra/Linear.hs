@@ -24,6 +24,8 @@ import qualified Data.BitVector as BitVector
 
 import Test.QuickCheck hiding ((.&.))
 
+import Debug.Trace
+
 {- Finite products of GF(2), convenience type to redefine show & num -}
 newtype F2Vec = F2Vec { getBV :: BitVector.BV } deriving (Eq, Ord, Bits)
 
@@ -41,6 +43,9 @@ bitI n i = coerce $ BitVector.bitVec n (shift 1 i :: Integer)
 
 zeroExtend :: Integral a => a -> F2Vec -> F2Vec
 zeroExtend i v = coerce $ BitVector.zeroExtend i (coerce v)
+
+oneExtend :: Integral a => a -> F2Vec -> F2Vec
+oneExtend i = fromBits . ((replicate (fromIntegral i) True) ++) . toBits
 
 width :: F2Vec -> Int
 width = coerce BitVector.width
@@ -91,6 +96,9 @@ instance Show F2Mat where
 {- Constructors -}
 identity :: Int -> F2Mat
 identity n = F2Mat n n $ map (\i -> shift (bitVec n 1) i) [0..n-1]
+
+augment :: F2Mat -> F2Mat
+augment (F2Mat m n vals) = fromList $ vals ++ (toList $ identity n)
 
 {- Conversions -}
 resizeMat :: Int -> Int -> F2Mat -> F2Mat
@@ -783,6 +791,16 @@ findDependent a =
   in
     msum $ map f (zip [0..] (vals mat))
 
+nullspaceBasis :: F2Mat -> [F2Vec]
+nullspaceBasis mat@(F2Mat m n vals) =
+  let (mat', _) = runWriter . toEchelon . transpose . augment $ mat
+      segs      = map (\bv -> (bv@@(m-1,0), bv@@(m+n-1,m))) $ toList mat'
+      f (x, y)  = if bitVec 0 m == x
+                       then [y]
+                       else []
+  in
+    concat $ map f segs
+
 addIndependent :: [F2Vec] -> (Int, [F2Vec])
 addIndependent a =
   let (F2Mat m n vals) = increaseRankInd $ fromList a in
@@ -796,31 +814,36 @@ sameSpace a b =
     all solveA b && all solveB a
 
 {- Lempel's factorization algorithm -}
-{-
 lempel :: F2Mat -> F2Mat
 lempel mat = go mat where
-  target = rank $ multT mat (transpose mat)
+  s      = multT mat (transpose mat)
+  r      = rank s
+  target = r + (if all (\i -> index s i i == False) [0..(m s)-1] then 1 else 0)
 
   findDependent mat =
-    let (mat', _) = runWriter . toReducedEchelon $ transpose mat in
-      case find (\bv -> x > 0 && x < (m mat) where x = wt bv) $ toList mat' of
+    let vecs = nullspaceBasis $ transpose mat in
+      case find (\bv -> let x = wt bv in x > 0 && x < (m mat)) vecs of
         Just bv' -> bv'
         Nothing  -> error "No non-constant vectors in null space!"
 
-  findIndices bv = (
+  findIndices bv =
+    let bits = reverse $ toBits bv in
+      case (findIndex (== False) bits, findIndex (== True) bits) of
+        (Just a, Just b) -> (a,b)
+        _                -> error "Vector is constant!"
 
   go mat
+    | r == 0          = fromList [bitVec (n mat) 0]
     | m mat == target = mat
     | otherwise       = do
         let y = findDependent mat
         let (mat', y') = case (wt y) `mod` 2 of
               0 -> (mat, y)
-              1 -> (resizeMat (m mat + 1) (n mat), oneExtend y)
+              1 -> (resizeMat (m mat + 1) (n mat) mat, oneExtend 1 y)
         let (a,b) = findIndices y'
         let z     = (row mat' a) + (row mat' b)
-        let mat'' = add mat (multT (fromVec z) (transpose $ fromVec y'))
-        return $ fromList . snd . unzip . filter (\(i,v) -> i /= a && i /= b) . zip [0..] $ toList mat'
--}
+        let mat'' = add mat' (multT (fromVec z) (transpose $ fromVec y'))
+        go $ fromList . snd . unzip . filter (\(i,v) -> i /= a && i /= b) . zip [0..] $ toList mat''
 
 {- Testing -}
 rowRange = (10, 100)

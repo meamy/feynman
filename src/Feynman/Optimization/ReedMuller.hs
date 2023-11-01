@@ -55,7 +55,7 @@ optimizePP :: Int -> PhasePoly -> PhasePoly
 optimizePP k pp =
   let maxflat      = maximalkFlat k . Map.keys . Map.filter tphase $ pp
       allflat      = filter (/= 0) $ completeFlat maxflat 
-      pp'          = Map.fromList $ zip allflat (repeat $ Discrete (dyadic 7 3))
+      pp'          = Map.fromList $ zip allflat (repeat $ Discrete (dMod2 7 3))
       add          = Map.unionWith (+)
       tphase theta = order theta >= 8
   in
@@ -105,4 +105,4 @@ checkMod8 (x:xs) = all go $ allVecs (width x) where
   parity v v' = popCount (v .&. v') `mod` 2
 
 testPoly :: PhasePoly
-testPoly = Map.fromList $ zip (allVecs 4) (repeat $ Discrete (dyadic 1 3))
+testPoly = Map.fromList $ zip (allVecs 4) (repeat $ Discrete (dMod2 1 3))
