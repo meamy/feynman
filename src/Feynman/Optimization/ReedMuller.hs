@@ -39,7 +39,7 @@ import Feynman.Synthesis.Reversible
 --
 -- Conjecture: Codewords of RM(n-4, n) are natively in C(n)
 
-type PhasePoly = Map F2Vec Angle
+type PhasePoly a = Map F2Vec a
 
 maximalkFlat :: Int -> [F2Vec] -> [F2Vec]
 maximalkFlat k xs = maximumBy' (comparing length) . map go . choose k $ xs where
@@ -54,7 +54,7 @@ completeFlat xs = foldr go [] (vals mat) where
   go v acc = if popCount v > 0 then acc ++ map (`xor` v) acc else acc
 
 -- k-flat based optimization
-optimizePP :: Int -> PhasePoly -> PhasePoly
+optimizePP :: Int -> PhasePoly Angle -> PhasePoly Angle
 optimizePP k pp =
   let maxflat      = maximalkFlat k . Map.keys . Map.filter tphase $ pp
       allflat      = filter (/= 0) $ completeFlat maxflat 
@@ -68,15 +68,34 @@ optimizePP k pp =
 
 {-- TOOL/TODD based optimizations -}
 
-pack :: Map F2Vec DMod2 -> PhasePolynomial String DMod2
-pack = ofTermList . map (swap . go) . Map.toList where
+packPP :: PhasePoly DMod2 -> PhasePolynomial String DMod2
+packPP = ofTermList . map (swap . go) . Map.toList where
   go (bv, angle) = (packBV bv, angle)
   packBV = monomial . concatMap (\(i,b) -> if b then [("x" ++ show i)] else []) . zip [0..] . toBits
 
-unpack :: Int -> PhasePolynomial String DMod2 -> Map F2Vec DMod2
-unpack d = Map.fromList . map (go . swap) . toTermList where
+unpackPP :: Int -> PhasePolynomial String DMod2 -> PhasePoly DMod2
+unpackPP d = Map.fromList . map (go . swap) . toTermList where
   go (m, a) = (unpackM m, a)
   unpackM m = fromBits $ map (\i -> if ("x" ++ show i) `elem` vars m then True else False) [0..d-1]
+
+splitPP :: PhasePoly Angle -> (PhasePoly DMod2, PhasePoly Double)
+splitPP = Map.mapEither f where
+  f (Discrete d)   = Left d
+  f (Continuous r) = Right r
+
+recombinePP :: (PhasePoly DMod2, PhasePoly Double) -> PhasePoly Angle
+recombinePP (a,b) = Map.union (Map.map Discrete a) (Map.map Continuous b)
+
+invFourierBV :: F2Vec -> PhasePoly DyadicRational
+invFourierBV = Map.fromList . map (\bv -> (bv, dyadic ((-2)^(wt bv - 1)) 0)) . subsets where
+  subsets = filter (/= 0) . map fromBits . go . toBits
+  go []        = [[]]
+  go (True:xs) = let rest = go xs in (map (False:) rest) ++ (map (True:) rest)
+  go (_:xs)    = map (False:) $ go xs
+
+invFourierPP :: PhasePoly DMod2 -> PhasePoly DMod2
+invFourierPP = Map.filter (/= 0) . Map.map fromDyadic . foldr (Map.unionWith (+)) Map.empty . go
+  where go = map (\(bv,a) -> Map.map (* (unpack a)) $ invFourierBV bv) . Map.toList
 
 -- TOOL optimization
 --
@@ -88,19 +107,29 @@ unpack d = Map.fromList . map (go . swap) . toTermList where
 -- 6. Synthesize terms containing y and remove from poly
 -- 7. Go to step 4
 {-
-toolOptimize :: PhasePoly -> PhasePoly
-toolOptimize pp = do
-  let 
-  let maxflat      = maximalkFlat k . Map.keys . Map.filter tphase $ pp
-      allflat      = filter (/= 0) $ completeFlat maxflat 
-      pp'          = Map.fromList $ zip allflat (repeat $ Discrete (dMod2 7 3))
-      add          = Map.unionWith (+)
-      tphase theta = order theta >= 8
-  in
-    case length maxflat >= (1 `shiftL` (k-1)) of
-      False -> pp
-      True  -> optimizePP k (add pp pp')
--}
+toolOptimize :: PhasePoly Angle -> PhasePoly Angle
+toolOptimize pp = recombine (pd', pc) where
+  d        = maximum . map width . Map.keys $ pp
+  (pd, pc) = splitPP pp
+  pd'      = unpackPP d . go . invFourier . packPP $ pd
+
+  go :: PseudoBoolean DMod2 -> PhasePolynomial DMod2
+  go pp
+    | isConst pp = constant $ getConstant pp
+    | otherwise  =
+      let v      = head $ vars pp -- Change to dominant variable eventually
+          f0     = quotVar v pp
+          f0Impl = packPP . lempel . unpackPP d . fourier $ f0
+          
+
+toolSynth :: PseudoBoolean DMod2 -> PhasePolynomial DMod2
+toolSynth pp
+  | isConst pp = constant $ getConstant pp
+  | otherwise  =
+    let v      = head $ vars pp -- Change to dominant variable eventually
+        f0     = quotVar v pp
+        f0Impl = packPP . lempel . unpackPP d . fourier $ f0
+-}       
 
 rmWrap :: Synthesizer -> Synthesizer
 rmWrap synth = synth' where
@@ -143,5 +172,5 @@ checkMod8 (x:xs) = all go $ allVecs (width x) where
   go v        = foldr (+) 0 (map (parity v) $ x:xs) `mod` 8 == 0
   parity v v' = popCount (v .&. v') `mod` 2
 
-testPoly :: PhasePoly
-testPoly = Map.fromList $ zip (allVecs 4) (repeat $ Discrete (dMod2 1 3))
+testPoly :: PhasePoly Angle
+testPoly = Map.fromList $ zip (allVecs 4) (repeat $ Discrete (dMod2 1 2))
