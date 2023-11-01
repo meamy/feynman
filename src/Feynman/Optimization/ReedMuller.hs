@@ -2,14 +2,17 @@ module Feynman.Optimization.ReedMuller where
 
 import Data.List
 import Data.Ord
+import Data.Tuple
 import Data.Bits
 import Data.Map (Map)
 import qualified Data.Map as Map
+
 import Control.Monad.Writer
 
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
+import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Synthesis.Reversible
 
 {-- Reed-Muller decoding -}
@@ -50,7 +53,7 @@ completeFlat xs = foldr go [] (vals mat) where
   go v []  = [v]
   go v acc = if popCount v > 0 then acc ++ map (`xor` v) acc else acc
 
--- Main optimization method
+-- k-flat based optimization
 optimizePP :: Int -> PhasePoly -> PhasePoly
 optimizePP k pp =
   let maxflat      = maximalkFlat k . Map.keys . Map.filter tphase $ pp
@@ -62,6 +65,42 @@ optimizePP k pp =
     case length maxflat >= (1 `shiftL` (k-1)) of
       False -> pp
       True  -> optimizePP k (add pp pp')
+
+{-- TOOL/TODD based optimizations -}
+
+pack :: Map F2Vec DMod2 -> PhasePolynomial String DMod2
+pack = ofTermList . map (swap . go) . Map.toList where
+  go (bv, angle) = (packBV bv, angle)
+  packBV = monomial . concatMap (\(i,b) -> if b then [("x" ++ show i)] else []) . zip [0..] . toBits
+
+unpack :: Int -> PhasePolynomial String DMod2 -> Map F2Vec DMod2
+unpack d = Map.fromList . map (go . swap) . toTermList where
+  go (m, a) = (unpackM m, a)
+  unpackM m = fromBits $ map (\i -> if ("x" ++ show i) `elem` vars m then True else False) [0..d-1]
+
+-- TOOL optimization
+--
+-- 1. Split into discrete parts
+-- 2. Convert to multiplicative poly
+-- 3. Reduce to third order parts
+-- 4. Factor as yf_0 + f_1
+-- 5. Minimize Fourier expansion of f_0 via Lempel's algorithm
+-- 6. Synthesize terms containing y and remove from poly
+-- 7. Go to step 4
+{-
+toolOptimize :: PhasePoly -> PhasePoly
+toolOptimize pp = do
+  let 
+  let maxflat      = maximalkFlat k . Map.keys . Map.filter tphase $ pp
+      allflat      = filter (/= 0) $ completeFlat maxflat 
+      pp'          = Map.fromList $ zip allflat (repeat $ Discrete (dMod2 7 3))
+      add          = Map.unionWith (+)
+      tphase theta = order theta >= 8
+  in
+    case length maxflat >= (1 `shiftL` (k-1)) of
+      False -> pp
+      True  -> optimizePP k (add pp pp')
+-}
 
 rmWrap :: Synthesizer -> Synthesizer
 rmWrap synth = synth' where
