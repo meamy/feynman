@@ -188,17 +188,16 @@ toolSynth d pp = go pp [0..d-1] where
       addPP poly $ go (addPP f0' f1) xs
 
 -- Expands a third-order multiplicative polynomial
-toolSliceSynth :: Int -> PhasePoly DMod2 -> PhasePoly DMod2
-toolSliceSynth d pp = go pp [0..d-1] where
+toolSliceSynth :: PhasePoly DMod2 -> PhasePoly DMod2
+toolSliceSynth pp = if Map.null pp then Map.empty else go pp [0..d-1] where
+  d            = width . head . Map.keys $ pp
   lempel'      = toList . lempel . fromList
-
   setI i       = (bitI d i +)
-
   cofactor i   = (\(f0,f1) -> (Map.mapKeys (setI i) f0, f1)) . Map.partitionWithKey (\bv a -> bv@.i)
 
   go :: PhasePoly DMod2 -> [Int] -> PhasePoly DMod2
-  go pp []     = fourierPP pp
-  go pp (i:xs) =
+  go pp []         = fourierPP pp
+  go pp (i:xs)     =
     let pp'     = sliceOrder 3 pp
         (f0,f1) = cofactor i pp'
         (c,f0') = (getConstantPP f0, dropConstantPP f0)
@@ -210,9 +209,13 @@ toolSliceSynth d pp = go pp [0..d-1] where
       addPP poly $ go (subPP pp $ invFourierPP poly) xs
 
 rmWrap :: Synthesizer -> Synthesizer
-rmWrap synth = synth' where
-  synth' input output must = synth input output must' where
-    must' = Map.toList . optimizePP 5 . optimizePP 4 . Map.fromList $ must
+rmWrap synth = \input output must -> synth input output (opt must) where
+  opt must = let (pd, pc) = splitPP (Map.fromList must) in
+    Map.toList $ recombinePP (toolSliceSynth $ invFourierPP pd, pc)
+
+rmSynth :: [Phase] -> [Phase]
+rmSynth xs = Map.toList $ recombinePP (toolSliceSynth $ invFourierPP pd, pc) where
+  (pd, pc) = splitPP (Map.fromList xs)
 
 -- Utilities
 choose :: Int -> [a] -> [[a]]

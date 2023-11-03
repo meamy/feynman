@@ -43,14 +43,14 @@ data AnalysisState = SOP {
   dim     :: Int,
   ivals   :: AffineTrans,
   qvals   :: AffineTrans,
-  terms   :: PhasePoly,
+  terms   :: (PhasePoly Angle),
   phase   :: Angle
 } deriving Show
 
 type Analysis = State AnalysisState
 
 data Chunk =
-    CNOTDihedral AffineTrans AffineTrans PhasePoly PhasePoly
+    CNOTDihedral AffineTrans AffineTrans (PhasePoly Angle) (PhasePoly Angle)
   | UninterpGate Primitive
   | GlobalPhase  ID Angle
   deriving Show
@@ -70,7 +70,7 @@ getSt v = get >>= \st ->
  - orphans all terms that are no longer in the linear span of the
  - remaining variable states and assigns the quantified variable
  - a fresh (linearly independent) state -}
-exists :: ID -> AnalysisState -> Analysis (PhasePoly, PhasePoly)
+exists :: ID -> AnalysisState -> Analysis ((PhasePoly Angle), (PhasePoly Angle))
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
       (vecs, cnsts) = unzip avecs
@@ -224,7 +224,8 @@ tpar i o = pushSwaps . gtpar tparMaster i o
 minCNOT = gtpar cnotMinGrayPointed
 
 -- rmOpt: Gray-Synth + RM optimization [AM19]
-rmOpt = \i o -> gtpar (rmWrap cnotMinGrayPointed) i o . postselectAll
+--rmOpt = \i o -> gtpar (rmWrap cnotMinGrayPointed) i o . postselectAll
+rmOpt = \i o -> gtpar (cnotMinGrayPointedWith rmSynth) i o . postselectAll
 
 {- Open synthesis -}
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]

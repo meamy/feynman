@@ -148,6 +148,22 @@ cnotMinGrayPointed input output xs may =
   in
     minimumBy (comparing countc) [result1, result2]
 
+cnotMinGrayPointedWith :: ([Phase] -> [Phase]) -> Synthesizer
+cnotMinGrayPointedWith opt input output [] may = (linearSynth input output, may)
+cnotMinGrayPointedWith opt input output xs may =
+  let ivecs    = Map.toList input
+      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+      f (v, i) = solver v >>= \v' -> Just (v', i)
+  in
+    case mapM f xs of
+      Nothing  -> error "Fatal: something bad happened"
+      Just xs' ->
+        let initPt       = [Pt [0..length ivecs - 1] Nothing Nothing (opt xs')]
+            ((o, []), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt []
+            (g',m')      = addMay input may g
+        in
+          (g' ++ linearSynth o output, m')
+
 -- Compares between open-ended configurations
 cnotMinGrayOpen input xs =
   let gates   = cnotMinGrayOpen0 input xs

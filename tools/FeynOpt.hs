@@ -46,6 +46,7 @@ data Pass = Triv
           | Phasefold
           | Statefold
           | CNOTMin
+          | RMOpt
           | TPar
           | Cliff
           | Decompile
@@ -81,7 +82,8 @@ dotQCPass pass = case pass of
   Simplify  -> simplifyDotQC
   Phasefold -> optimizeDotQC phaseFold
   Statefold -> optimizeDotQC stateFold
-  CNOTMin   -> optimizeDotQC rmOpt
+  CNOTMin   -> optimizeDotQC minCNOT
+  RMOpt     -> optimizeDotQC rmOpt
   TPar      -> optimizeDotQC tpar
   Cliff     -> optimizeDotQC (\_ _ -> simplifyCliffords)
   Decompile -> decompileDotQC
@@ -190,6 +192,7 @@ printHelp = mapM_ putStrLn lines
           "  -statefold\tSlightly more powerful phase folding",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
+          "  -rmopt\tPhase folding + Reed-Muller optimization with Tool from [HC18]",
           "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
           "  -O3\t\tPhase folding + state folding + simplify",
@@ -216,6 +219,7 @@ parseArgs passes verify (x:xs) = case x of
   "-phasefold"   -> parseArgs (Phasefold:Simplify:passes) verify xs
   "-statefold"   -> parseArgs (Statefold:Simplify:passes) verify xs
   "-cnotmin"     -> parseArgs (CNOTMin:Simplify:passes) verify xs
+  "-rmopt"       -> parseArgs (RMOpt:Simplify:passes) verify xs
   "-tpar"        -> parseArgs (TPar:Simplify:passes) verify xs
   "-clifford"    -> parseArgs (Cliff:Simplify:passes) verify xs
   "-decompile"   -> parseArgs (Decompile:passes) verify xs
