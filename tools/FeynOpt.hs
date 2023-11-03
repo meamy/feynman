@@ -169,6 +169,17 @@ runQASM passes verify fname src = do
           qasm'' <- return $ foldr qasmPass qasm' passes
           return (qasm', qasm'')
 
+parseQASM :: String -> IO ()
+parseQASM src = case parseAndPass of
+  Left err        -> putStrLn $ "ERROR: " ++ err
+  Right (qasm, qasm') -> putStrLn $ show qasm
+  where printErr (Left l)  = Left $ show l
+        printErr (Right r) = Right r
+        parseAndPass = do
+          let qasm   = parse . lexer $ src
+          symtab <- check qasm
+          return (qasm, qasm)
+
 {- Main program -}
 
 printHelp :: IO ()
@@ -228,7 +239,7 @@ parseArgs passes verify (x:xs) = case x of
   "Med"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksMedium
   "All"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksAll
   f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
-  f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= runQASM passes verify f
+  f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= parseQASM
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
