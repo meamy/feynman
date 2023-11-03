@@ -87,15 +87,49 @@ recombinePP :: (PhasePoly DMod2, PhasePoly Double) -> PhasePoly Angle
 recombinePP (a,b) = Map.union (Map.map Discrete a) (Map.map Continuous b)
 
 invFourierBV :: F2Vec -> PhasePoly DyadicRational
-invFourierBV = Map.fromList . map (\bv -> (bv, dyadic ((-2)^(wt bv - 1)) 0)) . subsets where
-  subsets = filter (/= 0) . map fromBits . go . toBits
-  go []        = [[]]
-  go (True:xs) = let rest = go xs in (map (False:) rest) ++ (map (True:) rest)
-  go (_:xs)    = map (False:) $ go xs
+invFourierBV = Map.fromList . map (\bv -> (bv, dyadic ((-2)^(wt bv - 1)) 0)) . subsets
+  where subsets = filter (/= 0) . map fromBits . go . toBits
+        go []        = [[]]
+        go (True:xs) = let rest = go xs in (map (False:) rest) ++ (map (True:) rest)
+        go (_:xs)    = map (False:) $ go xs
 
 invFourierPP :: PhasePoly DMod2 -> PhasePoly DMod2
 invFourierPP = Map.filter (/= 0) . Map.map fromDyadic . foldr (Map.unionWith (+)) Map.empty . go
   where go = map (\(bv,a) -> Map.map (* (unpack a)) $ invFourierBV bv) . Map.toList
+
+fourierBV :: F2Vec -> PhasePoly DyadicRational
+fourierBV m = Map.fromList . map (\bv -> (bv, dyadic ((-1)^(wt bv - 1)) (wt m - 1))) $ subsets m
+  where subsets = filter (/= 0) . map fromBits . go . toBits
+        go []        = [[]]
+        go (True:xs) = let rest = go xs in (map (False:) rest) ++ (map (True:) rest)
+        go (_:xs)    = map (False:) $ go xs
+
+fourierPP :: PhasePoly DMod2 -> PhasePoly DMod2
+fourierPP = Map.filter (/= 0) . Map.map fromDyadic . foldr (Map.unionWith (+)) Map.empty . go
+  where go = map (\(bv,a) -> Map.map (* (unpack a)) $ fourierBV bv) . Map.toList
+
+sliceOrder :: Int -> PhasePoly DMod2 -> PhasePoly DMod2
+sliceOrder k = Map.mapMaybeWithKey go where
+  go bv 0 = Nothing
+  go bv 1 = if wt bv == k then Just 1 else Nothing
+  go bv a = case compare (denomExp (unpack a) + wt bv) k of
+    LT -> Nothing
+    EQ -> Just $ dMod2 (numer (unpack a) `mod` 2) (denomExp (unpack a))
+    GT ->
+      let bit = (shiftR (numer $ unpack a) (k - wt bv)) `mod` 2 in
+        if bit == 0 then Nothing else Just $ dMod2 1 (k - wt bv)
+
+addPP :: Num a => PhasePoly a -> PhasePoly a -> PhasePoly a
+addPP = Map.unionWith (+)
+
+subPP :: Num a => PhasePoly a -> PhasePoly a -> PhasePoly a
+subPP = Map.unionWith (-)
+
+getConstantPP :: Num a => PhasePoly a -> a
+getConstantPP = Map.findWithDefault 0 0
+
+dropConstantPP :: Num a => PhasePoly a -> PhasePoly a
+dropConstantPP = Map.delete 0
 
 -- TOOL optimization
 --
@@ -120,7 +154,8 @@ toolOptimize pp = recombine (pd', pc) where
       let v      = head $ vars pp -- Change to dominant variable eventually
           f0     = quotVar v pp
           f0Impl = packPP . lempel . unpackPP d . fourier $ f0
-          
+
+
 
 toolSynth :: PseudoBoolean DMod2 -> PhasePolynomial DMod2
 toolSynth pp
@@ -129,7 +164,50 @@ toolSynth pp
     let v      = head $ vars pp -- Change to dominant variable eventually
         f0     = quotVar v pp
         f0Impl = packPP . lempel . unpackPP d . fourier $ f0
--}       
+-}
+
+-- Expands a third-order multiplicative polynomial
+toolSynth :: Int -> PhasePoly DMod2 -> PhasePoly DMod2
+toolSynth d pp = go pp [0..d-1] where
+  lempel'      = toList . lempel . fromList
+
+  setI i       = (bitI d i +)
+
+  cofactor i   = (\(f0,f1) -> (Map.mapKeys (setI i) f0, f1)) . Map.partitionWithKey (\bv a -> bv@.i)
+
+  go :: PhasePoly DMod2 -> [Int] -> PhasePoly DMod2
+  go _ []      = Map.empty
+  go pp (i:xs) =
+    let (f0,f1) = cofactor i pp
+        (c,f0') = (getConstantPP f0, dropConstantPP f0)
+        f0Imp   = Map.fromList . flip zip (repeat $ dMod2 1 1) . lempel' . Map.keys $ fourierPP f0'
+        poly    = Map.insert (bitI d i) (c + dMod2 (toInteger $ Map.size f0Imp) 2) $
+                  Map.mapKeys (setI i) $
+                  Map.map (negate) f0Imp
+    in
+      addPP poly $ go (addPP f0' f1) xs
+
+-- Expands a third-order multiplicative polynomial
+toolSliceSynth :: Int -> PhasePoly DMod2 -> PhasePoly DMod2
+toolSliceSynth d pp = go pp [0..d-1] where
+  lempel'      = toList . lempel . fromList
+
+  setI i       = (bitI d i +)
+
+  cofactor i   = (\(f0,f1) -> (Map.mapKeys (setI i) f0, f1)) . Map.partitionWithKey (\bv a -> bv@.i)
+
+  go :: PhasePoly DMod2 -> [Int] -> PhasePoly DMod2
+  go pp []     = fourierPP pp
+  go pp (i:xs) =
+    let pp'     = sliceOrder 3 pp
+        (f0,f1) = cofactor i pp'
+        (c,f0') = (getConstantPP f0, dropConstantPP f0)
+        f0Imp   = Map.fromList . flip zip (repeat $ dMod2 1 1) . lempel' . Map.keys $ fourierPP f0'
+        poly    = Map.insert (bitI d i) (c + dMod2 (toInteger $ Map.size f0Imp) 2) $
+                  Map.mapKeys (setI i) $
+                  Map.map (negate) f0Imp
+    in
+      addPP poly $ go (subPP pp $ invFourierPP poly) xs
 
 rmWrap :: Synthesizer -> Synthesizer
 rmWrap synth = synth' where
@@ -172,5 +250,5 @@ checkMod8 (x:xs) = all go $ allVecs (width x) where
   go v        = foldr (+) 0 (map (parity v) $ x:xs) `mod` 8 == 0
   parity v v' = popCount (v .&. v') `mod` 2
 
-testPoly :: PhasePoly Angle
-testPoly = Map.fromList $ zip (allVecs 4) (repeat $ Discrete (dMod2 1 2))
+testPoly :: PhasePoly DMod2
+testPoly = Map.fromList $ zip [bitVec 4 i | i <- [1..14]] (repeat $ dMod2 1 2)
