@@ -431,7 +431,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToStmts stmts =
           let (gates, gateMap, qubitMap) = foldl' stmtToGate ([], Map.empty, Map.empty) stmts
               vars                       = ids gates
-              gates'                     = opt vars [] (reverse gates)
+              gates'                     = opt vars vars (reverse gates)
           in
             map (gateToStmt (gateMap, qubitMap)) gates'
 
@@ -439,7 +439,7 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToUExps inp uexps =
           let (gates, gateMap, qubitMap) = foldl' uexpToGate ([], Map.empty, Map.empty) uexps
               vars                       = ids gates
-              gates'                     = opt vars inp (reverse gates)
+              gates'                     = opt vars vars (reverse gates)
           in
             map (gateToUExp (gateMap, qubitMap)) gates'
 
