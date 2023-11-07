@@ -342,7 +342,7 @@ applyReductions = do
   paths    <- gets $ Map.keys . quad
   poly     <- gets computePP
   state    <- gets $ map toPolynomial . Map.elems . ket
-  let eqns = generateEquationsRandom $ PathState paths poly state
+  let eqns = concat [generateEquationsRandom $ PathState paths poly state | i <- [0..5]]
   subs     <- canonicalSubs . nub . filter ((1 >=) . degree) $ eqns
   mapM_ (\(v, sub) -> substVar v sub) subs
   return ()
