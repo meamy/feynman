@@ -8,6 +8,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Data.Bits
+import Data.Ratio
 
 import Feynman.Core
 import Feynman.Algebra.Base
@@ -18,6 +19,8 @@ import qualified Feynman.Algebra.Polynomial.Multilinear as P
 import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
+
+import Debug.Trace (trace)
 
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
@@ -30,7 +33,7 @@ data Ctx = Ctx {
   ket   :: Map ID (SBool String),
   terms :: Map (SBool String) (Set (Loc, FF2), Angle),
   phase :: Angle,
-  pp    :: PseudoBoolean String Angle,
+  pp    :: PseudoBoolean String Rational,
   paths :: Set Int
 } deriving Show
 
@@ -68,7 +71,7 @@ setSt v bexp = modify $ \st -> st { ket = Map.insert v bexp (ket st) }
 addTerm :: Angle -> Loc -> SBool String -> State Ctx ()
 addTerm theta loc bexp = modify go where
   go st = st { terms = Map.alter (add theta') bexp' (terms st),
-               pp    = pp st + distribute theta bexp,
+               pp    = pp st + distribute (toRational theta) bexp,
                phase = phase st + (if parity == 1 then theta else 0) }
   add theta t = case t of
     Just (reps, theta') -> Just (Set.insert (loc, parity) reps, theta + theta')
@@ -108,8 +111,18 @@ substVar x bexp = modify go where
   f = dropConstant . P.subst (var x) bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
+-- Reduces the phase polynomial mod 2
+mod2 :: PseudoBoolean String Rational -> PseudoBoolean String Rational
+mod2 = cast f where
+  f a = a - ((2 * floor (a/(2%1))) % 1)
+
+-- Reduces the phase polynomial mod 2
+reduceMod2 :: () -> State Ctx ()
+reduceMod2 _ = modify go where
+  go st = st { pp = mod2 (pp st) }
+
 -- Matches a instance of [HH]
-matchHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
+matchHH :: PseudoBoolean String Rational -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
 matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   go v = do
     pp'      <- toBooleanPoly . quotVar v $ pp
@@ -120,7 +133,7 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
     Nothing -> Set.member (unvar u) paths
 
 -- Constructs the most general ideal possible from the I rule
-constructIdeal :: PseudoBoolean String Angle -> Set Int -> [SBool String]
+constructIdeal :: PseudoBoolean String Rational -> Set Int -> [SBool String]
 constructIdeal pp cand = catMaybes . map (go . var) $ Set.toDescList cand
   where go v = toBooleanPoly . quotVar v $ pp
 
@@ -133,15 +146,18 @@ internalVars ctx = Set.difference pathVars outVars
 -- Reduce via a Groebner basis
 computeMaximalGroebner :: Ctx -> [SBool String]
 computeMaximalGroebner ctx = go [] [] ctx
-  where go rbasis sbasis ctx =
-          let eqs     = constructIdeal (pp ctx) (internalVars ctx)
-              sbasis' = reduceBasis $ foldl addToBasis sbasis eqs
-              rbasis' = reduceBasis $ foldl addToBasis rbasis xs where xs = map P.lift eqs
-              ctx'    = ctx { pp = mvd (pp ctx) rbasis',
+  where go rbasis sbasis ctx = trace ("*****rBasis: " ++ show rbasis ++ "\n*****sBasis: " ++ show sbasis ++ "\n*****pp: " ++ show (pp ctx)) $ 
+          let eqs     = case constructIdeal (pp ctx) (internalVars ctx) of
+                (x:_) -> [x]
+                []    -> []
+              sbasis' = foldl' (\x -> reduceBasis . addToBasis x) sbasis eqs
+              rbasis' = map mod2 $ foldl' (\x -> reduceBasis . addToBasis x) rbasis (map P.lift eqs)
+              ctx'    = ctx { pp = mod2 $ mvd (pp ctx) rbasis',
                               ket = Map.map (flip mvd sbasis') (ket ctx) }
           in
-            if Set.fromList sbasis == Set.fromList sbasis'
-            then sbasis
+            trace ("Equations found: " ++ show eqs) $ 
+            if Set.size (Set.fromList sbasis) == Set.size (Set.fromList sbasis')
+            then sbasis'
             else go rbasis' sbasis' ctx'
   
 -- Finding [I] reductions
@@ -188,7 +204,7 @@ applyGate (gate, l) = case gate of
 {- Run the analysis on a circuit and state -}
 runCircuit :: [Primitive] -> Ctx -> Ctx
 runCircuit circ = execState $ do
-  mapM_ applyGate (zip circ [2..])
+  mapM_ (applyGate >=> reduceMod2) (zip circ [2..])
   applyGReductions
   --applyReductions (Just 1) -- linear reductions
   --applyReductions (Just 2) -- quadratic reductions

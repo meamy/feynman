@@ -32,6 +32,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   toTermList,
   vars,
   getConstant,
+  decomposeLeading,
   isZero,
   isMono,
   isConst,
@@ -229,6 +230,12 @@ toTermList = map swap . Map.toList . getTerms
 getConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> r
 getConstant = Map.findWithDefault 0 (Monomial Set.empty) . getTerms
 
+-- | Decompose into the leading term and the remainder
+decomposeLeading :: (Ord v, Eq r, Num r) => PseudoBoolean v r -> ((r, PowerProduct v), PseudoBoolean v r)
+decomposeLeading 0 = ((0, Monomial Set.empty), 0)
+decomposeLeading p = (head tms, ofTermList $ tail tms)
+  where tms = reverse . toTermList $ normalize p
+
 {- Tests -}
 
 -- | Check if the polynomial is the zero function
@@ -377,12 +384,12 @@ dropConstant :: (Ord v, Eq r, Num r) => Multilinear v r repr -> Multilinear v r 
 dropConstant = M . (Map.delete (Monomial Set.empty) . getTerms)
 
 -- | Cast a polynomial over ring /r/ to ring /s/
-cast :: (r -> s) -> Multilinear v r repr -> Multilinear v s repr
-cast f = M . Map.map f . getTerms
+cast :: (Ord v, Eq s, Num s) => (r -> s) -> Multilinear v r repr -> Multilinear v s repr
+cast f = normalize . M . Map.map f . getTerms
 
 -- | Attempt to cast a polynomial over ring /r/ to ring /s/ via a partial function
-castMaybe :: (r -> Maybe s) -> Multilinear v r repr -> Maybe (Multilinear v s repr)
-castMaybe f = fmap M . mapM f . getTerms
+castMaybe :: (Ord v, Eq s, Num s) => (r -> Maybe s) -> Multilinear v r repr -> Maybe (Multilinear v s repr)
+castMaybe f = fmap (normalize . M) . mapM f . getTerms
 
 -- | Collects just the terms of the polynomial satisfying a predicate
 collectBy :: ((r, Monomial v repr) -> Bool) -> Multilinear v r repr -> Multilinear v r repr
@@ -426,7 +433,7 @@ substMonomial xs p = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substM
 -- | Substitute a variable with a monomial
 substVarMono :: (Ord v, Eq r, Num r, ReprC repr) =>
              v -> Monomial v repr -> Multilinear v r repr -> Multilinear v r repr
-substVarMono v m = M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
+substVarMono v m = normalize . M . Map.mapKeys (Set.foldr substVar mempty . getVars) . getTerms
   where substVar v' acc
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
@@ -474,7 +481,7 @@ lift = distribute 1
 -- > axy = a/2x + a/2y - a/2(x + y)
 --
 unDistribute :: (Ord v, Eq r, Num r, Dyadic r) => r -> Monomial v 'Mult -> Multilinear v r 'Add
-unDistribute a' = go a' . Set.toList . getVars
+unDistribute a' = normalize . go a' . Set.toList . getVars
   where go 0 _        = zero
         go a []       = constant a
         go a [x]      = ofTerm (a, Monomial $ Set.singleton x)
@@ -496,7 +503,7 @@ excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.
 -- > a(x + y) = ax + ay -2axy
 --
 distribute :: (Ord v, Eq r, Abelian r) => r -> SBool v -> Multilinear v r 'Mult
-distribute a' = go a' . Map.keys . getTerms . normalize
+distribute a' = normalize . go a' . Map.keys . getTerms
   where go 0 _      = zero
         go a []     = zero
         go a [m]    = ofTerm (a,m)

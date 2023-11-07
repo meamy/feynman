@@ -86,6 +86,10 @@ instance Fractional Angle where
   recip (Discrete a) = Continuous (recip $ toDouble a)
   recip (Continuous a) = Continuous (recip a)
 
+instance Real Angle where
+  toRational (Discrete a) = toRational a
+  toRational (Continuous a) = toRational a
+
 {- Circuits -}
 data Primitive =
     H        ID

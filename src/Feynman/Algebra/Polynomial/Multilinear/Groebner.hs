@@ -15,6 +15,8 @@ import Data.Maybe
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Control.Monad.State.Lazy
+
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
 import qualified Feynman.Util.Unicode as Unicode
@@ -25,10 +27,19 @@ import Debug.Trace
  Utilities
  -------------------------------}
 
+type Flagged a = State Bool a
+
+-- | Set the flag in a flagged computation
+setFlag :: Flagged ()
+setFlag = put True
+
+-- | Runs a flagged computation
+runFlagged :: Flagged a -> (a, Bool)
+runFlagged = (flip runState) False
+
 -- | Retrieve the leading term
 leadingTerm :: (Ord v, Eq r, Num r) => PseudoBoolean v r -> (r, PowerProduct v)
-leadingTerm 0 = (0, Monomial Set.empty)
-leadingTerm p = head . reverse . toTermList $ p
+leadingTerm = fst . decomposeLeading
 
 -- | Retrieve the leading monomial
 leadingMonomial :: (Ord v, Eq r, Num r) => PseudoBoolean v r -> (PowerProduct v)
@@ -37,11 +48,6 @@ leadingMonomial = snd . leadingTerm
 -- | Retrieve the leading coefficient
 leadingCoefficient :: (Ord v, Eq r, Num r) => PseudoBoolean v r -> r
 leadingCoefficient = fst . leadingTerm
-
--- | Decompose into the leading term and the remainder
-decomposeLeading :: (Ord v, Eq r, Fractional r) => PseudoBoolean v r -> (PseudoBoolean v r, PseudoBoolean v r)
-decomposeLeading p = (ofTerm lt, p - ofTerm lt)
-  where lt = leadingTerm p
 
 -- | Divide one monomial by another. /m/ must be divisible by /n/
 coprime :: Ord v => PowerProduct v -> PowerProduct v -> Bool
@@ -70,7 +76,7 @@ sPoly p q = ofTerm (recip a, divide lc m) * p - ofTerm (recip b, divide lc n) * 
 reducible :: (Ord v, Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
 reducible (c, m) = find (\(_d, n) -> m `divides` n) . toTermList
 
--- | Retrieve the 
+-- | Determines whether the leading monomial in f is reducible with respect to a monomial
 leadReducible :: (Ord v, Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
 leadReducible (c, m) = find (\(_d, n) -> m `divides` n) . take 1 . toTermList
 
@@ -84,22 +90,24 @@ reduce f g = fromMaybe f $ go f g where
     return $ f - (ofTerm (d/c, divide n m)) * g
 
 -- | Reduce a polynomial with respect to another's leading term
-leadReduce :: (Ord v, Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+leadReduce :: (Show r, Show v, Ord v, Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> Flagged (PseudoBoolean v r)
 leadReduce f g
-  | f == 0        = 0
-  | m `divides` n = f - (ofTerm (d/c, divide n m)) * g
-  | otherwise     = f
-  where (c, m) = leadingTerm g
-        (d, n) = leadingTerm f
+  | f == 0        = return 0
+  | g == 0        = return f
+  | m `divides` n = setFlag >> (return $ f - (ofTerm (d/c, divide n m)) * g)
+  | otherwise     = return f
+  where ((c, m), g') = decomposeLeading g
+        ((d, n), f') = decomposeLeading f
 
 -- | Compute the fixpoint of a reduction
 mvd :: (Show v, Show r, Ord v, Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
 mvd f xs = go f xs where
   go 0 _  = 0
-  go f xs = trace ("MVD reduce: " ++ show f) $
-    let f' = foldl' leadReduce f xs in
-      if f == f' then (\(r,p) -> r + go p xs) $ decomposeLeading f
-      else go f' xs
+  go f [] = f
+  go f xs = trace ("MVD reduce: " ++ show f ++ "\n  " ++ show xs) $
+    let (f',flg) = runFlagged $ foldM leadReduce f xs in
+      if flg then go f' xs
+      else (\(r,p) -> (ofTermList [r]) + go p xs) $ decomposeLeading f
 
 -- | Buchberger's iterative algorithm for multilinear polynomial rings
 --
@@ -111,7 +119,7 @@ addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
   sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs, nonzero p q]
   qfPolys     = map (\v -> ofVar v * p) . Set.toList . vars . leadingMonomial
   go basis []     = basis
-  go basis (s:xs) = case mvd s basis of
+  go basis (s:xs) = trace ("Adding to basis: " ++ show basis ++ ", " ++ show (s:xs)) $ case mvd s basis of
     0  -> go basis xs
     s' -> go (basis ++ [s']) (xs ++ (sPolys s' basis))
 
@@ -124,9 +132,9 @@ reduceBasis :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r
 reduceBasis gbasis = go [] gbasis where
   squashCoeff p         = scale (recip $ leadingCoefficient p) p
   go gbasis' []         = gbasis'
-  go gbasis' (p:gbasis) = case squashCoeff $ mvd p (gbasis' ++ gbasis) of
+  go gbasis' (p:gbasis) = trace ("Reducing basis: " ++ show gbasis' ++ ", " ++ show (p:gbasis)) $ case mvd p (gbasis' ++ gbasis) of
     0  -> go gbasis' gbasis
-    p' -> go (p':gbasis') gbasis
+    p' -> go ((squashCoeff p'):gbasis') gbasis
 
 -- | Buchberger's algorithm, modified to return a reduced Groebner basis
 rbuchberger :: (Show v, Show r, Ord v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]

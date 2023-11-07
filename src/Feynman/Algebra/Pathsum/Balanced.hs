@@ -135,7 +135,7 @@ instance (Show g, Eq g, Periodic g, Real g) => Show (Pathsum g) where
           statestr = concatMap (U.ket . show) $ outVals sop
 
 -- | Convenience function for pretty printing
-makeIntegral :: Real g => Integer -> PseudoBoolean v g -> PseudoBoolean v Integer
+makeIntegral :: (Ord v, Real g) => Integer -> PseudoBoolean v g -> PseudoBoolean v Integer
 makeIntegral i = cast (\a -> numerator $ toRational a * toRational i)
 
 -- | Retrieve the internal path variables
@@ -792,8 +792,8 @@ instance (Eq g, Abelian g) => Num (Pathsum g) where
   signum sop                   = sop
   fromInteger                  = identity . fromInteger
 
-instance Functor Pathsum where
-  fmap g (Pathsum a b c d e f) = Pathsum a b c d (cast g e) f
+--instance Functor Pathsum where
+--  fmap g (Pathsum a b c d e f) = Pathsum a b c d (cast g e) f
 
 {--------------------------
  Reduction rules
@@ -820,7 +820,7 @@ injectFF2 a = case order a of
   _ -> Nothing
 
 -- | Gives a Boolean polynomial equivalent to the current polynomial, if possible
-toBooleanPoly :: (Eq g, Periodic g) => PseudoBoolean v g -> Maybe (SBool v)
+toBooleanPoly :: (Ord v, Eq g, Periodic g) => PseudoBoolean v g -> Maybe (SBool v)
 toBooleanPoly = castMaybe injectFF2
 
 -- | Elim rule. \(\dots(\sum_y)\dots = \dots 2 \dots\)

@@ -70,6 +70,9 @@ instance Abelian Integer where
 instance Abelian Double where
   power a = (fromIntegral a *)
 
+instance Abelian Rational where
+  power a = (fromIntegral a *)
+
 -- | Groups with computable orders. Rather than the standard
 --   notion, the group 'g' need not have a finite order for
 --   each element. In this case, 'order g == 0', and otherwise
@@ -77,6 +80,11 @@ instance Abelian Double where
 --    @'power' ('order' x) x = 'zero'@
 class Abelian g => Periodic g where
   order :: g -> Integer
+
+instance Periodic Rational where
+  order a = case (numerator a) `mod` 2 of
+    0 -> denominator a
+    1 -> 2 * (denominator a)
 
 {-------------------------------
  Two-regular rings (& multiplicative groups)
