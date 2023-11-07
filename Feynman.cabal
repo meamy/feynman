@@ -152,3 +152,15 @@ executable abr22
                        containers >= 0.6.3.1,
                        QuickCheck >= 2.8.2
   default-language:    Haskell2010
+
+executable hs
+  main-is:             hs.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       mtl,
+                       containers >= 0.6.3.1,
+                       QuickCheck >= 2.8.2
+  default-language:    Haskell2010

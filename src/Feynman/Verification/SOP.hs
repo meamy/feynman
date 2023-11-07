@@ -800,13 +800,13 @@ genCCZ xs = do
   x <- elements xs
   y <- elements $ xs \\ [x]
   z <- elements $ xs \\ [x,y]
-  return $ ccz x y z
+  return $ [Uninterp "CCZ" [x, y, z]]
 
 genCZ :: [String] -> Gen [Primitive]
 genCZ xs = do
   x <- elements xs
   y <- elements $ xs \\ [x]
-  return $ cz x y
+  return $ [CZ x y]
 
 genZ :: [String] -> Gen [Primitive]
 genZ xs = do
@@ -827,7 +827,7 @@ hiddenShift n alternations = do
   g <- genMaioranaG (take n2 vars) alternations
   let hTrans = map H vars
       xTrans = map X s 
-      cTrans = concat [cz (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
+      cTrans = concat [CZ (vars!!i) (vars!!(i + n2)) | i <- [0..n2-1]]
       sub = Map.fromList $ zip (take n2 vars) (drop n2 vars)
       f' = (Core.subst (\i -> Map.findWithDefault i i sub) g) ++ cTrans
       f  = xTrans ++ g ++ cTrans ++ xTrans

@@ -11,7 +11,7 @@ module Main where
 
 import Data.List                               (splitAt)
 import qualified Data.Map as Map
-import Control.Monad.State                     (evalState)
+import Control.Monad.State.Strict              (evalState)
 import Data.Semigroup                          ((<>))
 import Text.Printf
 
