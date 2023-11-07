@@ -18,8 +18,9 @@ import Debug.Trace
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
-import Feynman.Algebra.Polynomial hiding (zero, one, terms)
-import qualified Feynman.Algebra.Polynomial as P
+import Feynman.Algebra.Polynomial
+import Feynman.Algebra.Polynomial.Multilinear hiding (zero, one, terms)
+import qualified Feynman.Algebra.Polynomial.Multilinear as P
 import Feynman.Synthesis.Phase
 
 {-- Equation folding optimization -}
@@ -44,8 +45,8 @@ data Ctx = Ctx {
 
 data PathState = PathState {
   pvars :: [Int],
-  pp    :: Multilinear Angle,
-  st    :: [Multilinear Bool]
+  pp    :: PseudoBoolean String Angle,
+  st    :: [SBool String]
 } deriving (Eq, Ord, Show)
 
 ----------------------------------------------------------------------
@@ -91,11 +92,11 @@ addQuadTerm n bv = modify $ \st -> st { quad = Map.insert n bv $ quad st }
 -- Applies a gate to a context
 applyGate :: (Primitive, Loc) -> State Ctx ()
 applyGate (gate, l) = case gate of
-  T v    -> getSt v >>= addTerm (Discrete $ dyadic 1 3) l
-  Tinv v -> getSt v >>= addTerm (Discrete $ dyadic 7 3) l
-  S v    -> getSt v >>= addTerm (Discrete $ dyadic 1 2) l
-  Sinv v -> getSt v >>= addTerm (Discrete $ dyadic 3 2) l
-  Z v    -> getSt v >>= addTerm (Discrete $ dyadic 1 1) l
+  T v    -> getSt v >>= addTerm (Discrete $ dMod2 1 2) l
+  Tinv v -> getSt v >>= addTerm (Discrete $ dMod2 7 2) l
+  S v    -> getSt v >>= addTerm (Discrete $ dMod2 1 1) l
+  Sinv v -> getSt v >>= addTerm (Discrete $ dMod2 3 1) l
+  Z v    -> getSt v >>= addTerm (Discrete $ dMod2 1 0) l
   Rz p v -> getSt v >>= addTerm p l
   CNOT c t -> do
     bv  <- getSt c
@@ -132,16 +133,16 @@ unvar :: String -> Int
 unvar = read . tail
 
 -- Compute a phase polynomial from the state
-computePP :: Ctx -> Multilinear Angle
-computePP st = simplify $ foldl' (+) (constant $ phase st) $ l ++ q where
+computePP :: Ctx -> PseudoBoolean String Angle
+computePP st = foldl' (+) (constant $ phase st) $ l ++ q where
   l = map go . Map.toList $ terms st where
     go (bv, (_,theta)) = distribute theta (toPolynomial (bv, False))
   q = map go . Map.toList $ quad st where
-    go (n, v) = distribute (Discrete $ dyadic 1 1) poly where
+    go (n, v) = distribute (Discrete $ dMod2 1 0) poly where
       poly = ofVar (var n) * toPolynomial v
 
 -- Converts a bitvector into a polynomial
-toPolynomial :: (F2Vec, Bool) -> Multilinear Bool
+toPolynomial :: (F2Vec, Bool) -> SBool String
 toPolynomial bv = foldr (+) const . map (ofVar . var) . varsOfBV $ fst bv
   where const = if snd bv then 1 else 0
 
@@ -160,41 +161,41 @@ substVar x bv = modify go where
 -- The idea is to package high degree terms into unique variables
 -- so that we maintain a linear presentation, later possibly
 -- subject to equalities
-linearize :: Multilinear Bool -> State Ctx (F2Vec, Bool)
-linearize = foldM go (bitI 0 0, False) . Map.keys . P.terms where
+linearize :: SBool String -> State Ctx (F2Vec, Bool)
+linearize = foldM go (bitI 0 0, False) . P.support where
   go (bv, parity) mono
-    | monomialDegree mono == 0 = return (bv, parity `xor` True)
-    | monomialDegree mono == 1 = do
-        let v = unvar $ firstVar mono
+    | degree mono == 0 = return (bv, parity `xor` True)
+    | degree mono == 1 = do
+        let v = unvar . head . Set.toList . vars $ mono
         return (bv `xor` (bit v), parity)
     | otherwise = do
         n <- alloc
         return (bv `xor` (bit n), parity)
 
-injectZ2 :: Periodic a => a -> Maybe Bool
+injectZ2 :: Periodic a => a -> Maybe FF2
 injectZ2 a = case order a of
-  0 -> Just False
-  2 -> Just True
+  0 -> Just 0
+  2 -> Just 1
   _ -> Nothing
 
-toBooleanPoly :: (Eq a, Periodic a) => Multilinear a -> Maybe (Multilinear Bool)
-toBooleanPoly = convertMaybe injectZ2
+--toBooleanPoly :: (Eq a, Periodic a) => PseudoBoolean String a -> Maybe (SBool v)
+toBooleanPoly = castMaybe injectZ2
 
 -- Gets the variables in a bitvector
 varsOfBV :: F2Vec -> [Int]
 varsOfBV bv = Set.toList . Set.fromList $ filter (testBit bv) [0..(width bv) - 1]
 
 -- Converts a linear Boolean polynomial into a bitvector
-fromPolynomial :: Multilinear Bool -> Maybe (F2Vec, Bool)
+fromPolynomial :: SBool String -> Maybe (F2Vec, Bool)
 fromPolynomial p
   | degree p > 1 = Nothing
   | otherwise    = Just $ unsafeConvert p
-    where unsafeConvert = (foldl' f (bitI 0 0, False)). Map.toList . P.terms
-          f (bv, const) (m, b)
-            | b == False      = (bv, const)
-            | emptyMonomial m = (bv, const `xor` True)
-            | otherwise       =
-              let v = unvar $ firstVar m in
+    where unsafeConvert = (foldl' f (bitI 0 0, False)). P.toTermList
+          f (bv, const) (b, m)
+            | b == 0      = (bv, const)
+            | m == mempty = (bv, const `xor` True)
+            | otherwise   =
+              let v = unvar . head . Set.toList . vars $ m in
                 (bv `xor` (bitI (v+1) v), const)
 
 ---------------------
@@ -202,27 +203,27 @@ fromPolynomial p
 ---------------------
 
 -- Synonym for contractions of the form \i/ j <- p
-type Contraction = (Int, Int, Multilinear Bool)
+type Contraction = (Int, Int, SBool String)
 
 -- Gets all depth-1 contractions
 allContractions :: PathState -> [Contraction]
 allContractions ps@(PathState paths pp st)
   | pp == 0   = []
   | otherwise = do
-      v        <- paths \\ (map unvar $ concatMap vars st)
-      eqn      <- maybeToList . toBooleanPoly . factorOut (var v) $ pp
-      (u, sub) <- filter (\(u, sub) -> unvar u `elem` paths) $ solveForX eqn
+      v        <- paths \\ (map unvar $ Set.toList $ Set.unions $ map vars st)
+      eqn      <- maybeToList . toBooleanPoly . P.quotVar (var v) $ pp
+      (u, sub) <- take 1 . filter (\(u, sub) -> unvar u `elem` paths) $ solveForX eqn
       return (v, unvar u, sub)
 
 -- Applies a contraction
 applyContraction :: PathState -> Contraction -> PathState
 applyContraction ps (v, u, sub) = PathState pvars' pp' st' where
   pvars' = pvars ps \\ [v,u]
-  pp'    = simplify . P.subst (var u) sub . removeVar (var v) $ pp ps
-  st'    = map (simplify . P.subst (var u) sub) $ st ps
+  pp'    = P.subst (var u) sub . remVar (var v) $ pp ps
+  st'    = map (P.subst (var u) sub) $ st ps
 
 -- Generalizes a contraction to an equation
-generalize :: Contraction -> Multilinear Bool
+generalize :: Contraction -> SBool String
 generalize (_, u, sub) = ofVar (var u) + sub
 
 -- Groups non-conflicting contractions
@@ -247,7 +248,7 @@ ppReductionTree = go "" Nothing where
 
 -- Collects all equations in the reduction tree
 -- Most general
-generateEquations :: PathState -> [Multilinear Bool]
+generateEquations :: PathState -> [SBool String]
 generateEquations = nub . go where
   go ps =
     let eqns = allContractions ps in
@@ -255,7 +256,7 @@ generateEquations = nub . go where
 
 -- Memoized over intermediary path states
 -- High memory usage
-generateEquationsMemo :: PathState -> [Multilinear Bool]
+generateEquationsMemo :: PathState -> [SBool String]
 generateEquationsMemo = snd . go Set.empty where
   go seen ps
     | Set.member ps seen = (seen, [])
@@ -269,7 +270,7 @@ generateEquationsMemo = snd . go Set.empty where
 
 -- Groups into independent contractions and applies each set together
 -- Doesn't get all contractions
-generateEquationsGrouped :: PathState -> [Multilinear Bool]
+generateEquationsGrouped :: PathState -> [SBool String]
 generateEquationsGrouped = nub . go where
   go ps =
     let eqns = allContractions ps
@@ -280,7 +281,7 @@ generateEquationsGrouped = nub . go where
 
 -- Groups into independent contractions and applies one representative from each set
 -- Not great
-generateEquationsDirected :: PathState -> [Multilinear Bool]
+generateEquationsDirected :: PathState -> [SBool String]
 generateEquationsDirected = nub . go where
   go ps =
     let eqns = allContractions ps
@@ -289,7 +290,7 @@ generateEquationsDirected = nub . go where
       (map generalize eqns) ++ concatMap (go . applyContraction ps . head) grps
 
 -- Fixed tree depth
-generateEquationsFixed :: Int -> PathState -> [Multilinear Bool]
+generateEquationsFixed :: Int -> PathState -> [SBool String]
 generateEquationsFixed k = nub . go k where
   go k ps =
     let eqns = allContractions ps in
@@ -299,7 +300,7 @@ generateEquationsFixed k = nub . go k where
         (map generalize eqns) ++ concatMap (go (k-1) . applyContraction ps) eqns
 
 -- Randomizes the search. Uses unsafe IO
-generateEquationsRandom :: PathState -> [Multilinear Bool]
+generateEquationsRandom :: PathState -> [SBool String]
 generateEquationsRandom ps = nub $ unsafePerformIO (fmap (go ps) $ getStdGen) where
   go ps gen = case allContractions ps of
     [] -> []
@@ -328,7 +329,7 @@ getSubs eqns = do
     else let v = lsb1 bv in return (v, (bv `xor` (bit v), parity))
 
 -- Gets a list of canonical substitutions
-canonicalSubs :: [Multilinear Bool] -> State Ctx [(Int, (F2Vec, Bool))]
+canonicalSubs :: [SBool String] -> State Ctx [(Int, (F2Vec, Bool))]
 canonicalSubs eqns = do
   bvs <- mapM linearize eqns
   mat <- matrixify bvs
