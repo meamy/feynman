@@ -91,66 +91,102 @@ import Feynman.Algebra.Polynomial
  Utility types
  -----------------------------------}
 
-data Repr = Add | Mult
-data ReprWit :: Repr -> Type where
-  WitAdd  :: ReprWit 'Add
-  WitMult :: ReprWit 'Mult
-
-class ReprC repr where
-  witRepr :: ReprWit repr
-
-instance ReprC 'Add where
-  witRepr = WitAdd
-
-instance ReprC 'Mult where
-  witRepr = WitMult
+type PseudoBoolean v r = Polynomial r (GrevlexML v)
+type SBool v           = Polynomial FF2 (GrevlexML v)
 
 {-----------------------------------
  Monomials
  -----------------------------------}
 
-{- TODO: Comparing sets of variables is quite slow. Make the representation
-         of monomials generic so that we can implement monomials with, e.g.,
-         int sets for different variable classes -}
+-- | Multilinear monomials with graded lexicographic (grevlex) order
+newtype GrevlexML v = GrevlexML { unML :: Set v } deriving (Eq)
 
--- | Monomials with graded lexicographic (grevlex) order
-newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
-
-instance Ord v => Ord (Monomial v repr) where
+instance Ord v => Ord (GrevlexML v) where
   {-# INLINABLE compare #-}
   compare m n
     | k /= l    = compare k l
-    | otherwise = compare (getVars m) (getVars n)
+    | otherwise = case compare (unML n) (unML m) of
+        EQ -> EQ
+        LT -> GT
+        GT -> LT
     where k = degree m
           l = degree n
 
-instance Degree (Monomial v repr) where
+instance Degree (GrevlexML v) where
   {-# INLINABLE degree #-}
-  degree = Set.size . getVars
+  degree = Set.size . unML
 
-instance Ord v => Vars (Monomial v repr) where
-  type Var (Monomial v repr) = v
+instance Ord v => Vars (GrevlexML v) where
+  type Var (GrevlexML v) = v
   {-# INLINABLE vars #-}
-  vars = getVars
+  vars = unML
 
-showImpl :: Show v => ReprWit repr -> Monomial v repr -> String
-showImpl WitAdd  = intercalate Unicode.oplus . map show . Set.toList . getVars
-showImpl WitMult = concatMap show . Set.toList . getVars
+instance Ord v => Semigroup (GrevlexML v) where
+  {-# INLINABLE (<>) #-}
+  m <> n = GrevlexML $ Set.union (unML m) (unML n)
 
-instance (Show v, ReprC repr) => Show (Monomial v repr) where
-  show = showImpl witRepr
+instance Ord v => Monoid (GrevlexML v) where
+  mempty = GrevlexML Set.empty
 
-mappendImpl :: Ord v => ReprWit repr -> Monomial v repr -> Monomial v repr -> Monomial v repr
-mappendImpl WitMult m = Monomial . Set.union (getVars m) . getVars
-mappendImpl WitAdd m  = Monomial . symDiff (getVars m) . getVars
-  where symDiff a b = Set.difference (Set.union a b) (Set.intersection a b)
+instance Ord v => Group (GrevlexML v) where
+  m ./. n = GrevlexML $ Set.difference (unML m) (unML n)
 
-instance (Ord v, ReprC repr) => Semigroup (Monomial v repr) where
-  (<>) = mappendImpl witRepr
+instance Ord v => Symbolic (GrevlexML v) where
+  ofVar v = GrevlexML $ Set.singleton v
 
-instance (Ord v, ReprC repr) => Monoid (Monomial v repr) where
-  mempty  = Monomial Set.empty
-  mappend = (<>)
+instance Ord v => Monomial (GrevlexML v) where
+  unMonomial = Set.toList . unML
+  monomial   = GrevlexML . Set.fromList
+  leastCM    = (<>)
+  divides m  = (vars m `Set.isSubsetOf`) . vars
+
+instance (Show v) => Show (GrevlexML v) where
+  show = concatMap show . Set.toList . unML
+
+-- | Multilinear monomials in the parity basis
+newtype Parity v = Parity { unPar :: Set v } deriving (Eq)
+
+instance Ord v => Ord (Parity v) where
+  {-# INLINABLE compare #-}
+  compare m n
+    | k /= l    = compare k l
+    | otherwise = case compare (unPar n) (unPar m) of
+        EQ -> EQ
+        LT -> GT
+        GT -> LT
+    where k = degree m
+          l = degree n
+
+instance Degree (Parity v) where
+  {-# INLINABLE degree #-}
+  degree = Set.size . unPar
+
+instance Ord v => Vars (Parity v) where
+  type Var (GrevlexML v) = v
+  {-# INLINABLE vars #-}
+  vars = unPar
+
+instance Ord v => Semigroup (Parity v) where
+  {-# INLINABLE (<>) #-}
+  m <> n =
+    let symDiff a b = Set.difference (Set.union a b) (Set.intersection a b) in
+      Parity $ symDiff (unPar m) (unPar n)
+
+instance Ord v => Monoid (Parity v) where
+  mempty = Parity Set.empty
+
+instance Ord v => Symbolic (Parity v) where
+  ofVar v = Parity $ Set.singleton v
+
+instance Ord v => Monomial (Parity v) where
+  unMonomial = Set.toList . unPar
+  monomial   = Parity . Set.fromList
+  leastCM    = (<>)
+  divides m  = (vars m `Set.isSubsetOf`) . vars
+
+instance (Show v) => Show (Parity v) where
+  show = intercalate Unicode.oplus . map show . Set.toList . vars
+
 
 -- | Construct a monomial
 monomial :: Ord v => [v] -> Monomial v repr

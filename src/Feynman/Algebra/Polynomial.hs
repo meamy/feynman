@@ -129,91 +129,6 @@ instance (Show v) => Show (GrevlexPP v) where
     showVar (v,1) = show v
     showVar (v,i) = Unicode.sup (show v) (toInteger i)
 
--- | Multilinear monomials with graded lexicographic (grevlex) order
-newtype GrevlexML v = GrevlexML { unML :: Set v } deriving (Eq)
-
-instance Ord v => Ord (GrevlexML v) where
-  {-# INLINABLE compare #-}
-  compare m n
-    | k /= l    = compare k l
-    | otherwise = case compare (unML n) (unML m) of
-        EQ -> EQ
-        LT -> GT
-        GT -> LT
-    where k = degree m
-          l = degree n
-
-instance Degree (GrevlexML v) where
-  {-# INLINABLE degree #-}
-  degree = Set.size . unML
-
-instance Ord v => Vars (GrevlexML v) where
-  type Var (GrevlexML v) = v
-  {-# INLINABLE vars #-}
-  vars = unML
-
-instance Ord v => Semigroup (GrevlexML v) where
-  {-# INLINABLE (<>) #-}
-  m <> n = GrevlexML $ Set.union (unML m) (unML n)
-
-instance Ord v => Monoid (GrevlexML v) where
-  mempty = GrevlexML Set.empty
-
-instance Ord v => Group (GrevlexML v) where
-  m ./. n = GrevlexML $ Set.difference (unML m) (unML n)
-
-instance Ord v => Symbolic (GrevlexML v) where
-  ofVar v = GrevlexML $ Set.singleton v
-
-instance Ord v => Monomial (GrevlexML v) where
-  unMonomial = Set.toList . unML
-  monomial   = GrevlexML . Set.fromList
-  leastCM    = (<>)
-  divides m  = (vars m `Set.isSubsetOf`) . vars
-
-instance (Show v) => Show (GrevlexML v) where
-  show = concatMap show . Set.toList . unML
-
-{-
--- | Multilinear monomials in the parity basis
-newtype Parity v = Parity { unPar :: Set v } deriving (Eq)
-
-instance Ord v => Ord (Monomial v repr) where
-  {-# INLINABLE compare #-}
-  compare m n
-    | k /= l    = compare k l
-    | otherwise = compare (vars m) (vars n)
-    where k = degree m
-          l = degree n
-
-instance Degree (Monomial v repr) where
-  {-# INLINABLE degree #-}
-  degree = Set.size . vars
-
-instance Ord v => Vars (Monomial v repr) where
-  type Var (Monomial v repr) = v
-  {-# INLINABLE vars #-}
-  vars = vars
-
-showImpl :: Show v => ReprWit repr -> Monomial v repr -> String
-showImpl WitAdd  = intercalate Unicode.oplus . map show . Set.toList . vars
-showImpl WitMult = concatMap show . Set.toList . vars
-
-instance (Show v, ReprC repr) => Show (Monomial v repr) where
-  show = showImpl witRepr
-
-mappendImpl :: Ord v => ReprWit repr -> Monomial v repr -> Monomial v repr -> Monomial v repr
-mappendImpl WitMult m = Monomial . Set.union (vars m) . vars
-mappendImpl WitAdd m  = Monomial . symDiff (vars m) . vars
-  where symDiff a b = Set.difference (Set.union a b) (Set.intersection a b)
-
-instance (Ord v, ReprC repr) => Semigroup (Monomial v repr) where
-  (<>) = mappendImpl witRepr
-
-instance (Ord v, ReprC repr) => Monoid (Monomial v repr) where
-  mempty  = Monomial Set.empty
-  mappend = (<>)
--}
 {-----------------------------------
  Polynomials 
  -----------------------------------}
@@ -226,8 +141,6 @@ data Polynomial r m = Poly { getTerms :: !(Map m r) }
 
 -- | Convenience types
 type Multivariate v r  = Polynomial r (GrevlexPP v)
-type PseudoBoolean v r = Polynomial r (GrevlexML v)
-type SBool v           = Polynomial FF2 (GrevlexML v)
 
 {- Instances -}
 
