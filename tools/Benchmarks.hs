@@ -7,6 +7,8 @@ import Control.Monad (when)
 import Numeric
 import System.CPUTime (getCPUTime)
 import System.Console.ANSI
+import System.FilePath
+import System.Directory
 import Control.DeepSeq
 
 import Data.Map (Map)
@@ -38,11 +40,13 @@ import Control.Monad
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
+addToDirectory s f = let (d, n) = splitFileName f in (d++s) </> n
+
 {- Benchmark circuits -}
 benchmarksPath = "benchmarks/"
 
 -- Benchmarks of up to 10 qubits
-benchmarksSmall = [
+benchmarksSmall = map (benchmarksPath ++) [
   "barenco_tof_3",
   "barenco_tof_4",
   "barenco_tof_5",
@@ -58,7 +62,7 @@ benchmarksSmall = [
   ]
 
 -- Benchmarks which don't crash the verifier
-benchmarksMedium = benchmarksSmall ++ [
+benchmarksMedium = benchmarksSmall ++ map (benchmarksPath ++) [
   "adder_8",
   "barenco_tof_10",
   "csla_mux_3",
@@ -86,7 +90,7 @@ benchmarksMedium = benchmarksSmall ++ [
   ]
 
 -- Includes even the most ludicrous benchmarks
-benchmarksAll = benchmarksMedium ++ [
+benchmarksAll = benchmarksMedium ++ map (benchmarksPath ++) [
   "cycle_17_3",
   "gf2^64_mult",
   --"gf2^128_mult",
@@ -96,6 +100,8 @@ benchmarksAll = benchmarksMedium ++ [
   --"hwb12",
   "mod_adder_1048576"
   ]
+
+benchmarkFolder f = liftM (map ((f </>) . dropExtension) . filter (\s -> takeExtension s == ".qc")) $ getDirectoryContents f
 
 {- Printing results -}
 
@@ -156,7 +162,7 @@ withTiming f = do
 
 runBenchmarks pass verify xs =
   let runBench s = do
-        src   <- B.readFile $ benchmarksPath ++ s ++ ".qc"
+        src   <- B.readFile $ s ++ ".qc"
         start <- getCPUTime
         case printErr (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c') of
           Left err      -> do
@@ -185,7 +191,7 @@ runBenchmarks pass verify xs =
               gateRed   <- mapM printStat (Map.toList $ counts)
               depthRed  <- printStat ("Depth", depths)
               tdepthRed <- printStat ("Tdepth", tdepths)
-              writeFile (benchmarksPath ++ "opt/" ++ s ++ "_opt.qc") (show c')
+              writeFile (addToDirectory "opt/" $ s ++ "_opt.qc") (show c')
               return . Just $ Map.unionsWith (+) (gateRed ++ [depthRed, tdepthRed])
   in do
     results <- liftM catMaybes $ mapM runBench xs

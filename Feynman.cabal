@@ -88,6 +88,8 @@ executable feynopt
   build-depends:       Feynman,
                        QuickCheck >= 2.8.2,
                        ansi-terminal,
+                       filepath,
+                       directory,
                        array >= 0.5.1.0,
                        base,
                        bv,
