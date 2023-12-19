@@ -35,6 +35,8 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear
 
+import qualified Debug.Trace as Trace
+
 {-----------------------------------
  Variables
  -----------------------------------}
@@ -933,6 +935,10 @@ pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
 pattern HHKill v p <- (filter (all (not . isP) . vars . snd) . matchHH -> (v, p):_)
 
+-- | Pattern synonym for HH instances where the polynomial is empty
+pattern Zero :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Zero v <- (filter ((== 1) . snd) . matchHH -> (v, p):_)
+
 -- | Pattern synonym for Omega instances
 pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
 pattern Omega v p <- (matchOmega -> (v, p):_)
@@ -975,6 +981,10 @@ applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
           | j > i     = PVar $ j - 1
           | otherwise = PVar $ j
         varShift v = v
+
+-- | Apply a zero rule. Does not check if the instance is valid
+applyZero :: (Eq g, Abelian g) => Var -> Pathsum g -> Pathsum g
+applyZero v (Pathsum a b c d e f) = Pathsum 0 b c 1 (lift $ ofVar (PVar 0)) [0 | x <- f]
 
 -- | Apply a var rule. Does not check if the instance is valid
 applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
@@ -1020,6 +1030,7 @@ abstractMono m (Pathsum a b c d e f) = Pathsum a' b c (d + 2) e' f' where
 -- | Performs basic simplifications
 simplify :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 simplify sop = case sop of
+  Zero y         -> applyZero y sop
   Elim y         -> simplify $ applyElim y sop
   HHLinear y z p -> simplify $ applyHHSolved y z p sop
   Omega y p      -> simplify $ applyOmega y p sop
@@ -1028,10 +1039,12 @@ simplify sop = case sop of
 -- | The rewrite system of M. Amy,
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
 --   Generally effective at evaluating (symbolic) values.
-grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
-grind sop = case sop of
+grind :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Pathsum g
+grind sop = Trace.trace ("Reducing... " ++ show sop) $ case sop of
+  Zero y         -> applyZero y sop
   Elim y         -> grind $ applyElim y sop
   Omega y p      -> grind $ applyOmega y p sop
+  HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
   _              -> sop
 
@@ -1040,6 +1053,7 @@ normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 normalizeClifford sop = go $ sop .> hLayer .> hLayer where
   hLayer = foldr (<>) mempty $ replicate (outDeg sop) hgate
   go sop = case sop of
+    Zero y           -> applyZero y sop
     Elim y           -> go $ applyElim y sop
     HHInternal y z p -> go $ applyHHSolved y z p sop
     Omega y p        -> go $ applyOmega y p sop
@@ -1057,7 +1071,7 @@ expand (Pathsum a b c d e f) v = (p0, p1) where
   p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
 
 -- | Simulates a pathsum on a given input
-simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
+simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f, Show g) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
 simulate sop xs = go $ sop * ket (map constant xs)
   where go      = go' . grind
         go' ps  = case ps of
@@ -1078,11 +1092,40 @@ simulate sop xs = go $ sop * ket (map constant xs)
           _                      -> error "Incompatible dimensions"
 
 -- | Evaluates a pathsum on a given input and output
-amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
+amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f, Show g) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
 
+-- | Performs a strong simulation using set cover based methods
+ssimulate :: (RealFloat f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
+ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) where
+  order (a,x)   = denomExp (unpack a) + degree x
+
+  nonCliffTms v =
+    let f (a,x) = Set.member v (vars x) && denomExp (unpack a) + degree x >= 3 in
+      length . filter f . toTermList
+
+  greedySelect p =
+    let xs = [(nonCliffTms v p, v) | v <- Set.toList (vars p)] in
+      snd . maximumBy (\a b -> compare (fst a) (fst b)) $ xs
+
+  go      = go' . simplify
+  go' sop = case sop of
+    (Pathsum k 0 0 0 p []) ->
+      let phase     = fromRational . toRational $ getConstant p
+          magnitude = case k `mod` 2 of
+            0 -> fromRational $ toRational $ dyadic 1 (k `div` 2)
+            1 -> sqrt(2.0) * (fromRational $ toRational $ dyadic 1 ((k+1) `div` 2))
+      in
+        mkPolar magnitude (pi * phase)
+    (Pathsum k 0 0 n p []) ->
+      let v       = greedySelect p
+          (p0,p1) = expand sop v
+      in
+        Trace.trace ("Expanding " ++ show v) $ (go p0) + (go p1)
+
+
 -- | Checks identity by checking inputs iteratively
-isIdentity :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isIdentity :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Bool
 isIdentity sop
   | isTrivial sop = True
   | otherwise     = case inDeg sop of

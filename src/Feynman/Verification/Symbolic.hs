@@ -23,6 +23,8 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 
+import qualified Debug.Trace as Trace
+
 {------------------------------------
  Path sum actions
  ------------------------------------}
@@ -62,7 +64,7 @@ findOrAlloc x = do
 
 -- | Applicative-style
 applyPrimitive :: Primitive -> Pathsum DMod2 -> State Context (Pathsum DMod2)
-applyPrimitive gate sop = case gate of
+applyPrimitive gate sop = Trace.trace ("Absorbing gate " ++ show gate) $ case gate of
   H x               -> findOrAlloc x >>= \i -> return $ applyH i sop
   X x               -> findOrAlloc x >>= \i -> return $ applyX i sop
   Y x               -> findOrAlloc x >>= \i -> return $ applyY i sop
@@ -110,6 +112,15 @@ applyPrimitive gate sop = case gate of
     return $ applyMCZ args sop
   Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
 
+-- | Allocate a set of variables, some of which are fresh
+allocs :: [ID] -> [ID] -> State Context (Pathsum DMod2)
+allocs vars inputs = foldM go (identity 0) vars
+  where go sop x = do
+          i   <- findOrAlloc x
+          if elem x inputs
+            then return $ sop <> identity 1
+            else return $ sop <> fresh
+
 -- | Apply a circuit to a state
 applyCircuit :: Pathsum DMod2 -> [Primitive] -> State Context (Pathsum DMod2)
 applyCircuit = foldM absorbGate
@@ -155,6 +166,14 @@ complexAction vars inputs circ = evalState st Map.empty where
     init <- makeInitial vars inputs
     action <- computeAction circ
     return $ ket init .> action
+
+-- | Closed version of complexAction
+sopOfCircuit :: [ID] -> [ID] -> [Primitive] -> Pathsum DMod2
+sopOfCircuit vars inputs circ = Trace.trace ("Result: " ++ show sop) $ sop where
+  sop = evalState go Map.empty
+  go = do
+    sop <- allocs vars inputs
+    applyCircuit (sop) circ
 
 {------------------------------------
  Verification methods
