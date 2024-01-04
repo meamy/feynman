@@ -553,15 +553,21 @@ applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
  ----------------------------}
 
 -- | Choi matrix of computational basis measurement
-measureChoi :: (Eq g, Abelian g) => Pathsum g
-measureChoi = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
+measure :: (Eq g, Abelian g) => Pathsum g
+measure = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
         y  = ofVar $ PVar 0
 
--- | CPM operator of computational basis measurement
-measure :: (Eq g, Abelian g) => Pathsum g
-measure = unChoi measureChoi
+-- | Apply a computational basis measurement to a qubit in a density matrix
+applyMeas :: (Eq g, Abelian g) => Int -> Pathsum g -> Pathsum g
+applyMeas i (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals
+  where pp' = pp + distribute 1 (((ofVar $ IVar i) + ovals!!i)*(ofVar $ PVar p))
+
+-- | Apply a computational basis measurement to a qubit in a CPM computation
+applyMeasCPM :: (Eq g, Abelian g) => Int -> Pathsum g -> Pathsum g
+applyMeasCPM i (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals
+  where pp' = pp + distribute 1 ((ovals!!i + ovals!!(i + o `div` 2)) * (ofVar $ PVar p))
 
 {----------------------------
  Bind, unbind, and subst
