@@ -22,7 +22,7 @@ import Data.Ratio
 import Data.Semigroup
 import Control.Monad (mzero, msum)
 import Data.Maybe (maybeToList)
-import Data.Complex (Complex, mkPolar)
+import Data.Complex (Complex(..), mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -1095,9 +1095,92 @@ simulate sop xs = go $ sop * ket (map constant xs)
 amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f, Show g) => [FF2] -> Pathsum g -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
 
+-- | Set cover solver
+setCover :: Ord a => [a] -> [[a]] -> [a]
+setCover u sets = go [] u sets where
+  histo sets a =
+    let indicator = map (\s -> if a `elem` s then 1 else 0) sets in
+      (foldl (+) 0 indicator, a)
+
+  go cover u []   = cover
+  go cover u sets =
+    let freqs = map (histo sets) u
+        maxV  = snd $ maximum freqs
+    in
+      go (maxV:cover) u (filter (not . (maxV `elem`)) sets)
+
+-- | Gives a bound for the complexity using set-cover decomposition
+setcoverBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
+setcoverBound o sop i = Trace.trace (show sop') $ length $ setCover u sets where
+  sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
+  
+  order (a,x)   = denomExp (unpack a) + degree x
+
+  poly = phasePoly sop'
+
+  u = Set.toList $ vars poly
+
+  sets =
+    let f (a,x) = order (a,x) >= 3 in
+      map (\(a,x) -> Set.toList $ vars x) . filter f . toTermList $ poly
+
+-- | Gives a bound for the complexity using stabilizer decompositions
+stabsimBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
+stabsimBound o sop i = Trace.trace (show sop') $ length tStates where
+  sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
+  
+  poly = fourier $ phasePoly sop'
+
+  tStates =
+    let f (a,x) = denomExp (unpack a) >= 2 in
+      filter f $ toTermList poly
+  
+
 -- | Performs a strong simulation using set cover based methods
-ssimulate :: (RealFloat f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
+ssimulate :: (RealFloat f, Show f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
 ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) where
+  order (a,x)   = denomExp (unpack a) + degree x
+
+  nonCliffTms v =
+    let f (a,x) = Set.member v (vars x) && denomExp (unpack a) + degree x >= 3 in
+      length . filter f . toTermList
+
+  greedySelect p =
+    let xs = [(nonCliffTms v p, v) | v <- Set.toList (vars p)] in
+      snd . maximumBy (\a b -> compare (fst a) (fst b)) $ xs
+
+  go      = go' . simplify
+  go' sop = case sop of
+    (Pathsum 0 0 0 0 p []) ->
+      let phase = unpack $ getConstant p in
+        case (numer phase, denomExp phase) of
+          (0, 0) -> 1 :+ 0
+          (1, 0) -> (-1) :+ 0
+          (1, 1) -> 0 :+ 1
+          (3, 1) -> 0 :+ (-1)
+          _      -> mkPolar 1 (pi * (fromRational . toRational $ phase))
+     {- case denomExp (getConstant p)
+      let phase = case denomExp (getConstant p) of
+            0 -> fromRational . toRational $ getConstant p in
+        mkPolar 1 (pi * phase)-}
+    (Pathsum 0 0 0 n p []) ->
+      let v       = greedySelect p
+          (p0,p1) = expand sop v
+          q0      = go p0
+          q1      = go p1
+      in
+        Trace.trace ("0: " ++ (show q0) ++ " | 1: " ++ (show q1)) $ q0 + q1
+        --(go p0) + (go p1)
+    (Pathsum k a b c d e) ->
+      let magnitude = case k `mod` 2 of
+            0 -> fromRational $ toRational $ dyadic 1 (k `div` 2)
+            1 -> sqrt(2.0) * (fromRational $ toRational $ dyadic 1 ((k+1) `div` 2))
+      in
+        (mkPolar magnitude 0) * (go' $ Pathsum 0 a b c d e)
+
+-- | Performs a strong simulation using stabilizer decompositions
+stabsimulate :: (RealFloat f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
+stabsimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) where
   order (a,x)   = denomExp (unpack a) + degree x
 
   nonCliffTms v =

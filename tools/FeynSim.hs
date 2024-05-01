@@ -76,6 +76,9 @@ run options xs = case xs of
               qc   <- ExceptT $ return $ parseDotQC zsrc
               let xstr = parseBitstring x
               let ystr = parseBitstring y
+              lift $ putStrLn $ "Stabilizer simulation bound: " ++ show (B.stabsimBound ystr (getSOP qc) xstr)
+              lift $ putStrLn $ "Set cover bound: " ++ show (B.setcoverBound ystr (getSOP qc) xstr)
+              --return ""
               return . show $ ssimulate ystr (getSOP qc) xstr
   _ -> do
     lift $ putStrLn "Invalid argument(s)"
