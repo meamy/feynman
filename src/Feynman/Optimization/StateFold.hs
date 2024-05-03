@@ -6,6 +6,7 @@ import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Control.Monad
 import Control.Monad.State.Strict
 import Data.Bits
 
