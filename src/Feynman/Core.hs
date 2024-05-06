@@ -82,6 +82,8 @@ data Primitive =
   | Rz       Angle ID
   | Rx       Angle ID
   | Ry       Angle ID
+  | Measure  ID ID      -- Comp. basis measurement of /a/ and copied into /b/
+  | Reset    ID
   | Uninterp ID [ID]
   deriving (Eq)
 

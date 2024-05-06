@@ -36,26 +36,43 @@ import Feynman.Algebra.Frontend.OpenQASM.Syntax
 --               ----------U*--------
 --               ----------U---------
 
+-- | A record
 data Record =
     GateRec Dec
   | VarRec Dec Int
   | ArrayRec Dec (Map Int Int)
+  | ParamRec 
 
-data SimState = SimState {
-  symtab :: [Map ID Record],
-  isDens :: Bool,
-  state  :: Pathsum DMod2
+-- | Symbol table maps identifiers to records
+type SymbolTable = Map ID Record
+
+-- | Context for a simulation
+data Ctx = Ctx {
+  symtabs :: [SymbolTable],
+  isDens  :: Bool,
+  state   :: Pathsum DMod2
 }
 
--- | 
-initSt :: SimState
-initSt = SimState Map.empty Map.empty False (identity 0)
+-- | Initial state for a simulation
+initCtx :: Ctx
+initCtx = SimState [Map.empty] False (identity 0)
+
+-- | Finds an identifier in a symbol table
+findRecord :: ID -> [SymbolTable] -> Maybe Record
+findRecord x []            = Nothing
+findRecord x (symtab:rest) = case Map.lookup x symtab of
+  Nothing -> findRecord x rest
+  Just r  -> Just r
+
+-- | Adds a record onto a symbol table
+addRecord :: ID -> Record -> SymbolTable -> SymbolTable
+addRecord = Map.insert
 
 -- | Adds a declaration to the symbol table
 addDec :: ID -> Record -> State SimState ()
 addDec id record = do
-  symtabs <- gets symtab
-  symtabs' = case symtabs of
+  tables <- gets symtabs
+  tables' = case symtabs of
     (x:xs) -> (Map.insert id record x : xs)
   modify (\st -> st { symtab = symtabs' })
 
@@ -66,6 +83,11 @@ lookupDec id = do
   symtabs <- gets symtab
   symtabs' = case symtabs of
     (x:xs) -> (Map.insert id record x : xs)
+
+-- | Lookup an argument in the symbol table
+lookupArg :: Arg -> SymbolTable -> Maybe Int
+lookupArg a symtab = case (findRecord (identifier a) symtab of
+  VarRec s -> 
 
 -- | Allocates space for a variable
 alloc :: Dec -> State SimState Record
