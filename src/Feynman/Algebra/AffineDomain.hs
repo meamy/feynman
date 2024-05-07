@@ -103,6 +103,10 @@ insert num i (F2Mat m n vals) = F2Mat m (n+num) vals' where
   vals'  = map go vals
   go row = appends [row@@(i-1,0), bitVec num 0, row@@(n-i-1,i)]
 
+-- | Decomposes a bit vector according to the encoding of the ARD
+decompose :: Int -> F2Vec -> (F2Vec, F2Vec, F2Vec)
+decompose n row = (row@@(n-1,0), row@@(2*n-1,n), row@@(2*n,2*n))
+
 -- | Project out a range
 project :: (Int,Int) -> F2Mat -> F2Mat
 project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
@@ -143,13 +147,19 @@ assign n j rel = ARD n (F2Mat n (2*n+1) xs) where
     | i == j    = rel
     | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
 
--- | Assigns variable /j/ to /j/ + /k/
+-- | The relation with the single non-identity relation /j'/ = /j/ + /k/
 plusEquals :: Int -> Int -> Int -> AffineRelation
 plusEquals n j k = ARD n (F2Mat n (2*n+1) xs) where
   xs = map go [0..n-1]
   go i
     | i == j    = appends [bitVec 1 0, bitI n i + bitI n k, bitI n i]
     | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
+
+-- | The relation which is identity everywhere except /j/
+disconnect :: Int -> Int -> AffineRelation
+disconnect n j = ARD n (F2Mat n (2*n+1) xs) where
+  xs   = map go . filter (/= j) $ [0..n-1]
+  go i = appends [bitVec 1 0, bitI n i, bitI n i]
 
 {--------------------------
  Lattice operations
@@ -197,3 +207,17 @@ addPost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
 negatePost :: Int -> Int -> AffineRelation -> AffineRelation
 negatePost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
   go row = if row@.(v+j) then complementBit row (2*v) else row
+
+-- | Extends the variable set
+addVars :: Int -> AffineRelation -> AffineRelation
+addVars num (ARD v (F2Mat n m vals)) = ARD v' (F2Mat n m vals') where
+  v'     = v + num
+  vals'  = map go vals ++ [appends [bitVec 1 0, bitI v' i, bitI v' i] | i <- [v..v'-1]]
+  go row =
+    let (a,b,c) = decompose v row in
+      appends [c, zeroExtend num a, zeroExtend num b]
+
+-- | Directly sets /j'/ to Top
+mix :: Int -> AffineRelation -> AffineRelation
+mix j (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (filter go vals)) where
+  go row = not $ row@.j
