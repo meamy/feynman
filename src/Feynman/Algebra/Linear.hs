@@ -51,6 +51,12 @@ fromBits = coerce BitVector.fromBits
 toBits :: F2Vec -> [Bool]
 toBits = coerce BitVector.toBits
 
+append :: F2Vec -> F2Vec -> F2Vec
+append = coerce BitVector.append
+
+appends :: [F2Vec] -> F2Vec
+appends = coerce BitVector.concat
+
 {- Little-endian -}
 instance Show F2Vec where
   show v = map (f . (v @.)) [0..width v - 1]
@@ -274,6 +280,10 @@ toUpperEchelon mat@(F2Mat m n vals) =
   in 
     toUpper mat 0 0
 -}
+
+{- Shortcut out the writer -}
+rowReduce :: F2Mat -> F2Mat
+rowReduce = fst . runWriter . toReducedEchelon
 
 {- Avoids indexing -}
 toEchelon, toReducedEchelon :: F2Mat -> Writer [ROp] F2Mat
