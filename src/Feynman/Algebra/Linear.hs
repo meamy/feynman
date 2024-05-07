@@ -33,6 +33,9 @@ bitVec n i = coerce $ BitVector.bitVec n i
 bitI :: Int -> Int -> F2Vec
 bitI n i = coerce $ BitVector.bitVec n (shift 1 i :: Integer)
 
+ones :: Int -> F2Vec
+ones = coerce $ BitVector.ones
+
 (@.) :: Integral a => F2Vec -> a -> Bool
 (@.) v i = coerce $ (BitVector.@.) (coerce v) i
 

@@ -9,9 +9,9 @@ Portability : portable
 
 module Feynman.Algebra.AffineDomain where
 
+import Data.Bits
 import Feynman.Algebra.Linear
 
-import Debug.Trace as Trace
 
 {-
 -- | Affine relation domain
@@ -78,7 +78,7 @@ compose
 data AffineRelation = ARD {
   vars :: Int,
   mat  :: F2Mat
-  } 
+  } deriving (Eq)
 
 instance Show AffineRelation where
   show ar = foldl (++) "" $ map go (vals $ mat ar) where
@@ -103,6 +103,21 @@ insert num i (F2Mat m n vals) = F2Mat m (n+num) vals' where
   vals'  = map go vals
   go row = appends [row@@(i-1,0), bitVec num 0, row@@(n-i-1,i)]
 
+-- | Project out a range
+project :: (Int,Int) -> F2Mat -> F2Mat
+project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
+  go row = let (a,b,c) = (if i == 0 then bitVec 0 0 else row@@(i-1,0),
+                          row@@(j-1,i),
+                          row@@(n mat-1,j)) in
+    if b /= 0 then [] else [append c a]
+
+-- | Canonicalize a relation
+canonicalize :: AffineRelation -> AffineRelation
+canonicalize (ARD n a) = checkUnsat (ARD n $ rowReduce a) where
+  checkUnsat ar = if (bitI (2*n+1) (2*n) `elem` (vals $ mat ar))
+                  then bot n
+                  else ar
+
 {---------------------------
  Constructors
  ----------------------------}
@@ -120,35 +135,65 @@ eye :: Int -> AffineRelation
 eye n = ARD n (F2Mat n (2*n+1) xs) where
   xs = [appends [bitVec 1 0, bitI n i, bitI n i] | i <- [0..n-1]]
 
+-- | The relation with a single non-identity relation
+assign :: Int -> Int -> F2Vec -> AffineRelation
+assign n j rel = ARD n (F2Mat n (2*n+1) xs) where
+  xs = map go [0..n-1]
+  go i
+    | i == j    = rel
+    | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
+
+-- | Assigns variable /j/ to /j/ + /k/
+plusEquals :: Int -> Int -> Int -> AffineRelation
+plusEquals n j k = ARD n (F2Mat n (2*n+1) xs) where
+  xs = map go [0..n-1]
+  go i
+    | i == j    = appends [bitVec 1 0, bitI n i + bitI n k, bitI n i]
+    | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
 
 {--------------------------
- Operations
+ Lattice operations
  --------------------------}
-
--- | Project out a range
-project :: (Int,Int) -> F2Mat -> F2Mat
-project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
-  go row = let (a,b,c) = (if i == 0 then bitVec 0 0 else row@@(i-1,0),
-                          row@@(j-1,i),
-                          row@@(n mat,j)) in
-    if b /= 0 then [] else [append c a]
 
 -- | Intersection
 meet :: AffineRelation -> AffineRelation -> AffineRelation
 meet (ARD n mat) (ARD n' mat')
   | n /= n'   = error "Can't meet relations on different sets of variables"
-  | otherwise = ARD n (stack mat mat')
+  | otherwise = canonicalize $ ARD n (stack mat mat')
 
 -- | Union
 join :: AffineRelation -> AffineRelation -> AffineRelation
 join (ARD n mat) (ARD n' mat')
   | n /= n'   = error "Can't join relations on different sets of variables"
   | otherwise = ARD n (project (2*n+1,0) $ fromList mat'') where
-      mat'' = [append r r | r <- vals mat] ++ [append (bitVec (2*n+1) 0) r | r <- vals mat']
+      mat'' = [append r r | r <- vals mat] ++
+              [append (bitVec (2*n+1) 0) r | r <- vals mat']
 
 -- | Sequential composition
 compose :: AffineRelation -> AffineRelation -> AffineRelation
 compose (ARD n mat) (ARD n' mat')
   | n /= n'   = error "Can't join relations on different sets of variables"
   | otherwise = ARD n (project (2*n,n) $ fromList mat'') where
-      mat'' = [append (bitVec n 0) r | r <- vals mat] ++ [append r (bitVec n 0) | r <- vals mat']
+      mat'' = [append (bitVec n 0) r | r <- vals mat] ++
+              [append r (bitVec n 0) | r <- vals mat']
+
+-- | Kleene star (iteration)
+star :: AffineRelation -> AffineRelation
+star ar = if ar' /= ar then star ar' else ar where
+  ar' = join ar (compose ar ar)
+
+{---------------------------
+ Ad hoc operations
+ ----------------------------}
+
+-- | Directly sets /j'/ = /j'/ + /k'/. Any equation involving /j'/ is
+--   now satisfied by /j'/ + /k'/
+addPost :: Int -> Int -> AffineRelation -> AffineRelation
+addPost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
+  go row = if row@.(v+j) then complementBit row (v+k) else row
+
+-- | Directly sets /j'/ = /j'/ + 1. Any equation involving /j'/ is
+--   now satisfied by /j'/ + 1
+negatePost :: Int -> Int -> AffineRelation -> AffineRelation
+negatePost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
+  go row = if row@.(v+j) then complementBit row (2*v) else row
