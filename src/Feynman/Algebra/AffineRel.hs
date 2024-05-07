@@ -1,5 +1,5 @@
 {-|
-Module      : ARD
+Module      : AffineRel
 Description : Affine relation domain
 Copyright   : (c) Matthew Amy, 2024
 Maintainer  : matt.e.amy@gmail.com
@@ -7,72 +7,35 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Algebra.AffineDomain where
+module Feynman.Algebra.AffineRel(
+  AffineRelation(..),
+  top,
+  bot,
+  eye,
+  assign,
+  plusEquals,
+  disconnect,
+  constant,
+  meet,
+  meets,
+  join,
+  compose,
+  star,
+  addPost,
+  negatePost,
+  addVars,
+  mix) where
 
 import Data.Bits
 import Feynman.Algebra.Linear
 
-
-{-
--- | Affine relation domain
-data AffineRelation = ARD {
-  vars :: Int,
-  rels :: Int,
-  pre  :: F2Mat,
-  post :: F2Mat,
-  soln :: F2Mat
-  } 
-
-instance Show AffineRelation where
-  show ar = foldl (++) "" $ map go [0..(rels ar)-1] where
-    go i = "[" ++ show (row (pre ar) i) ++
-           "|" ++ show (row (post ar) i) ++
-           "|" ++ show (row (soln ar) i) ++ "]\n"
-
-{---------------------------
- Utilities
- ----------------------------}
-
--- | Stacks two matrices on top of one another
-stack :: F2Mat -> F2Mat -> F2Mat
-stack (F2Mat m1 n1 vals1) (F2Mat m2 n2 vals2)
-  | n1 /= n2 = error "Matrix dimensions don't line up"
-  | otherwise = F2Mat (m1+m2) n1 (vals1 ++ vals2)
-
-{---------------------------
- Constructors
- ----------------------------}
-
--- | The top element. Corresponds to the empty relation.
-top :: Int -> AffineRelation
-top n = ARD n 0 (F2Mat 0 n []) (F2Mat 0 n []) (F2Mat 0 1 [])
-
--- | The bottom element. Corresponds to complete relation.
-bot :: Int -> AffineRelation
-bot n = ARD n 1 (F2Mat 1 n [bitVec n 0]) (F2Mat 1 n [bitVec n 0]) (F2Mat 1 1 [bitVec 1 1])
-
--- | The identity relation.
-eye :: Int -> AffineRelation
-eye n = ARD n n (identity n) (identity n) (coc [bitVec n 0])
-
-
-{--------------------------
- Operations
- --------------------------}
-
--- | Intersection
-meet :: AffineRelation -> AffineRelation -> AffineRelation
-meet (ARD n m pr po so) (ARD n' m' pr' po' so') =
-  ARD n (m+m') (stack pr pr') (stack po po') (stack so so')
-
--- | Union
-join :: AffineRelation -> AffineRelation -> AffineRelation
-join 
-
--- | Sequential composition
-compose :: AffineRelation -> AffineRelation -> AffineRelation
-compose 
--}
+{- | The Affine relation domain is based on [Karr 76] and [Elder et al. 2014].
+     An element of the Affine Relation Domain represents a set of constraints
+     on the pre- and post- states of a set of /n/ binary variables as the kernel of
+     a /2n+1/-column matrix, corresponding to an affine subspace of /F2^(2n)/.
+     Meet and Join are the intersection and (smallest enclosing subspace of the)
+     union. Elements are kept in reduced echelon form with the left-most bits
+     corresponding to the pre-state -}
 
 -- | Affine relation domain
 data AffineRelation = ARD {
@@ -161,6 +124,11 @@ disconnect n j = ARD n (F2Mat n (2*n+1) xs) where
   xs   = map go . filter (/= j) $ [0..n-1]
   go i = appends [bitVec 1 0, bitI n i, bitI n i]
 
+-- | The singleton relation corresponding to a constant variable
+constant :: Int -> Int -> Bool -> AffineRelation
+constant n j val = ARD n (F2Mat 1 (2*n+1) xs) where
+  xs = [appends [bitVec 1 (if val then 1 else 0), bitI n j, bitVec n 0]]
+
 {--------------------------
  Lattice operations
  --------------------------}
@@ -170,6 +138,13 @@ meet :: AffineRelation -> AffineRelation -> AffineRelation
 meet (ARD n mat) (ARD n' mat')
   | n /= n'   = error "Can't meet relations on different sets of variables"
   | otherwise = canonicalize $ ARD n (stack mat mat')
+
+-- | More efficient meet for many constraint sets
+meets :: [AffineRelation] -> AffineRelation
+meets []     = top 0
+meets (x:xs) = canonicalize $ ARD n rel where
+  n   = vars x
+  rel = foldl (\rel ar -> stack rel (mat ar)) (mat x) xs
 
 -- | Union
 join :: AffineRelation -> AffineRelation -> AffineRelation
