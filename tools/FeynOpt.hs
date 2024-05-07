@@ -1,7 +1,7 @@
 {-# LANGUAGE TupleSections #-}
 module Main (main) where
 
-import Feynman.Core (Primitive, ID)
+import Feynman.Core (Primitive, ID, expandCNOT, expandCZ)
 import Feynman.Frontend.DotQC hiding (showStats)
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
 import Feynman.Frontend.OpenQASM.Syntax (QASM,
@@ -45,10 +45,12 @@ data Pass = Triv
           | CT
           | Simplify
           | Phasefold
-          | Statefold
+          | Statefold Int
           | CNOTMin
           | TPar
           | Cliff
+          | CZ
+          | CX
           | Decompile
 
 {- DotQC -}
@@ -75,17 +77,19 @@ decompileDotQC qc = qc { decls = map go $ decls qc }
 
 dotQCPass :: Pass -> (DotQC -> DotQC)
 dotQCPass pass = case pass of
-  Triv      -> id
-  Inline    -> inlineDotQC
-  MCT       -> expandToffolis
-  CT        -> expandAll
-  Simplify  -> simplifyDotQC
-  Phasefold -> optimizeDotQC phaseFold
-  Statefold -> optimizeDotQC stateFold
-  CNOTMin   -> optimizeDotQC minCNOT
-  TPar      -> optimizeDotQC tpar
-  Cliff     -> optimizeDotQC (\_ _ -> simplifyCliffords)
-  Decompile -> decompileDotQC
+  Triv        -> id
+  Inline      -> inlineDotQC
+  MCT         -> expandToffolis
+  CT          -> expandAll
+  Simplify    -> simplifyDotQC
+  Phasefold   -> optimizeDotQC phaseFold
+  Statefold d -> optimizeDotQC (stateFold d)
+  CNOTMin     -> optimizeDotQC minCNOT
+  TPar        -> optimizeDotQC tpar
+  Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
+  CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
+  CX          -> optimizeDotQC (\_ _ -> expandCZ)
+  Decompile   -> decompileDotQC
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
 equivalenceCheckDotQC qc qc' =
@@ -93,7 +97,7 @@ equivalenceCheckDotQC qc qc' =
       circ'   = toCliffordT . toGatelist $ qc'
       vars    = union (qubits qc) (qubits qc')
       ins     = Set.toList $ inputs qc
-      result  = validate False vars ins circ circ'
+      result  = validate True vars ins circ circ'
   in
     case (inputs qc == inputs qc', result) of
       (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
@@ -136,16 +140,18 @@ benchVerif False = Nothing
 
 qasmPass :: Bool -> Pass -> (QASM -> QASM)
 qasmPass pureCircuit pass = case pass of
-  Triv      -> id
-  Inline    -> inline
-  MCT       -> inline
-  CT        -> inline
-  Simplify  -> id
-  Phasefold -> applyOpt phaseFold pureCircuit
-  Statefold -> applyOpt stateFold pureCircuit
-  CNOTMin   -> applyOpt minCNOT pureCircuit
-  TPar      -> applyOpt tpar pureCircuit
-  Cliff     -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  Triv        -> id
+  Inline      -> inline
+  MCT         -> inline
+  CT          -> inline
+  Simplify    -> id
+  Phasefold   -> applyOpt phaseFold pureCircuit
+  Statefold d -> applyOpt (stateFold d) pureCircuit
+  CNOTMin     -> applyOpt minCNOT pureCircuit
+  TPar        -> applyOpt tpar pureCircuit
+  Cliff       -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  CZ          -> applyOpt (\_ _ -> expandCNOT) pureCircuit
+  CX          -> applyOpt (\_ _ -> expandCZ) pureCircuit
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -191,12 +197,15 @@ printHelp = mapM_ putStrLn lines
           "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
           "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
-          "  -statefold\tSlightly more powerful phase folding",
+          "  -statefold d \tSlightly more powerful phase folding",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
           "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
-          "  -O3\t\tPhase folding + state folding + simplify",
+          "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
+          "  -apf\t\tAffine phase folding algorithm (equiv. to pyzx)",
+          "  -qpf\t\tQuadratic phase folding algorithm",
+          "  -ppf\t\tPolynomial phase folding algorithm",
           "",
           "Verification passes:",
           "  -verify\tPerform verification algorithm of [A18] after all passes",
@@ -219,13 +228,18 @@ parseArgs passes verify pureCircuit (x:xs) = case x of
   "-toCliffordT" -> parseArgs (CT:passes) verify pureCircuit xs
   "-simplify"    -> parseArgs (Simplify:passes) verify pureCircuit xs
   "-phasefold"   -> parseArgs (Phasefold:passes) verify pureCircuit xs
-  "-statefold"   -> parseArgs (Statefold:passes) verify pureCircuit xs
+  "-statefold"   -> parseArgs ((Statefold $ read (head xs)):passes) verify pureCircuit (tail xs)
   "-cnotmin"     -> parseArgs (CNOTMin:passes) verify pureCircuit xs
   "-tpar"        -> parseArgs (TPar:passes) verify pureCircuit xs
   "-clifford"    -> parseArgs (Cliff:passes) verify pureCircuit xs
+  "-cxcz"        -> parseArgs (CZ:passes) verify pureCircuit xs
+  "-czcx"        -> parseArgs (CX:passes) verify pureCircuit xs
   "-decompile"   -> parseArgs (Decompile:passes) verify pureCircuit xs
   "-O2"          -> parseArgs (o2 ++ passes) verify pureCircuit xs
   "-O3"          -> parseArgs (o3 ++ passes) verify pureCircuit xs
+  "-apf"         -> parseArgs (apf ++ passes) verify pureCircuit xs
+  "-qpf"         -> parseArgs (qpf ++ passes) verify pureCircuit xs
+  "-ppf"         -> parseArgs (ppf ++ passes) verify pureCircuit xs
   "-verify"      -> parseArgs passes True pureCircuit xs
   "-benchmarks"  -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass passes) (benchVerif verify)
   "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
@@ -236,8 +250,11 @@ parseArgs passes verify pureCircuit (x:xs) = case x of
   f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
   f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= runQASM passes verify pureCircuit f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
-  where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
-        o3 = [CNOTMin,Simplify,Statefold,Phasefold,Simplify,CT,Simplify,MCT]
+  where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
+        o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
 
 main :: IO ()
 main = getArgs >>= parseArgs [] False False

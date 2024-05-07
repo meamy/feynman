@@ -92,7 +92,7 @@ data Stmt =
   | Seq [Stmt]
   | Call ID [ID]
   | Repeat Int Stmt
-   
+
 data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: Stmt }
@@ -101,6 +101,18 @@ data Circuit = Circuit { qubits :: [ID],
                          inputs :: Set ID,
                          decls  :: [Decl] }
 
+{- Flow-agnostic while programs -}
+
+data WStmt =
+    WSkip Loc
+  | WGate Loc Primitive
+  | WSeq Loc WStmt WStmt
+  | WReset Loc ID
+  | WMeasure Loc ID
+  | WIf Loc WStmt WStmt
+  | WWhile Loc WStmt
+
+{- Utilities -}
 foldCirc f b c = foldl (foldStmt f . body) b (decls c)
 
 foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
@@ -235,6 +247,20 @@ countT = foldr (+) 0 . map go where
   go (Tinv _) = 1
   go _     = 0
 
+-- Expand CNOT gates over H and CZ
+expandCNOT :: [Primitive] -> [Primitive]
+expandCNOT = concatMap go where
+  go x = case x of
+    CNOT c t      -> [H t, CZ c t, H t]
+    _             -> [x]
+
+-- Expand CZ gates over H and CNOT
+expandCZ :: [Primitive] -> [Primitive]
+expandCZ = concatMap go where
+  go x = case x of
+    CZ c t      -> [H t, CNOT c t, H t]
+    _           -> [x]
+
 -- Printing
 
 instance Show Primitive where
@@ -273,6 +299,18 @@ instance Show Circuit where
     where qubitline = ".v " ++ showLst (qubits circ)
           inputline = ".i " ++ showLst (filter (`Set.member` inputs circ) (qubits circ))
           body      = map show (decls circ)
+
+instance Show WStmt where
+  show stmt = intercalate "\n" $ go stmt where
+    go :: WStmt -> [String]
+    go (WSkip _)      = ["SKIP"]
+    go (WGate _ gate) = [show gate]
+    go (WSeq _ s1 s2) = go s1 ++ go s2
+    go (WReset _ v)   = ["RESET " ++ show v]
+    go (WMeasure _ v) = ["* <- MEASURE " ++ show v]
+    go (WIf _ s1 s2)  = ["IF * THEN:"] ++ (map ('\t':) $ go s1)
+                        ++ ["ELSE:"] ++ (map ('\t':) $ go s2)
+    go (WWhile _ s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
 
 showLst = intercalate " "
 
