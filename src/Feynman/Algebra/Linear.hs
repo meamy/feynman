@@ -60,6 +60,9 @@ append = coerce BitVector.append
 appends :: [F2Vec] -> F2Vec
 appends = coerce BitVector.concat
 
+lsb1 :: F2Vec -> Int
+lsb1 = coerce BitVector.lsb1
+
 {- Little-endian -}
 instance Show F2Vec where
   show v = map (f . (v @.)) [0..width v - 1]
@@ -556,6 +559,15 @@ toReducedEchelonPMHA mat
   | otherwise =
     let width = (ceiling . (/ 2) . logBase 2.0 . fromIntegral) $ n mat in
       censor transposeROps . (toEchelonPMH width) . transpose =<< toEchelonPMHA width mat
+
+{- Reduces a single vector modulo a matrix -}
+reduceVector :: F2Mat -> F2Vec -> F2Vec
+reduceVector mat@(F2Mat m n vals) vec = go 0 vals vec where
+  go _ []     vec = vec
+  go i (x:xs) vec
+    | i == n     = vec
+    | not (x@.i) = go (i+1) (x:xs) vec
+    | otherwise  = go (i+1) xs $ if vec@.i then x + vec else vec
 
 rank :: F2Mat -> Int
 rank mat =
