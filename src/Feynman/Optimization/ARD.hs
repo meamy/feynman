@@ -214,10 +214,18 @@ star ar = if ar' /= ar then star ar' else ar where
  Fast-forward operators
  --------------------------}
 
--- | Converts a relation to forward-canonicalization [X|X']
+-- | Converts a relation [X|Y|c] to forward-canonicalization [X|X']
+--   projecting out any temporaries Y
 makeExplicitFF :: AffineRelation -> AffineRelation
-makeExplicitFF (ARD (F2Mat m n vals)) = ARD (F2Mat m (n+m) vals') where
-  vals' = [appends [r@@(n-1,n-1), bitI m i, r@@(n-2,0)] | (r,i) <- zip vals [0..]]
+makeExplicitFF (ARD (F2Mat m n vals))
+  | m == n-1 =
+    let vals' = [appends [r@@(n-1,n-1), bitI m i, r@@(m-1,0)] | (r,i) <- zip vals [0..]] in
+      canonicalize $ ARD $ fromList vals'
+  | otherwise =
+    let t = n - 1 - m
+        vals' = [appends [r@@(n-1,n-1), bitI m i, r@@(m-1,0), r@@(n-2,m)] | (r,i) <- zip vals [0..]]
+    in
+      ARD $ project (t,0) $ fromList vals' where
 
 -- | Sequential composition in the [X|X'] order
 composeFF :: AffineRelation -> AffineRelation -> AffineRelation
