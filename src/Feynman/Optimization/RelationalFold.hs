@@ -47,7 +47,7 @@ isNil = (== 0)
 
 -- | Splits an affine parity into a bitvector and its affine part
 split :: F2Vec -> (F2Vec, Bool)
-split bv = (bv@@(1,width bv), bv@.0)
+split bv = (bv@@(width bv-1,1), bv@.0)
 
 {-----------------------------------
  Optimization algorithm
@@ -143,8 +143,6 @@ fastForward summary = do
   Trace.trace ("summary: \n" ++ show summary) $ return ()
   let ar     = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx
   Trace.trace ("Ar: \n" ++ show ar) $ return ()
-  put ctx
-  {-
   let cns    = cOp ar summary
   Trace.trace ("Cop: \n" ++ show cns) $ return ()
   let ket'   = Map.fromList $ zip (Map.keys $ ket ctx) [bitI ((dim ctx)+1) x | x <- [1..]]
@@ -153,7 +151,7 @@ fastForward summary = do
         go (o,t) (bv, tm) = Trace.trace (show "Canonical form of " ++ show bv ++ ":\n" ++ show
                                          (projectVector cns (append (bitVec 1 0) bv))) $ case projectVector cns (append (bitVec 1 0) bv) of
           Nothing  -> (tm:o, t)
-          Just bv' -> (o, (proj1 $ rotate bv' 1,tm):t)
+          Just bv' -> (o, (bv'@@(dim ctx - 1,0),tm):t)
   let ctx' = ctx { ket     = ket',
                    terms   = Map.fromList t,
                    orphans = o }
@@ -161,7 +159,6 @@ fastForward summary = do
   put $ ctx { ket     = ket',
               terms   = Map.fromList t,
               orphans = o }
--}
 
 -- | Summarizes a conditional
 branchSummary :: Ctx -> Ctx -> State (Ctx) AffineRelation
@@ -176,12 +173,11 @@ branchSummary ctx' ctx'' = do
 -- | Summarizes a loop
 loopSummary :: Ctx -> State (Ctx) AffineRelation
 loopSummary ctx' = do
-  Trace.trace ("Summarizing: \n" ++ show ctx') $ return ()
   modify (\ctx -> ctx { orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ terms ctx') })
   let tmp = ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
-  Trace.trace ("ARD: \n" ++ show tmp) $ return ()
-  Trace.trace ("explicit: \n" ++ show (makeExplicitFF tmp)) $ return ()
-  return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
+  let tmp' = starFF $ makeExplicitFF $ tmp
+  return tmp'
+  --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
 {-
 -- | Post-composes a with b|c
@@ -299,5 +295,6 @@ testcase4 = WSeq 1 (WGate 2 $ CNOT "x" "y") $
             WSeq 12 (WGate 13 $ Tinv "y") $
             WGate 14 $ CNOT "x" "y"
 
-testcase5 = WSeq 1 (WGate 2 $ T "x") $
-            WWhile 4 $ WGate 5 $ H "x"
+testcase5 = WSeq 1 (WGate 2 $ T "y") $
+            WSeq 3 (WWhile 4 $ WGate 5 $ H "x") $
+            WGate 6 $ Tinv "y"
