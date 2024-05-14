@@ -278,30 +278,3 @@ projectVector (ARD mat) vec = if vec'@@(v-2,0) /= 0
         v'   = (n mat) - v
         vec' = reduceVector mat $ appends [vec@@(v-1,v-1), bitVec v' 0, vec@@(v-2,0)]
   
-
--- | Partial existentially quantified composition. Given a full-rank relation
---
---   A1: X' | Y  | X | a (backward)
---
---   and a non-full rank relation
---
---   A2: Z | Z' | b      (forward)
---
---   we generate the backward constraint system
---
---   Z'' | Z' | 0  | 0 | 0 | 0
---    0  | Z' | Z  | 0 | 0 | b
---    0  | 0  | X' | Y | X | a
---
---   and project out the third variable set (Z/X'). This guarantees that the result
---   will have at least rank
-parComp :: AffineRelation -> AffineRelation -> AffineRelation
-parComp (ARD (F2Mat m n vals)) (ARD (F2Mat m' n' vals')) = where
-  vals'' = [appends [bitVec n 0, bitI (m+1) i, bitI (m+1) i] | i <- [0..m-1]] ++ 
-           [appends [r@@(n'-1,n'-1),
-                     bitVec (n-1-m) 0,
-                     r@@(m-1,0),
-                     r@@(n'-2,m),
-                     bitVec m 0] | r <- vals'] ++
-           [appends [r, bitVec 2*m 0] | r <- vals]
-        

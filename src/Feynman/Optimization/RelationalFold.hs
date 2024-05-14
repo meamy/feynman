@@ -24,7 +24,7 @@ import Data.Functor.Identity
 import Data.Coerce
 import Data.Bits
 
-import Control.Monad.State.Strict
+import Control.Monad.State.Strict hiding (join)
 
 import Feynman.Core
 import Feynman.Algebra.Base
@@ -135,69 +135,45 @@ initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
   ket = (zip inputs [bitI dim x | x <- [1..]]) ++
         (zip (vars \\ inputs) [bitVec dim 0 | x <- [1..]])
 
--- | Fast forwards the analysis based on a (fast-forward) summary
+-- | Fast forwards the analysis based on a summary
 fastForward :: AffineRelation -> State Ctx ()
 fastForward summary = do
   ctx <- get
   Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
   Trace.trace ("summary: \n" ++ show summary) $ return ()
-  let ar     = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx
-  Trace.trace ("Ar: \n" ++ show ar) $ return ()
-  let cns    = cOp ar summary
-  Trace.trace ("Cop: \n" ++ show cns) $ return ()
-  let ket'   = Map.fromList $ zip (Map.keys $ ket ctx) [bitI ((dim ctx)+1) x | x <- [1..]]
-  Trace.trace ("Ket': \n" ++ show ket') $ return ()
-  let (o,t)  = foldl' go (orphans ctx, []) (Map.toList $ terms ctx) where
-        go (o,t) (bv, tm) = Trace.trace (show "Canonical form of " ++ show bv ++ ":\n" ++ show
-                                         (projectVector cns (append (bitVec 1 0) bv))) $ case projectVector cns (append (bitVec 1 0) bv) of
-          Nothing  -> (tm:o, t)
-          Just bv' -> (o, (bv'@@(dim ctx - 1,0),tm):t)
-  let ctx' = ctx { ket     = ket',
-                   terms   = Map.fromList t,
-                   orphans = o }
+  let (ket', dim') = runState (mapM go $ ket ctx) (dim ctx) where
+        go bv = case projectVector summary (rotate bv (-1)) of
+          Just bv' -> return $ rotate bv' 1
+          Nothing  -> do
+            dim' <- get
+            put $ dim'+1
+            return $ bitI (dim'+1) dim'
+  let ket'' = Map.map (\bv -> zeroExtend (dim' - width bv) bv) ket'
+  let tms'  = Map.mapKeysMonotonic (zeroExtend (dim' - dim ctx)) $ terms ctx
+  let ctx'  = ctx { ket   = ket'',
+                    terms = tms' }
   Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
-  put $ ctx { ket     = ket',
-              terms   = Map.fromList t,
-              orphans = o }
+  put $ ctx'
 
 -- | Summarizes a conditional
 branchSummary :: Ctx -> Ctx -> State (Ctx) AffineRelation
 branchSummary ctx' ctx'' = do
   let o1  = orphans ctx' ++ Map.elems (terms ctx')
-  let ar1 = makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
+  let ar1 = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
   let o2 = orphans ctx'' ++ Map.elems (terms ctx'')
-  let ar2 = makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx''
+  let ar2 = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx''
   modify (\ctx -> ctx { orphans = orphans ctx ++ o1 ++ o2 } )
-  return $ joinFF ar1 ar2
+  return $ join ar1 ar2
 
 -- | Summarizes a loop
 loopSummary :: Ctx -> State (Ctx) AffineRelation
 loopSummary ctx' = do
   modify (\ctx -> ctx { orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ terms ctx') })
   let tmp = ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
-  let tmp' = starFF $ makeExplicitFF $ tmp
+  let tmp' = star $ makeExplicit $ tmp
   return tmp'
   --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
-{-
--- | Post-composes a with b|c
-applyBranch :: Ctx -> Ctx -> Ctx -> Ctx
-applyBranch ctx ctx' ctx'' =
-  let ar1 = makeExplicit . ARD . fromList . Map.elems $ ket ctx
-      ar2 = makeExplicitFF . ARD . fromList . Map.elems $ ket ctx'
-      ar3 = makeExplicitFF . ARD . fromList . Map.elems $ ket ctx''
-      cns = cOp ar1 $ joinFF ar2 ar3
-
-  constraintSolver = cOp $ joinFF genJoin (ket ctx') (ket ctx'')
-
--- | Post-composes a with b*
-applyLoop :: Ctx -> Ctx -> Ctx
-applyLoop ctx ctx' = Ctx dim ket' terms' orphans' phase where
-  constraints = genStar (ket ctx')
-  (terms, orphaned)
-  phases' = orphans ctx' ++ (snd . unzip . Map.toList $ terms ctx')
--}
-  
 -- | Abstract transformers for while statements
 applyStmt :: WStmt -> State (Ctx) ()
 applyStmt stmt = case stmt of
@@ -217,10 +193,7 @@ applyStmt stmt = case stmt of
     ctx <- get
     let vars = Map.keys $ ket ctx
     let ctx' = execState (applyStmt s) $ initialState vars vars
-    --Trace.trace (show ctx) $ return ()
-    --Trace.trace (show ctx') $ return ()
     summary <- loopSummary ctx'
-    --Trace.trace (show summary) $ return ()
     fastForward summary
 
 -- | Generate substitution list
