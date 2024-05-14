@@ -298,3 +298,9 @@ testcase4 = WSeq 1 (WGate 2 $ CNOT "x" "y") $
 testcase5 = WSeq 1 (WGate 2 $ T "y") $
             WSeq 3 (WWhile 4 $ WGate 5 $ H "x") $
             WGate 6 $ Tinv "y"
+
+testcase6 = WSeq 1 (WGate 2 $ T "y") $
+            WSeq 3 (WWhile 4 $
+                    WSeq 5 (WGate 6 $ T "x") $
+                    WWhile 7 $ (WGate 8 $ X "y")) $
+            WGate 9 $ Tinv "y"
