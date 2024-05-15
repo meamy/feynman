@@ -47,7 +47,15 @@ isNil = (== 0)
 
 -- | Splits an affine parity into a bitvector and its affine part
 split :: F2Vec -> (F2Vec, Bool)
-split bv = (bv@@(width bv-1,1), bv@.0)
+split bv = (bv@@(width bv-2,0), bv@.(width bv - 1))
+
+-- | Extends a bitvector by 0 on the left
+extendLeft :: Int -> F2Vec -> F2Vec
+extendLeft i = (flip shift) i . zeroExtend i
+
+-- | Gets the parity bit (high-order bit)
+getParity :: F2Vec -> Bool
+getParity bv = bv@.(width bv - 1)
 
 {-----------------------------------
  Optimization algorithm
@@ -70,22 +78,20 @@ getSt v = get >>= \st ->
     Nothing -> do put $ st { dim = dim', ket = ket', terms = terms' }
                   return (bv')
       where dim' = dim st + 1
-            bv'  = bitI dim' (dim'-1)
-            ket' = Map.insert v bv' $ Map.map (zeroExtend 1) (ket st)
-            terms' = Map.mapKeysMonotonic (zeroExtend 1) (terms st)
+            bv'  = bitI dim' 0
+            ket' = Map.insert v bv' $ Map.map (extendLeft 1) (ket st)
+            terms' = Map.mapKeysMonotonic (extendLeft 1) (terms st)
 
 -- | Set the state of a variable as an (affine) parity
 setSt :: ID -> F2Vec -> State Ctx ()
 setSt v bv = modify $ \st -> st { ket = Map.insert v bv $ ket st }
 
 -- | Increases the dimension (i.e. number of variables tracked)
-increaseDim :: State Ctx (Int)
-increaseDim = get >>= \st -> do
-  let dim'   = dim st + 1
-  let ket'   = Map.map (zeroExtend 1) (ket st)
-  let terms' = Map.mapKeysMonotonic (zeroExtend 1) (terms st)
-  put $ st { dim = dim', ket = ket', terms = terms'}
-  return dim'
+alloc :: Int -> State Ctx ()
+alloc i = modify go where
+  go st = st { dim   = dim st + i,
+               ket   = Map.map (extendLeft i) (ket st),
+               terms = Map.mapKeysMonotonic (extendLeft i) (terms st) }
 
 -- | Applies a rotation of a given angle on a particular (affine) parity
 addTerm :: Angle -> Loc -> F2Vec -> State Ctx ()
@@ -96,8 +102,8 @@ addTerm theta loc aparity = modify go where
     (parity, True)  -> st { terms = Map.alter (add (-theta')) parity $ terms st,
                             phase = phase st + theta }
   add theta t = case t of
-    Just (reps, theta') -> Just (Set.insert (loc, aparity@.0) reps, theta + theta')
-    Nothing             -> Just (Set.singleton (loc, aparity@.0), theta)
+    Just (reps, theta') -> Just (Set.insert (loc, getParity aparity) reps, theta + theta')
+    Nothing             -> Just (Set.singleton (loc, getParity aparity), theta)
 
 -- | Abstract transformers for primitive gates
 applyGate :: (Primitive, Loc) -> State Ctx ()
@@ -108,7 +114,7 @@ applyGate (gate, loc) = case gate of
   Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) loc
   Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) loc
   Rz p v -> getSt v >>= addTerm p loc
-  X v    -> getSt v >>= \bv -> setSt v (complementBit bv 0)
+  X v    -> getSt v >>= \bv -> setSt v (complementBit bv (width bv - 1))
   CNOT c t -> do
     bv  <- getSt c
     bv' <- getSt t
@@ -122,7 +128,13 @@ applyGate (gate, loc) = case gate of
   _        -> do
     let args = getArgs gate
     _ <- mapM getSt args
-    mapM_ (\v -> increaseDim >>= \k -> setSt v $ bitI k (k-1)) args
+    ctx <- get
+    Trace.trace (show ctx) $ return ()
+    alloc $ length args
+    ctx' <- get
+    Trace.trace (show ctx') $ return ()
+    dim' <- gets dim
+    mapM_ (\(v,i) -> setSt v $ bitI dim' i) $ zip args [0..]
 
 {-----------------------------------
  Phase folding of the quantum WHILE
@@ -132,8 +144,8 @@ applyGate (gate, loc) = case gate of
 initialState :: [ID] -> [ID] -> Ctx
 initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
   dim = 1 + length inputs
-  ket = (zip inputs [bitI dim x | x <- [1..]]) ++
-        (zip (vars \\ inputs) [bitVec dim 0 | x <- [1..]])
+  ket = (zip inputs [bitI dim x | x <- [0..]]) ++
+        (zip (vars \\ inputs) [bitVec dim 0 | x <- [0..]])
 
 -- | Fast forwards the analysis based on a summary
 fastForward :: AffineRelation -> State Ctx ()
@@ -141,16 +153,13 @@ fastForward summary = do
   ctx <- get
   Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
   Trace.trace ("summary: \n" ++ show summary) $ return ()
-  let (ket', dim') = runState (mapM go $ ket ctx) (dim ctx) where
-        go bv = case projectVector summary (rotate bv (-1)) of
-          Just bv' -> return $ rotate bv' 1
-          Nothing  -> do
-            dim' <- get
-            put $ dim'+1
-            return $ bitI (dim'+1) dim'
-  let ket'' = Map.map (\bv -> zeroExtend (dim' - width bv) bv) ket'
-  let tms'  = Map.mapKeysMonotonic (zeroExtend (dim' - dim ctx)) $ terms ctx
-  let ctx'  = ctx { ket   = ket'',
+  let (ids, vecs) = unzip . Map.toList $ ket ctx
+  let vecs' = vals $ compose' (makeExplicit . ARD . fromList $ vecs) summary
+  let ket' = Map.fromList $ zip ids vecs'
+  let dim' = width $ head vecs'
+  let tms'  = Map.mapKeysMonotonic (extendLeft (dim' - dim ctx)) $ terms ctx
+  let ctx'  = ctx { dim   = dim',
+                    ket   = ket',
                     terms = tms' }
   Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
   put $ ctx'
@@ -159,9 +168,9 @@ fastForward summary = do
 branchSummary :: Ctx -> Ctx -> State (Ctx) AffineRelation
 branchSummary ctx' ctx'' = do
   let o1  = orphans ctx' ++ Map.elems (terms ctx')
-  let ar1 = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
+  let ar1 = makeExplicit . ARD . fromList . Map.elems $ ket ctx'
   let o2 = orphans ctx'' ++ Map.elems (terms ctx'')
-  let ar2 = makeExplicit . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx''
+  let ar2 = makeExplicit . ARD . fromList . Map.elems $ ket ctx''
   modify (\ctx -> ctx { orphans = orphans ctx ++ o1 ++ o2 } )
   return $ join ar1 ar2
 
@@ -169,9 +178,7 @@ branchSummary ctx' ctx'' = do
 loopSummary :: Ctx -> State (Ctx) AffineRelation
 loopSummary ctx' = do
   modify (\ctx -> ctx { orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ terms ctx') })
-  let tmp = ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
-  let tmp' = star $ makeExplicit $ tmp
-  return tmp'
+  return $ star . projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
   --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
 -- | Abstract transformers for while statements

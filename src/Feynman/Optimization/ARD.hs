@@ -17,6 +17,7 @@ module Feynman.Optimization.ARD(
   clearPost,
   addVars,
   makeExplicit,
+  projectTemporaries,
   meet,
   meets,
   join,
@@ -27,7 +28,8 @@ module Feynman.Optimization.ARD(
   joinFF,
   starFF,
   cOp,
-  projectVector
+  projectVector,
+  compose'
   ) where
 
 import Data.Bits
@@ -171,6 +173,12 @@ setFresh j (ARD (F2Mat m n vals)) = ARD (F2Mat m n' (map go $ zip vals [0..])) w
                then bitI n' (n-1)
                else (appends [row@@(n-1,n-1), bitVec 1 0, row@@(n-2,0)])
 
+-- | Projects out temporary variables, needed for loop summarization
+projectTemporaries :: AffineRelation -> AffineRelation
+projectTemporaries ar@(ARD (F2Mat m n vals))
+  | n == 2*m + 1 = ar
+  | otherwise    = ARD $ project (n-m-1,m) (F2Mat m n vals)
+
 {--------------------------
  Lattice operations
  --------------------------}
@@ -278,3 +286,38 @@ projectVector (ARD mat) vec = if vec'@@(v-2,0) /= 0
         v'   = (n mat) - v
         vec' = reduceVector mat $ appends [vec@@(v-1,v-1), bitVec v' 0, vec@@(v-2,0)]
   
+
+-- | Full-rank composition. Assures that every variable in X' has a representation.
+--
+--   Given the (full-rank) relation
+--
+--   A1: X' | Y  | X | a (backward)
+--
+--   And the not necessarily full-rank relation
+--
+--   A2: X'' | X' | b
+--
+--   we generate the constraint system
+--
+--   A2.A1 = I | I  | 0 | 0 | 0 | 0
+--           0 | X''| X'| 0 | 0 | b
+--           0 | 0  | X'| Y | X | a
+--
+--   Projecting away X' canonicalizes X'' over the relations between X'' Y and X,
+--   eliminating X'' first
+--
+compose' :: AffineRelation -> AffineRelation -> F2Mat
+compose' (ARD (F2Mat m n mat)) (ARD (F2Mat m' n' mat')) = fromList vals'' where
+  -- The number of program variables
+  v = m
+
+  -- The initial constraint system
+  cons = [appends [bitVec n 0, bitI v i, bitI v i] | i <- [0..v-1]] ++
+         [appends [r@@(n'-1,n'-1), bitVec (n-v-1) 0, r@@(n'-2,0), bitVec v 0] | r <- mat'] ++
+         [appends [r, bitVec (2*v) 0] | r <- mat]
+
+  -- The reduced relation
+  cons' = rowReduce $ fromList cons
+
+  -- The final matrix
+  vals'' = [r@@(width r - 1, v) | r <- take v $ vals cons']
