@@ -1,6 +1,7 @@
 module Feynman.Frontend.OpenQASM.Syntax where
 
 import Feynman.Core hiding (Stmt)
+import Feynman.Circuits
 import Feynman.Frontend.DotQC (DotQC)
 import qualified Feynman.Frontend.DotQC as DotQC
 

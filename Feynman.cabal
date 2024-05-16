@@ -26,6 +26,7 @@ library
                        FlexibleInstances
   hs-source-dirs:      src
   exposed-modules:     Feynman.Core,
+                       Feynman.Circuits,
                        Feynman.Util.Unicode,
 
                        Feynman.Algebra.Base,

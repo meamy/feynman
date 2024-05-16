@@ -36,7 +36,8 @@ import Test.QuickCheck (Arbitrary(..),
 
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger, cs, ccx, removeSwaps)
+import Feynman.Core (ID, Primitive(..), Angle(..), dagger, removeSwaps)
+import Feynman.Circuits (cs, ccx)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Polynomial hiding (Var)
@@ -338,8 +339,8 @@ toMCT g = case g of
 synthesizeMCT :: Int -> [ID] -> ID -> [Primitive]
 synthesizeMCT _ [] t       = [X t]
 synthesizeMCT _ [x] t      = [CNOT x t]
-synthesizeMCT _ [x,y] t    = Core.ccx x y t
-synthesizeMCT i (x:xs) t   = circ ++ Core.ccx x ("_anc" ++ show i) t ++ circ where
+synthesizeMCT _ [x,y] t    = ccx x y t
+synthesizeMCT i (x:xs) t   = circ ++ ccx x ("_anc" ++ show i) t ++ circ where
   circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
 -- | Push swaps to the end

@@ -226,21 +226,12 @@ removeSwaps = reverse . go (Map.empty, []) where
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
     _          -> go (ctx, (substGate (get ctx) x):acc) xs
 
--- Builtin circuits
-
-cs :: ID -> ID -> [Primitive]
-cs x y = [T x, T y, CNOT x y, Tinv y, CNOT x y]
-
-cz :: ID -> ID -> [Primitive]
-cz x y = [S x, S y, CNOT x y, Sinv y, CNOT x y]
-
-ccx :: ID -> ID -> ID -> [Primitive]
-ccx x y z = [H z] ++ ccz x y z ++ [H z]
-
-ccz :: ID -> ID -> ID -> [Primitive]
-ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
-             CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
-             Tinv x, CNOT y z, CNOT z x, CNOT x y]
+-- Count the number of T-gates
+countT :: [Primitive] -> Int
+countT = foldr (+) 0 . map go where
+  go (T _) = 1
+  go (Tinv _) = 1
+  go _     = 0
 
 -- Printing
 
@@ -298,4 +289,3 @@ toffoli = Circuit { qubits = ["x", "y", "z"],
                                     Gate $ Tinv "x",
                                     Gate $ CNOT "y" "z", Gate  $ CNOT "z" "x", Gate $ CNOT "x" "y",
                                     Gate $ H "z" ] }
-
