@@ -2,6 +2,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ExplicitForAll #-}
 
 {-|
 Module      : Multivariate
@@ -70,39 +71,17 @@ instance (Show v) => Show (Monomial ord v) where
     showVar (v,i) = Unicode.sup (show v) (toInteger i)
 
 {-----------------------------------
- Monomial orders
+ Operations on Monomials
  -----------------------------------}
-{-
--- | Class of monomial orderings
-class Ord v => MonomialOrder ord v where
-  compareMonomial :: Monomial ord v -> Monomial ord v -> Ordering
--}
--- | Class of elimination variables
-class Ord v => Elim v where
-  eliminate :: v -> Bool
-{-
--- | Ord instance given a monomial ordering
-instance (Ord v, MonomialOrder ord v) => Ord (Monomial ord v) where
-  compare = compareMonomial
--}
--- | Lexicographic
-data Lex = Lex
 
--- | Graded reverse lexicographic
-data GrevLex = GrevLex
+-- | Constructs a monomial from a multiset of variables
+monomial :: Ord v => [v] -> Monomial ord v
+monomial = foldr (\a -> ((ofVar a) <>)) mempty
 
-instance Ord v => Ord (Monomial GrevLex v) where
-  compare m n
-    | k /= l    = compare k l
-    | otherwise = case filter (/= 0) . Map.elems . unM $ m ./. n of
-        []            -> EQ
-        (x:_) | x < 0 -> GT
-        _             -> LT
-    where k = degree m
-          l = degree n
+-- | Deconstructs a monomial into a multiset of variables
+unMonomial :: Monomial ord v -> [v]
+unMonomial m = concat [replicate i a | (a,i) <- Map.toList $ unM m]
 
--- | Elimination order
-data Elimination = Elimination
 {-
 -- | Class of monomials over a variable type.
 --
@@ -121,41 +100,94 @@ class (Degree m, Ord (Var m), Ord m, Group m, Symbolic m) => Monomial m where
   divides m n = (unMonomial m) `isSubsequenceOf` (unMonomial n)
 -}
 
---  unMonomial :: m -> [Var m]
---  unMonomial m = concat [replicate i a | (a,i) <- Map.toList $ unPP m]
 --  leastCM m n  = GrevlexPP $ Map.unionWith (max) (unPP m) (unPP n)
 --  divides m n  = all (>= 0) . Map.elems . unPP $ n ./. m
 --  monomial   :: [Var m] -> m
---  monomial    = foldr (\a -> ((ofVar a) <>)) mempty
+
+{-----------------------------------
+ Monomial orders
+ -----------------------------------}
+
+type MonomialOrder ord v = Monomial ord v -> Monomial ord v -> Ordering
+
+data Lex = Lex
+data GrevLex = GrevLex
+data Elimination = Elimination
+
+-- | Class of elimination variables
+class Ord v => Elim v where
+  eliminate :: v -> Bool
+
+-- | Lexicographic order
+lexCompare :: Ord v => MonomialOrder ord v
+lexCompare m n = compare (unM m) (unM n)
+
+-- | Graded reverse lexicographic ordering
+grevlexCompare :: Ord v => MonomialOrder ord v
+grevlexCompare m n
+    | k /= l    = compare k l
+    | otherwise = case filter (/= 0) . Map.elems . unM $ m ./. n of
+        []            -> EQ
+        (x:_) | x < 0 -> GT
+        _             -> LT
+    where k = degree m
+          l = degree n
+
+-- | Elimination ordering with a local ordering
+eliminationBuilder :: (Ord v, Elim v) => MonomialOrder ord v -> MonomialOrder ord v
+eliminationBuilder cmp m n =
+  case cmp (Monomial mx) (Monomial nx) of
+    EQ -> cmp (Monomial my) (Monomial ny)
+    or -> or
+  where (mx, my) = Map.partitionWithKey (\k _ -> eliminate k) $ unM m
+        (nx, ny) = Map.partitionWithKey (\k _ -> eliminate k) $ unM m
+
+-- | Default elimination order using local grevlex
+eliminationCompare :: (Ord v, Elim v) => MonomialOrder ord v
+eliminationCompare = eliminationBuilder grevlexCompare
+
+instance Ord v => Ord (Monomial Lex v) where
+  {-# INLINABLE compare #-}
+  compare = lexCompare
+
+instance Ord v => Ord (Monomial GrevLex v) where
+  {-# INLINABLE compare #-}
+  compare = grevlexCompare
+
+instance (Ord v, Elim v) => Ord (Monomial Elimination v) where
+  {-# INLINABLE compare #-}
+  compare = eliminationCompare
+
 {-----------------------------------
  Polynomials 
  -----------------------------------}
-{-
+
 -- | Polynomials in variables /v/ over a ring /r/ and monomial group /m/
 --
 --   Assumes /r/ is some commutative ring
-data Polynomial r m = Poly { getTerms :: !(Map m r) }
-  deriving (Eq, Ord)
+data Polynomial ord v r = Poly { getTerms :: !(Map (Monomial ord v) r) }
+  deriving (Eq)
 
 -- | Convenience types
-type Multivariate v r  = Polynomial r (GrevlexPP v)
+type Multivariate     v r  = Polynomial GrevLex v r
+type MultivariateElim v r  = Polynomial Elimination v r
 
 {- Instances -}
 
-instance (Monomial m) => Degree (Polynomial r m) where
+instance (Ord v) => Degree (Polynomial ord v r) where
   degree (Poly t) = case Map.lookupMax t of
     Nothing      -> -1
     Just (m, _a) -> degree m
 
-instance (Monomial m) => Vars (Polynomial r m) where
-  type Var (Polynomial r m) = Var m
+instance (Ord v) => Vars (Polynomial ord v r) where
+  type Var (Polynomial ord v r) = v
   {-# INLINABLE vars #-}
   vars = foldr (Set.union) Set.empty . map vars . Map.keys . getTerms
 
-instance (Ring r, Monomial m) => Symbolic (Polynomial r m) where
+instance (Ring r, Ord v) => Symbolic (Polynomial ord v r) where
   ofVar x = Poly $ Map.singleton (ofVar x) 1
 
-instance (Ring r, Monomial m, Show r, Show m) => Show (Polynomial r m) where
+instance (Ring r, Show v, Show r) => Show (Polynomial ord v r) where
   show p@(Poly t)
     | isZero p  = "0"
     | otherwise = intercalate " + " $ map showTerm (Map.assocs t)
@@ -165,7 +197,7 @@ instance (Ring r, Monomial m, Show r, Show m) => Show (Polynomial r m) where
             | coeff == -1      = "-" ++ show mono
             | otherwise        = show coeff ++ show mono
 
-instance (Ring r, Monomial m) => Num (Polynomial r m) where
+instance (Ring r, Ord v, Ord (Monomial ord v)) => Num (Polynomial ord v r) where
   (+)         = curry (normalize . uncurry add)
   (*)         = curry (normalize . uncurry mult)
   negate      = Poly . Map.map negate . getTerms
@@ -173,55 +205,55 @@ instance (Ring r, Monomial m) => Num (Polynomial r m) where
   signum      = id
   fromInteger = constant . fromInteger
 
-instance (Ring r, Abelian r, Monomial m) => Abelian (Polynomial r m) where
+instance (Ring r, Abelian r, Ord v, Ord (Monomial ord v)) => Abelian (Polynomial ord v r) where
   power i = normalize . Poly . Map.map (power i) . getTerms
 
-instance (Ring r, Periodic r, Monomial m) => Periodic (Polynomial r m) where
+instance (Ring r, Periodic r, Ord v, Ord (Monomial ord v)) => Periodic (Polynomial ord v r) where
   order = Map.foldr (\a -> lcm (order a)) 1 . getTerms
 
-instance (Ring r, Monomial m, IsString (Var m)) => IsString (Polynomial r m) where
+instance (Ring r, Ord v, IsString v) => IsString (Polynomial ord v r) where
   fromString s = ofVar (fromString s)
 
 {- Accessors -}
 
 -- | Get a list of the coefficients in grevlex order
-coefficients :: Polynomial r m -> [r]
+coefficients :: Polynomial ord v r -> [r]
 coefficients = Map.elems . getTerms
 
 -- | Get the support in the monomial order
-support :: Polynomial r m -> [m]
+support :: Polynomial ord v r -> [Monomial ord v]
 support = Map.keys . getTerms
 
 -- | Get the terms in the monomial order
-toTermList :: Polynomial r m -> [(r, m)]
+toTermList :: Polynomial ord v r -> [(r, Monomial ord v)]
 toTermList = map swap . Map.toList . getTerms
 
 -- | Retrieve the constant term
-getConstant :: (Ring r, Monomial m) => Polynomial r m -> r
+getConstant :: (Ring r, Ord v, Ord (Monomial ord v)) => Polynomial ord v r -> r
 getConstant = Map.findWithDefault 0 mempty . getTerms
 
 {- Tests -}
 
 -- | Check if the polynomial is the zero function
-isZero :: Polynomial r m -> Bool
+isZero :: Polynomial ord v r -> Bool
 isZero = Map.null . getTerms
 
 -- | Check if the polynomial is a monomial
-isMono :: Polynomial r m -> Bool
+isMono :: Polynomial ord v r -> Bool
 isMono = (1 >=) . Map.size . getTerms
 
 -- | Check if the polynomial is constant
-isConst :: Monomial m => Polynomial r m -> Bool
+isConst :: Ord v => Polynomial ord v r -> Bool
 isConst = (== [mempty]) . Map.keys . getTerms
 
 -- | Check if a variable is used in the polynomial
-contains :: Monomial m => (Var m) -> Polynomial r m -> Bool
+contains :: Ord v => v -> Polynomial ord v r -> Bool
 contains v = any (Set.member v . vars) . Map.keys . getTerms
 
 {- Special forms -}
 
 -- | Check if the polynomial is of the form /v/ for some variable /v/
-asVar :: (Ring r, Monomial m) => Polynomial r m -> Maybe (Var m)
+asVar :: (Ring r, Ord v) => Polynomial ord v r -> Maybe v
 asVar p = case map (\(r, m) -> (r, Set.toList (vars m))) rTerms of
   (1, [v]):[]  -> Just v
   otherwise    -> Nothing
@@ -230,67 +262,67 @@ asVar p = case map (\(r, m) -> (r, Set.toList (vars m))) rTerms of
 {- Constructors -}
 
 -- | Constant polynomial
-constant :: (Ring r, Monomial m) => r -> Polynomial r m
+constant :: (Ring r, Ord v) => r -> Polynomial ord v r
 constant 0 = Poly $ Map.empty
 constant a = Poly $ Map.singleton mempty a
 
 -- | Construct the polynomial /m/ for a monomial /m/
-ofMonomial :: (Ring r, Monomial m) => m -> Polynomial r m
+ofMonomial :: (Ring r) => Monomial ord v -> Polynomial ord v r
 ofMonomial m = Poly $ Map.singleton m 1
 
 -- | Construct the polynomial /a*m/
-ofTerm :: (Ring r, Monomial m) => (r, m) -> Polynomial r m
+ofTerm :: (Ring r) => (r, Monomial ord v) -> Polynomial ord v r
 ofTerm (0, _) = Poly $ Map.empty
 ofTerm (a, m) = Poly $ Map.singleton m a
 
 -- | Construct the polynomial /a*m/
-ofTermList :: (Ring r, Monomial m) => [(r, m)] -> Polynomial r m
+ofTermList :: (Ring r, Ord v, Ord (Monomial ord v)) => [(r, Monomial ord v)] -> Polynomial ord v r
 ofTermList = Poly . Map.fromList . filter ((/= 0) . snd) . map swap
 
 {- Transformations -}
 
 -- | Normalize a multilinear polynomial
-normalize :: (Ring r, Monomial m) => Polynomial r m -> Polynomial r m
+normalize :: (Ring r) => Polynomial ord v r -> Polynomial ord v r
 normalize = Poly . Map.filter (0/=) . getTerms
 
 -- | Drops the constant term. Useful for verification up to global phase
-dropConstant :: (Ring r, Monomial m) => Polynomial r m -> Polynomial r m
+dropConstant :: (Ring r, Ord v, Ord (Monomial ord v)) => Polynomial ord v r -> Polynomial ord v r
 dropConstant = Poly . (Map.delete mempty . getTerms)
 
 -- | Cast a polynomial over ring /r/ to ring /s/
-cast :: (r -> s) -> Polynomial r m -> Polynomial s m
+cast :: (r -> s) -> Polynomial ord v r -> Polynomial ord v s
 cast f = Poly . Map.map f . getTerms
 
 -- | Attempt to cast a polynomial over ring /r/ to ring /s/ via a partial function
-castMaybe :: (r -> Maybe s) -> Polynomial r m -> Maybe (Polynomial s m)
+castMaybe :: (r -> Maybe s) -> Polynomial ord v r -> Maybe (Polynomial ord v s)
 castMaybe f = fmap Poly . mapM f . getTerms
 
 -- | Collects just the terms of the polynomial satisfying a predicate
-collectBy :: ((r, m) -> Bool) -> Polynomial r m -> Polynomial r m
+collectBy :: ((r, Monomial ord v) -> Bool) -> Polynomial ord v r -> Polynomial ord v r
 collectBy f = Poly . Map.filterWithKey (curry $ f . swap) . getTerms
 
 -- | Collects the terms of a polynomial containing a particular variable
-collectVar :: Monomial m => Var m -> Polynomial r m -> Polynomial r m
+collectVar :: Ord v => v -> Polynomial ord v r -> Polynomial ord v r
 collectVar v = collectBy (\(_a, m) -> Set.member v $ vars m)
 
 -- | Collects the terms of a polynomial containing a set of variables
-collectVars :: Monomial m => Set (Var m) -> Polynomial r m -> Polynomial r m
+collectVars :: Ord v => Set v -> Polynomial ord v r -> Polynomial ord v r
 collectVars s = collectBy (\(_a, m) -> (vars m) `Set.isSubsetOf` s)
 
 {- Arithmetic -}
 
 -- | Scale a polynomial
-scale :: (Ring r) => r -> Polynomial r m -> Polynomial r m
+scale :: (Ring r) => r -> Polynomial ord v r -> Polynomial ord v r
 scale a
   | a == 0    = \_ -> Poly Map.empty
   | otherwise = Poly . Map.map (a*) . getTerms
 
 -- | Add two polynomials
-add :: (Ring r, Monomial m) => Polynomial r m -> Polynomial r m -> Polynomial r m
+add :: (Ring r, Ord (Monomial ord v)) => Polynomial ord v r -> Polynomial ord v r -> Polynomial ord v r
 add p = Poly . Map.unionWith (+) (getTerms p) . getTerms
 
 -- | Multiply two polynomials
-mult :: (Ring r, Monomial m) => Polynomial r m -> Polynomial r m -> Polynomial r m
+mult :: (Ring r, Ord v, Ord (Monomial ord v)) => Polynomial ord v r -> Polynomial ord v r -> Polynomial ord v r
 mult p
   | isZero p  = \_ -> Poly Map.empty
   | otherwise = Map.foldrWithKey (\m a acc -> add acc $ mTerm m a) (Poly $ Map.empty) . getTerms
@@ -303,21 +335,21 @@ mult p
 -- | Performs the Euclidean division of a polynomial 'p' by a variables 'x', such that
 --
 --   @ p = 'ofVar' x * 'fst' ('varDiv' p x) + 'snd' ('varDiv' p x) @
-divVar :: Monomial m => Polynomial r m -> Var m -> (Polynomial r m, Polynomial r m)
+divVar :: (Ord v, Ord (Monomial ord v)) => Polynomial ord v r -> v -> (Polynomial ord v r, Polynomial ord v r)
 divVar p x = (Poly $ Map.mapKeys (./. (ofVar x)) qTerms, Poly rTerms)
   where (qTerms, rTerms) = Map.partitionWithKey f $ getTerms p
         f m _a           = Set.member x $ vars m
 
 -- | Takes the quotient of 'p'/'x'
-quotVar :: Monomial m => Var m -> Polynomial r m -> Polynomial r m
+quotVar :: (Ord v, Ord (Monomial ord v)) => v -> Polynomial ord v r -> Polynomial ord v r
 quotVar x = fst . (flip divVar) x
 
 -- | Takes the remainder of 'p'/'x'
-remVar :: Monomial m => Var m -> Polynomial r m -> Polynomial r m
+remVar :: (Ord v, Ord (Monomial ord v)) => v -> Polynomial ord v r -> Polynomial ord v r
 remVar x = snd . (flip divVar) x
 
 -- | Factors out all trivial factors
-factorizeTrivial :: (Ring r, Monomial m) => Polynomial r m -> ([Polynomial r m], Polynomial r m)
+factorizeTrivial :: (Ring r, Ord v, Ord (Monomial ord v)) => Polynomial ord v r -> ([Polynomial ord v r], Polynomial ord v r)
 factorizeTrivial p = Set.foldr tryDiv ([], p) $ vars p
   where tryDiv x  (acc, poly) =
           let (q, r) = divVar poly x in
@@ -328,42 +360,25 @@ factorizeTrivial p = Set.foldr tryDiv ([], p) $ vars p
 -- | Rename variables according to a variable map
 --
 --   Note: Less general
-rename :: Monomial m => (Var m -> Var m) -> Polynomial r m -> Polynomial r m
+rename :: (Ord v, Ord (Monomial ord v)) => (v -> v) -> Polynomial ord v r -> Polynomial ord v r
 rename sub = Poly . Map.mapKeys (monomial . map sub . unMonomial) . getTerms
 
 -- | Rename variables according to a monotonic variable map
 --
 --   Note: Less general
-renameMonotonic :: Monomial m => (Var m -> Var m) -> Polynomial r m -> Polynomial r m
+renameMonotonic :: Ord v => (v -> v) -> Polynomial ord v r -> Polynomial ord v r
 renameMonotonic sub = Poly . Map.mapKeysMonotonic (monomial . map sub . unMonomial) . getTerms
 
 -- | Substitute a variable with a polynomial
-subst :: (Ring r, Monomial m) => Var m -> Polynomial r m -> Polynomial r m -> Polynomial r m
+subst :: (Ring r, Ord v, Ord (Monomial ord v)) => v -> Polynomial ord v r -> Polynomial ord v r -> Polynomial ord v r
 subst v p = substMany (\v' -> if v' == v then p else ofVar v')
 
 -- | Simultaneous substitution of variables with polynomials
-substMany :: (Ring r, Monomial m) => (Var m -> Polynomial r m) -> Polynomial r m -> Polynomial r m
+substMany :: (Ring r, Ord v, Ord (Monomial ord v)) => (v -> Polynomial ord v r) -> Polynomial ord v r -> Polynomial ord v r
 substMany sub = normalize . Map.foldrWithKey (\m a -> add (substInMono (a,m))) zero . getTerms
   where substInMono (a,m) = scale a $ foldr (mult) one (map sub $ unMonomial m)
 
 {-
-
--- | Substitute a (Boolean) variable with a (Boolean) polynomial
-subst :: (Ord v, Eq r, Abelian r) => v -> SBool v -> Polynomial v r 'Mult -> Polynomial v r 'Mult
-subst v p = substMany (\v' -> if v' == v then p else ofVar v')
-
--- | Simultaneous substitution of variables with polynomials
-substMany :: (Ord v, Eq r, Abelian r) => (v -> SBool v) -> Polynomial v r 'Mult -> Polynomial v r 'Mult
-substMany sub = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substInMono m a) zero . getTerms
-  where substInMono m a = distribute a $ foldr (multImpl) one (map sub . Set.toList $ vars m)
-
--- | Substitute a (Boolean, multiplicative) monomial with a (Boolean) polynomial
-substMonomial :: (Ord v, Eq r, Abelian r) => [v] -> SBool v -> Polynomial v r 'Mult -> Polynomial v r 'Mult
-substMonomial xs p = normalize . Map.foldrWithKey (\m a acc -> addM acc $ substMonoInMono m a) zero . getTerms
-  where m = Set.fromList xs
-        substMonoInMono m' a
-          | not (m `Set.isSubsetOf` (vars m')) = ofTerm (a,m')
-          | otherwise = distribute a $ p * ofMonomial (Monomial $ Set.difference (vars m') m)
 
 -- | Substitute a variable with a monomial
 substVarMono :: (Ord v, Eq r, Num r, ReprC repr) =>
@@ -372,23 +387,6 @@ substVarMono v m = M . Map.mapKeys (Set.foldr substVar mempty . vars) . getTerms
   where substVar v' acc
           | v == v'   = acc <> m
           | otherwise = acc <> monomial [v']
-
--- | Factorize a multilinear polynomial into irreducibles. Algorithm due to
---   A. Shpilka & I. Volkovich, /On the Relation between Polynomial Identity
---   Testing and Finding Variable Disjoint Factors/
-factorize :: (Ring r, Abelian r) => PseudoBoolean v r -> [PseudoBoolean v r]
-factorize p =
-  let (factors, p') = factorizeTrivial p in
-    factors ++ [p'] -- go p'
-  where dx x poly = subst x 0 poly + subst x 1 poly
-        go poly = do
-          x <- Set.toList $ vars poly
-          let g      = (subst x 0 poly) * (dx x poly)
-          let (o, s) = Set.partition (\y -> (dx y g) == 0) $ Set.delete x (vars poly)
-          if Set.null o
-            then return poly
-            else go (substMany (\y -> if Set.member y o then 1 else ofVar y) poly) ++
-                 go (substMany (\y -> if Set.member y (Set.insert x s) then 1 else ofVar y) poly)
 
 -- | Find a necessary substitution solving @p = 0@ over a field
 solveForX :: (Ord v, Eq r, Fractional r, ReprC repr) =>
@@ -412,78 +410,13 @@ getSolution :: (Ord v, Eq r, Fractional r, Abelian r) =>
              Polynomial v r 'Mult -> (v, Polynomial v r 'Mult)
 getSolution = head . concatMap solveForX . factorize
 
-{- Pseudo-boolean specific transformations -}
+-}
 
--- | Translate a monomial to a Boolean polynomial
-liftImpl :: Ord v => ReprWit repr -> Monomial v repr -> SBool v
-liftImpl WitMult = M . (flip Map.singleton) 1
-liftImpl WitAdd  = ofTermList . zip (repeat 1) . Set.toList . Set.map f . vars
-  where f = Monomial . Set.singleton
-
--- | Translate an additive monomial to a Boolean polynomial
-liftMonomial :: (Ord v, ReprC repr) => Monomial v repr -> SBool v
-liftMonomial = liftImpl witRepr
-
--- | Translate a Boolean polynomial into any ring (in this case, Z-module)
-lift :: (Ord v, Eq r, Abelian r) => SBool v -> Polynomial v r 'Mult
-lift = distribute 1
-
--- | Distribute a ring element over a monomial according to the equation
--- 
--- > axy = a/2x + a/2y - a/2(x + y)
---
-unDistribute :: (Ord v, Eq r, Num r, Dyadic r) => r -> Monomial v 'Mult -> Polynomial v r 'Add
-unDistribute a' = go a' . Set.toList . vars
-  where go 0 _        = zero
-        go a []       = constant a
-        go a [x]      = ofTerm (a, Monomial $ Set.singleton x)
-        go a (x:y:xs) =
-          let recTerm = go (negate $ divTwo a) $ x:xs
-              sub     = Monomial $ Set.fromList [x, y]
-          in
-            go (divTwo a) (x:xs) + go (divTwo a) (y:xs) + substVarMono x sub recTerm
-
--- | Non-recursive exclusion-inclusion formula
-excInc :: (Ord v, Eq r, Dyadic r) => Monomial v 'Mult -> Polynomial v r 'Add
-excInc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.powerSet s]
-  where go subset =
-          let n = Set.size subset in
-            fromDyadic $ dyadic (if n `mod` 2 == 0 then -1 else 1) (Set.size s - 1)
-
--- | Distribute a ring element over a Boolean polynomial according to the equation
--- 
--- > a(x + y) = ax + ay -2axy
---
-distribute :: (Ord v, Eq r, Abelian r) => r -> SBool v -> Polynomial v r 'Mult
-distribute a' = go a' . Map.keys . getTerms . normalize
-  where go 0 _      = zero
-        go a []     = zero
-        go a [m]    = ofTerm (a,m)
-        go a (m:xs) = ofTerm (a,m) + (go a xs) + (go (power (-2) a) $ map (m <>) xs)
-
--- | Non-recursive inclusion-exclusion formula
-incExc :: (Ord v, Eq r, Abelian r) => Monomial v 'Add -> Polynomial v r 'Mult
-incExc (Monomial s) = ofTermList [(go s', Monomial s') | s' <- Set.toList $ Set.powerSet s]
-  where go subset =
-          let n = Set.size subset in
-            if n `mod` 2 == 0 then power (-1 `shiftL` (n-1)) 1 else power (1 `shiftL` (n-1)) 1
-
--- | Perform the (pseudo-Boolean) Fourier transform
-fourier :: (Ord v, Eq r, Dyadic r) => Polynomial v r 'Mult -> Polynomial v r 'Add
-fourier = normalize . Map.foldrWithKey addTerm zero . getTerms
-  where addTerm m a acc = addM acc $ unDistribute a m
-
--- | Perform the (pseudo-Boolean) inverse Fourier transform
-invFourier :: (Ord v, Eq r, Abelian r) => Polynomial v r 'Add -> Polynomial v r 'Mult
-invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
-  where addTerm m a acc = addM acc $ distribute a (liftMonomial m)
-
--- | Canonicalize an additive multilinear polynomial
-canonicalize :: (Ord v, Eq r, Dyadic r, Abelian r) => Polynomial v r 'Add -> Polynomial v r 'Add
-canonicalize = fourier . invFourier
--- Constants, for testing
+{- Testing-}
 
 newtype SVar = SVar String deriving (Eq)
+
+instance Ring FF2
 
 instance IsString SVar where
   fromString = SVar
@@ -494,40 +427,10 @@ instance Ord SVar where
 instance Show SVar where
   show (SVar s) = s
 
-x1,x1x2,x2,x1x3,x2x3,x3 :: GrevlexPP SVar
-x1 = monomial ["x1", "x1"]
-x1x2 = monomial ["x1", "x2"]
-x2 = monomial ["x2", "x2"]
-x1x3 = monomial ["x1", "x3"]
-x2x3 = monomial ["x2", "x3"]
-x3 = monomial ["x3"]
-
-newtype IVar = IVar (String, Integer) deriving (Eq, Ord)
-
-instance Show IVar where
-  show (IVar (x, i)) = Unicode.sub x i
-
-x0 = ofVar (IVar ("x",0)) :: SBool IVar
-x1 = ofVar (IVar ("x",1)) :: SBool IVar
-x2 = ofVar (IVar ("x",2)) :: SBool IVar
-x3 = ofVar (IVar ("x",3)) :: SBool IVar
-x4 = ofVar (IVar ("x",4)) :: SBool IVar
-x5 = ofVar (IVar ("x",5)) :: SBool IVar
-x6 = ofVar (IVar ("x",6)) :: SBool IVar
-x7 = ofVar (IVar ("x",7)) :: SBool IVar
-x8 = ofVar (IVar ("x",8)) :: SBool IVar
-x9 = ofVar (IVar ("x",9)) :: SBool IVar
-
-y0 = ofVar (IVar ("y",0)) :: Polynomial IVar DMod2 'Mult
-y1 = ofVar (IVar ("y",1)) :: Polynomial IVar DMod2 'Mult
-y2 = ofVar (IVar ("y",2)) :: Polynomial IVar DMod2 'Mult
-y3 = ofVar (IVar ("y",3)) :: Polynomial IVar DMod2 'Mult
-y4 = ofVar (IVar ("y",4)) :: Polynomial IVar DMod2 'Mult
-y5 = ofVar (IVar ("y",5)) :: Polynomial IVar DMod2 'Mult
-y6 = ofVar (IVar ("y",6)) :: Polynomial IVar DMod2 'Mult
-y7 = ofVar (IVar ("y",7)) :: Polynomial IVar DMod2 'Mult
-y8 = ofVar (IVar ("y",8)) :: Polynomial IVar DMod2 'Mult
-y9 = ofVar (IVar ("y",9)) :: Polynomial IVar DMod2 'Mult
-
--}
--}
+x1,x1x2,x2,x1x3,x2x3,x3 :: Multivariate SVar FF2
+x1 = ofMonomial $ monomial ["x1", "x1"]
+x1x2 = ofMonomial $ monomial ["x1", "x2"]
+x2 = ofMonomial $ monomial ["x2", "x2"]
+x1x3 = ofMonomial $ monomial ["x1", "x3"]
+x2x3 = ofMonomial $ monomial ["x2", "x3"]
+x3 = ofMonomial $ monomial ["x3"]
