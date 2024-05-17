@@ -9,7 +9,13 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Algebra.Polynomial(Degree(..), Vars(..)) where
+module Feynman.Algebra.Polynomial(
+  Degree(..),
+  Vars(..),
+  Ring(..),
+  Field(..),
+  Group(..),
+  Symbolic(..)) where
 
 import Data.Set (Set)
 
@@ -21,3 +27,17 @@ class Degree a where
 class Vars a where
   type Var a
   vars :: a -> Set (Var a)
+
+-- | Class of rings for the purpose of polynomials
+class (Eq r, Num r) => Ring r
+
+-- | Class of Fields for the purpose of polynomials
+class (Ring r, Fractional r) => Field r
+
+-- | Class of groups for the purpose of polynomials
+class (Monoid m) => Group m where
+  (./.) :: m -> m -> m
+
+-- | Class of symbolic values
+class Vars a => Symbolic a where
+  ofVar :: Var a -> a
