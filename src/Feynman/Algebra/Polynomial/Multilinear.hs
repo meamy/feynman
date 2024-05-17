@@ -157,6 +157,12 @@ instance (Ord v, ReprC repr) => Monoid (Monomial v repr) where
   mempty  = Monomial Set.empty
   mappend = (<>)
 
+instance (Ord v) => Group (Monomial v 'Mult) where
+  m ./. n = Monomial $ Set.difference (getVars m) (getVars n)
+
+instance (Ord v, ReprC repr) => Symbolic (Monomial v repr) where
+  ofVar v = Monomial $ Set.singleton v
+
 -- | Construct a monomial
 monomial :: Ord v => [v] -> Monomial v repr
 monomial = Monomial . Set.fromList
@@ -194,6 +200,9 @@ instance Ord v => Vars (Multilinear v r repr) where
   {-# INLINABLE vars #-}
   vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
 
+instance (Ord v, Eq r, Num r, ReprC repr) => Symbolic (Multilinear v r repr) where
+  ofVar v = ofTerm (1, ofVar v)
+  
 instance (Ord v, Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   (+) = \p -> normalize . addM p
   (*) = \p -> normalize . multM witRepr p
@@ -262,10 +271,6 @@ asVar p = case map (Set.toList . getVars . snd) . filter ((1 ==) . fst) $ toTerm
 constant :: (Ord v, Eq r, Num r, ReprC repr) => r -> Multilinear v r repr
 constant 0 = M $ Map.empty
 constant a = M $ Map.singleton (Monomial Set.empty) a
-
--- | Construct the variable polynomial /x/
-ofVar :: (Ord v, Eq r, Num r, ReprC repr) => v -> Multilinear v r repr
-ofVar x = ofTerm (1, Monomial $ Set.singleton x)
 
 -- | Construct the polynomial /m/ for a monomial /m/
 ofMonomial :: (Ord v, Eq r, Num r, ReprC repr) => Monomial v repr -> Multilinear v r repr
