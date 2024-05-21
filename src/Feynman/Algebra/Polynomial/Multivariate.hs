@@ -82,6 +82,14 @@ monomial = foldr (\a -> ((ofVar a) <>)) mempty
 unMonomial :: Monomial ord v -> [v]
 unMonomial m = concat [replicate i a | (a,i) <- Map.toList $ unM m]
 
+-- | Gives the least common multiple of two monomials
+monomialLCM :: Ord v => Monomial ord v -> Monomial ord v -> Monomial ord v
+monomialLCM m n = Monomial $ Map.unionWith (max) (unM m) (unM n)
+
+-- | Determines whether one monomial divides another
+divides :: Ord v => Monomial ord v -> Monomial ord v -> Bool
+divides m n = all (>= 0) . unM $ n ./. m
+
 {-----------------------------------
  Monomial orders
  -----------------------------------}
@@ -154,6 +162,9 @@ type Multivariate     v r  = Polynomial GrevLex v r
 type MultivariateElim v r  = Polynomial Elimination v r
 
 {- Instances -}
+
+instance (Ord r, Ord v, Ord (Monomial ord v)) => Ord (Polynomial ord v r) where
+  compare p q = compare (getTerms p) (getTerms q)
 
 instance (Ord v) => Degree (Polynomial ord v r) where
   degree (Poly t) = case Map.lookupMax t of
@@ -394,7 +405,7 @@ getSolution = head . concatMap solveForX . factorize
 -}
 
 {- Testing-}
-
+{-
 data EVar = XVar String | YVar String deriving (Eq)
 
 getVar :: EVar -> String
@@ -441,3 +452,4 @@ varOrd4 = reverse $ sort $ map monomial $ [[x1,x1],[x1,x2],[x1,x3],[x2,x2],[x2,x
 
 varOrd5 :: [Monomial Elimination EVar]
 varOrd5 = reverse $ sort $ map monomial $ [[y1,x1],[x1,y2],[x1,x3],[y2,y2],[x2,y3],[x3,x3]]
+-}
