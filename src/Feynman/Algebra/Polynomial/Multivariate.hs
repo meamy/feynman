@@ -82,28 +82,6 @@ monomial = foldr (\a -> ((ofVar a) <>)) mempty
 unMonomial :: Monomial ord v -> [v]
 unMonomial m = concat [replicate i a | (a,i) <- Map.toList $ unM m]
 
-{-
--- | Class of monomials over a variable type.
---
---   Ordered terms over variables with a group structure
-class (Degree m, Ord (Var m), Ord m, Group m, Symbolic m) => Monomial m where
-  leastCM    :: m -> m -> m
-  divides    :: m -> m -> Bool
-  -- Default instance
-  leastCM m n = monomial (go (unMonomial m) (unMonomial n)) where
-    go [] xs         = xs
-    go xs []         = xs
-    go (x:xs) (y:ys) = case compare x y of
-      LT -> (x:go xs (y:ys))
-      EQ -> (x:go xs ys)
-      GT -> (y:go (x:xs) ys)
-  divides m n = (unMonomial m) `isSubsequenceOf` (unMonomial n)
--}
-
---  leastCM m n  = GrevlexPP $ Map.unionWith (max) (unPP m) (unPP n)
---  divides m n  = all (>= 0) . Map.elems . unPP $ n ./. m
---  monomial   :: [Var m] -> m
-
 {-----------------------------------
  Monomial orders
  -----------------------------------}
@@ -120,7 +98,10 @@ class Ord v => Elim v where
 
 -- | Lexicographic order
 lexCompare :: Ord v => MonomialOrder ord v
-lexCompare m n = compare (unM m) (unM n)
+lexCompare m n = case reverse $ filter (/= 0) . Map.elems . unM $ m ./. n of
+        []            -> EQ
+        (x:_) | x < 0 -> LT
+        _             -> GT
 
 -- | Graded reverse lexicographic ordering
 grevlexCompare :: Ord v => MonomialOrder ord v
@@ -140,7 +121,7 @@ eliminationBuilder cmp m n =
     EQ -> cmp (Monomial my) (Monomial ny)
     or -> or
   where (mx, my) = Map.partitionWithKey (\k _ -> eliminate k) $ unM m
-        (nx, ny) = Map.partitionWithKey (\k _ -> eliminate k) $ unM m
+        (nx, ny) = Map.partitionWithKey (\k _ -> eliminate k) $ unM n
 
 -- | Default elimination order using local grevlex
 eliminationCompare :: (Ord v, Elim v) => MonomialOrder ord v
@@ -414,23 +395,49 @@ getSolution = head . concatMap solveForX . factorize
 
 {- Testing-}
 
-newtype SVar = SVar String deriving (Eq)
+data EVar = XVar String | YVar String deriving (Eq)
 
-instance Ring FF2
+getVar :: EVar -> String
+getVar (XVar x) = x
+getVar (YVar x) = x
 
-instance IsString SVar where
-  fromString = SVar
+instance IsString EVar where
+  fromString = XVar
 
-instance Ord SVar where
-  compare (SVar s) (SVar t) = compare t s
+instance Ord EVar where
+  compare s t = compare (getVar t) (getVar s)
 
-instance Show SVar where
-  show (SVar s) = s
+instance Show EVar where
+  show = getVar
 
-x1,x1x2,x2,x1x3,x2x3,x3 :: Multivariate SVar FF2
-x1 = ofMonomial $ monomial ["x1", "x1"]
-x1x2 = ofMonomial $ monomial ["x1", "x2"]
-x2 = ofMonomial $ monomial ["x2", "x2"]
-x1x3 = ofMonomial $ monomial ["x1", "x3"]
-x2x3 = ofMonomial $ monomial ["x2", "x3"]
-x3 = ofMonomial $ monomial ["x3"]
+instance Elim EVar where
+  eliminate (XVar x) = False
+  eliminate (YVar x) = True
+
+--x1, x2, x3, y1, y2, y3 :: Multivariate EVar FF2
+x1,x2,x3,y1,y2,y3 :: EVar
+x1 = XVar "x1"
+x2 = XVar "x2"
+x3 = XVar "x3"
+y1 = YVar "y1"
+y2 = YVar "y2"
+y3 = YVar "y3"
+
+combinations :: [a] -> [[a]]
+combinations []     = [[]]
+combinations (x:xs) = combinations xs ++ (map (x:) $ combinations xs)
+
+varOrd1 :: [Monomial GrevLex EVar]
+varOrd1 = reverse $ sort $ map monomial $ combinations [x1,x2,x3]
+
+varOrd2 :: [Monomial Elimination EVar]
+varOrd2 = reverse $ sort $ map monomial $ combinations [x1,x2,x3,y1,y2,y3]
+
+varOrd3 :: [Monomial GrevLex EVar]
+varOrd3 = reverse $ sort $ map monomial $ [[x1,x1],[x1,x2],[x1,x3],[x2,x2],[x2,x3],[x3,x3]]
+
+varOrd4 :: [Monomial Lex EVar]
+varOrd4 = reverse $ sort $ map monomial $ [[x1,x1],[x1,x2],[x1,x3],[x2,x2],[x2,x3],[x3,x3]]
+
+varOrd5 :: [Monomial Elimination EVar]
+varOrd5 = reverse $ sort $ map monomial $ [[y1,x1],[x1,y2],[x1,x3],[y2,y2],[x2,y3],[x3,x3]]

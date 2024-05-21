@@ -19,6 +19,8 @@ module Feynman.Algebra.Polynomial(
 
 import Data.Set (Set)
 
+import Feynman.Algebra.Base
+
 -- | Class of things that have a degree
 class Degree a where
   degree :: a -> Int
@@ -41,3 +43,8 @@ class (Monoid m) => Group m where
 -- | Class of symbolic values
 class Vars a => Symbolic a where
   ofVar :: Var a -> a
+
+{- Instances -}
+
+instance Ring FF2
+instance Field FF2
