@@ -60,7 +60,7 @@ optimizeDotQC f qc = qc { decls = map go $ decls qc }
               circuitInputs = (Set.toList $ inputs qc) ++ params decl
               wrap g        = fromCliffordT . g . toCliffordT
           in
-            decl { body = wrap (f circuitQubits circuitQubits) $ body decl }
+            decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
 decompileDotQC :: DotQC -> DotQC
 decompileDotQC qc = qc { decls = map go $ decls qc }
