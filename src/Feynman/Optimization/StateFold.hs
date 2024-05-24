@@ -78,9 +78,9 @@ addTerm theta loc bexp = modify go where
   bexp'  = dropConstant $ bexp
 
 -- Adds a quadratic phase term
-addQuadTerm :: Int -> SBool String -> State Ctx ()
-addQuadTerm n bexp = modify $ \st -> st { pp = pp st + poly } where
-  poly = P.lift $ ofVar (var n) * bexp
+addQuadTerm :: SBool String -> SBool String -> State Ctx ()
+addQuadTerm bexp bexp' = modify $ \st -> st { pp = pp st + poly } where
+  poly = P.lift $ bexp * bexp'
 
 -- Finding [HH] reductions
 applyReductions :: Maybe Int -> State Ctx [SBool String]
@@ -152,7 +152,7 @@ applyGate (gate, l) = case gate of
     bexp <- getSt v
     n <- alloc
     modify $ \st -> st { paths = Set.insert n $ paths st }
-    addQuadTerm n bexp
+    addQuadTerm (ofVar $ var n) bexp
     setSt v (ofVar $ var n)
   Swap u v -> do
     bexp  <- getSt u
