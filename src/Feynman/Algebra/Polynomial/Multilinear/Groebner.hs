@@ -7,13 +7,21 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Algebra.Polynomial.Multilinear.Groebner where
+module Feynman.Algebra.Polynomial.Multilinear.Groebner(
+  mvd,
+  buchberger,
+  reduceBasis,
+  rbuchberger
+  ) where
 
 import Data.List
 import Data.Maybe
 
 import Data.Set (Set)
 import qualified Data.Set as Set
+
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
@@ -172,3 +180,37 @@ i2 = [y0*y1 + y0 + y1 + 1,
       y0*y2,
       y1*y3,
       y1*y2 + 1]
+
+-- Hoare ex testing
+idealinit = [x0*x1 + x3 + x5,
+             x0*x1 + x5 + x7,
+             x0*x1 + x7 + x9]
+
+idealpart = [x0*x1 + x3 + x5,
+             x0*x1 + x5 + x7,
+             x0*x1 + x7 + x9,
+             x5 + x9,
+             x0*x1 + x3 + x9]
+
+idealfull = [x0*x1 + x3 + x5,
+             x0*x1 + x5 + x7,
+             x0*x1 + x7 + x9,
+             x3 + x7,
+             x4 + x8,
+             x0*x1 + x3 + x9]
+  
+idealunion = [x0*x1 + x3 + x5,
+              x0*x1 + x5 + x7,
+              x0*x1 + x7 + x9,
+              x0*x1 + x3 + x9]
+
+parities = [x0, x1, x4, x0+x1, x0+x4, x1+x4, x0+x1+x4,
+            x0, x1, x6, x0+x1, x0+x6, x1+x6, x0+x1+x6,
+            x0, x1, x8, x0+x1, x0+x8, x1+x8, x0+x1+x8]
+
+poly = x0*x1*x4 + x3*x4 + x4*x5 + x0*x1*x6 + x5*x6 + x6*x7 + x0*x1*x8 + x7*x8 + x8*x9
+poly' = x0*x1*x4 + x3*x4 + x4*x5 + x4*x7 + x0*x1*x6 + x5*x6 + x6*x7 + x6*x7 + x0*x1*x8 + x7*x8 + x8*x9
+
+numOccurrence :: Ord a => [a] -> Map a Int
+numOccurrence = foldr go Map.empty where
+  go a = Map.insertWith (+) a 1

@@ -9,6 +9,9 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict
 import Data.Bits
 
+import System.IO.Unsafe
+import System.Random
+
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
@@ -119,6 +122,19 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   validSoln (u, sub) = case cutoff of
     Just d  -> degree sub <= d && Set.member (unvar u) paths
     Nothing -> Set.member (unvar u) paths
+
+-- Matches a random instance of [HH]
+matchRandomHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
+matchRandomHH pp cand paths cutoff = pickRandom . catMaybes . map (go . var) $ Set.toDescList cand where
+  go v = do
+    pp'      <- toBooleanPoly . quotVar v $ pp
+    (u, sub) <- find validSoln $ solveForX pp'
+    return (unvar v, unvar u, sub)
+  validSoln (u, sub) = case cutoff of
+    Just d  -> degree sub <= d && Set.member (unvar u) paths
+    Nothing -> Set.member (unvar u) paths
+  pickRandom [] = Nothing
+  pickRandom xs = Just $ xs!!(fst $ randomR (0, length xs - 1) (unsafePerformIO $ getStdGen))
 
 -- Reduce with respect to a groebner basis for a set of polynomials
 reduceAll :: [SBool String] -> State Ctx ()
