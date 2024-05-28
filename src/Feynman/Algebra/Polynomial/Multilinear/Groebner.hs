@@ -29,38 +29,40 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
 import qualified Feynman.Util.Unicode as Unicode
 
+import qualified Debug.Trace as Trace
+
 {-------------------------------
  Utilities
  -------------------------------}
 
 -- | Retrieve the leading term
-leadingTerm :: (Elim v, Eq r, Num r) => PseudoBoolean v r -> (r, PowerProduct v)
+leadingTerm :: (Ord v, Ord (PowerProduct v), Eq r, Num r) => PseudoBoolean v r -> (r, PowerProduct v)
 leadingTerm 0 = (0, Monomial Set.empty)
 leadingTerm p = head . reverse . toTermList $ p
 
 -- | Retrieve the leading monomial
-leadingMonomial :: (Elim v, Eq r, Num r) => PseudoBoolean v r -> (PowerProduct v)
+leadingMonomial :: (Ord v, Ord (PowerProduct v), Eq r, Num r) => PseudoBoolean v r -> (PowerProduct v)
 leadingMonomial = snd . leadingTerm
 
 -- | Retrieve the leading coefficient
-leadingCoefficient :: (Elim v, Eq r, Num r) => PseudoBoolean v r -> r
+leadingCoefficient :: (Ord v, Ord (PowerProduct v), Eq r, Num r) => PseudoBoolean v r -> r
 leadingCoefficient = fst . leadingTerm
 
 -- | Decompose into the leading term and the remainder
-decomposeLeading :: (Elim v, Eq r, Fractional r) => PseudoBoolean v r -> (PseudoBoolean v r, PseudoBoolean v r)
+decomposeLeading :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => PseudoBoolean v r -> (PseudoBoolean v r, PseudoBoolean v r)
 decomposeLeading p = (ofTerm lt, p - ofTerm lt)
   where lt = leadingTerm p
 
 -- | Divide one monomial by another. /m/ must be divisible by /n/
-coprime :: Elim v => PowerProduct v -> PowerProduct v -> Bool
+coprime :: (Ord v, Ord (PowerProduct v)) => PowerProduct v -> PowerProduct v -> Bool
 coprime m n = Set.intersection (vars m) (vars n) == Set.empty
 
 -- | Determines whether one monomial is divisible by another
-divides :: Elim v => PowerProduct v -> PowerProduct v -> Bool
+divides :: (Ord v, Ord (PowerProduct v)) => PowerProduct v -> PowerProduct v -> Bool
 divides m n = vars m `Set.isSubsetOf` vars n
 
 -- | Divide one monomial by another. /m/ must be divisible by /n/
-divide :: Elim v => PowerProduct v -> PowerProduct v -> PowerProduct v
+divide :: (Ord v, Ord (PowerProduct v)) => PowerProduct v -> PowerProduct v -> PowerProduct v
 divide m n = Monomial $ Set.difference (vars m) (vars n)
 
 {-------------------------------
@@ -68,22 +70,22 @@ divide m n = Monomial $ Set.difference (vars m) (vars n)
  -------------------------------}
 
 -- | S-polynomial
-sPoly :: (Elim v, Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+sPoly :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
 sPoly p q = ofTerm (recip a, divide lc m) * p - ofTerm (recip b, divide lc n) * q
   where (a, m) = leadingTerm p
         (b, n) = leadingTerm q
         lc     = m <> n
 
 -- | Retrieve the first reducible monomial in f with respect to a monomial
-reducible :: (Elim v, Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
+reducible :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
 reducible (c, m) = find (\(_d, n) -> m `divides` n) . toTermList
 
 -- | Retrieve the 
-leadReducible :: (Elim v, Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
+leadReducible :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => (r, PowerProduct v) -> PseudoBoolean v r -> Maybe (r, PowerProduct v)
 leadReducible (c, m) = find (\(_d, n) -> m `divides` n) . take 1 . toTermList
 
 -- | Reduce a polynomial with respect to another
-reduce :: (Elim v, Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+reduce :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
 reduce 0 _ = 0
 reduce f g = fromMaybe f $ go f g where
   go f g = do
@@ -92,7 +94,7 @@ reduce f g = fromMaybe f $ go f g where
     return $ f - (ofTerm (d/c, divide n m)) * g
 
 -- | Reduce a polynomial with respect to another's leading term
-leadReduce :: (Elim v, Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
+leadReduce :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => PseudoBoolean v r -> PseudoBoolean v r -> PseudoBoolean v r
 leadReduce f g
   | f == 0        = 0
   | m `divides` n = f - (ofTerm (d/c, divide n m)) * g
@@ -101,7 +103,7 @@ leadReduce f g
         (d, n) = leadingTerm f
 
 -- | Compute the fixpoint of a reduction
-mvd :: (Elim v, Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
+mvd :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => PseudoBoolean v r -> [PseudoBoolean v r] -> PseudoBoolean v r
 mvd f xs = go f xs where
   go 0 _  = 0
   go f xs =
@@ -113,7 +115,7 @@ mvd f xs = go f xs where
 --
 --   Rather than include the quadratic polynomials x^2 - x in the basis, we include them implicitly
 --   and add the implicit (multilinear) S-polynomials they generate, (p - LT(p))*v - LT(p)
-addToBasis :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
+addToBasis :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> PseudoBoolean v r -> [PseudoBoolean v r]
 addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
   nonzero p q = not $ coprime (leadingMonomial p) (leadingMonomial q)
   sPolys p xs = qfPolys p ++ [sPoly p q | q <- xs, nonzero p q]
@@ -124,11 +126,11 @@ addToBasis xs p = go (xs ++ [p]) (sPolys p xs) where
     s' -> go (basis ++ [s']) (xs ++ (sPolys s' basis))
 
 -- | Buchberger's algorithm
-buchberger :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+buchberger :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 buchberger = foldl' addToBasis []
 
 -- | Reduces an existing Groebner basis
-reduceBasis :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+reduceBasis :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 reduceBasis gbasis = go [] gbasis where
   squashCoeff p         = scale (recip $ leadingCoefficient p) p
   go gbasis' []         = gbasis'
@@ -137,7 +139,7 @@ reduceBasis gbasis = go [] gbasis where
     p' -> go (p':gbasis') gbasis
 
 -- | Buchberger's algorithm, modified to return a reduced Groebner basis
-rbuchberger :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+rbuchberger :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
 rbuchberger = foldl' (\x -> reduceBasis . addToBasis x) []
 
 {-------------------------------
@@ -153,7 +155,7 @@ toVar (XVar x) = x
 toVar (YVar x) = x
 
 instance Ord v => Ord (EVar v) where
-  compare s t = compare (toVar t) (toVar s)
+  compare s t = compare (toVar s) (toVar t)
 
 instance Show v => Show (EVar v) where
   show = show . toVar
@@ -165,10 +167,13 @@ instance Ord v => Elim (EVar v) where
 instance (IsString v) => IsString (EVar v) where
   fromString = YVar . fromString
 
+instance Ord v => Ord (PowerProduct (EVar v)) where
+  compare = lexdegOrd
+
 -- | Eliminate a set of variables from an ideal
-eliminateVars :: (Elim v, Eq r, Fractional r) => (v -> Bool) -> [PseudoBoolean v r] -> [PseudoBoolean v r]
+eliminateVars :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [v] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
 eliminateVars elim ideal = ideal'' where
-  ideal'  = map (rename (\v -> if elim v then YVar v else XVar v)) $ ideal
+  ideal'  = map (rename (\v -> if v `elem` elim then YVar v else XVar v)) $ ideal
   basis   = rbuchberger ideal'
   ideal'' = map (rename (\(XVar v) -> v)) $ project basis
   project = filter (not . any eliminate . vars)
@@ -178,16 +183,16 @@ eliminateVars elim ideal = ideal'' where
  -------------------------------}
 
 -- | Constructs a Groebner basis for the sum of two ideals
-idealPlus :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
+idealPlus :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
 idealPlus i j = rbuchberger $ i++j
 
 -- | Constructs a Groebner basis for the product of two ideals
-idealTimes :: (Elim v, Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
+idealTimes :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
 idealTimes i j = rbuchberger $ [p * q | p <- i, q <- j]
 
 -- | Constructs a Groebner basis for the intersection of two ideals
-idealIntersection :: (Elim v, Eq r, Fractional r, IsString v) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
-idealIntersection i j = eliminateVars (== fromString "_t") $ ti ++ tj where
+idealIntersection :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r, IsString v) => [PseudoBoolean v r] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
+idealIntersection i j = eliminateVars [fromString "_t"] $ ti ++ tj where
   ti = map ((fromString "_t")*) i
   tj = map (((fromString "_t") - 1)*) j
 
@@ -203,6 +208,9 @@ instance Show IVar where
 
 instance IsString IVar where
   fromString s = IVar (s,0)
+
+instance Ord (PowerProduct IVar) where
+  compare = lexdegOrd
 
 x0 = ofVar (IVar ("x",0)) :: SBool IVar
 x1 = ofVar (IVar ("x",1)) :: SBool IVar

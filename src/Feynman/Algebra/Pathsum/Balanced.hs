@@ -52,6 +52,9 @@ instance Show Var where
 instance IsString Var where
   fromString = FVar
 
+instance Ord (Monomial Var repr) where
+  compare = lexOrd
+
 -- | Convenience function for the string representation of the 'i'th input variable
 ivar :: Int -> String
 ivar = show . IVar
@@ -213,7 +216,7 @@ initialize b = ket [constant b]
 {-# INLINE initialize #-}
 
 -- | Construct a uniform superposition of classical states of a given form
-superposition :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
+superposition :: (Eq g, Num g) => [SBool String] -> Pathsum g
 superposition xs = Pathsum k 0 n k 0 $ map (rename sub) xs
   where n   = length xs
         k   = Set.size fv
@@ -222,7 +225,7 @@ superposition xs = Pathsum k 0 n k 0 $ map (rename sub) xs
 
 -- | Construct a classical transformation from the free variables of 'xs' to 'xs'
 --   Effectively binds the free variables in 'state xs'
-compute :: (Ord v, Eq g, Num g) => [SBool v] -> Pathsum g
+compute :: (Eq g, Num g) => [SBool String] -> Pathsum g
 compute xs = Pathsum 0 (Set.size fv) (length xs) 0 0 $ map (rename sub) xs
   where fv  = Set.unions $ map vars xs
         sub = ((Map.fromList [(v, IVar i) | (v, i) <- zip (Set.toList fv) [0..]])!)
@@ -269,7 +272,7 @@ postselect b = bra [constant b]
 {-# INLINE postselect #-}
 
 -- | Select on a classical state of a given form
-unsuper :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
+unsuper :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
 unsuper xs = Pathsum (2*m + n) m 0 (m+n) poly []
   where m    = length xs
         n    = Set.size fv
@@ -279,7 +282,7 @@ unsuper xs = Pathsum (2*m + n) m 0 (m+n) poly []
         constructTerm i = lift $ ofVar (PVar i) * (ofVar (IVar i) + rename sub (xs!!i))
 
 -- | Invert a classical transformation
-uncompute :: (Ord v, Eq g, Abelian g) => [SBool v] -> Pathsum g
+uncompute :: (Eq g, Abelian g) => [SBool String] -> Pathsum g
 uncompute xs = Pathsum (2*m) m n (m+n) poly [ofVar (PVar $ m + i) | i <- [0..n-1]]
   where m    = length xs
         n    = Set.size fv
