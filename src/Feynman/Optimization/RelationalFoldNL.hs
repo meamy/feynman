@@ -21,6 +21,7 @@ import qualified Data.Set as Set
 import Control.Monad.State.Strict hiding (join)
 import Data.Bits
 import Data.Coerce (coerce)
+import Data.String (IsString(..))
 
 import Feynman.Core
 import qualified Feynman.Util.Unicode as U
@@ -69,6 +70,9 @@ instance Show Var where
   show (Init i)  = "x" ++ (U.subscript $ toInteger i)
   show (Prime i) = "x" ++ (U.subscript $ toInteger i) ++ "'"
   show (Temp i)  = "y" ++ (U.subscript $ toInteger i)
+
+instance IsString Var where
+  fromString _ = Temp 10000000
 
 -- | Checks whether the variable is a temporary (path variable)
 isTemp :: Var -> Bool
@@ -377,6 +381,7 @@ applyStmt stmt = case stmt of
   WReset _ v   -> getSt v >>= \bv -> setSt v 0
   WMeasure _ v -> getSt v >> return ()
   WIf _ s1 s2  -> do
+    reduceState
     ctx <- get
     let vars  = Map.keys $ ket ctx
     let ctx'  = execState (applyStmt s1 >> reduceState) $ initialState vars vars
@@ -384,6 +389,7 @@ applyStmt stmt = case stmt of
     summary <- branchSummary ctx' ctx''
     fastForward summary
   WWhile _ s   -> do
+    reduceState
     ctx <- get
     let vars = Map.keys $ ket ctx
     let ctx' = execState (applyStmt s >> reduceState) $ initialState vars vars
@@ -439,7 +445,7 @@ stateFoldpp vars inputs stmt = applyOpt opts stmt where
   opts = genSubstList vars inputs stmt
 
 -- Testing
-v = ["x", "y"]
+v = ["x", "y", "z"]
 
 testcase1 = WSeq 1 (WGate 2 $ T "x") $
             WSeq 3 (WWhile 4 $ WGate 5 $ CNOT "x" "y") $
@@ -482,3 +488,18 @@ testcase8 = WSeq 1 (WGate 2 $ T "x") $
             WSeq 5 (WWhile 6 $ WGate 7 $ T "x") $
             WSeq 8 (WGate 9 $ H "x") $
             WGate 10 $ Tinv "x"
+
+testcase9 = WSeq 1 (WGate 2 $ T "y") $
+            WSeq 3 (WWhile 4 $
+                       WSeq 5 (WGate 6 $ Swap "x" "y") $
+                       WGate 8 $ Swap "y" "z") $
+            WGate 10 $ Tinv "y"
+
+toStmt i xs = go i xs where
+  go i []     = WSkip i
+  go i (x:xs) = WSeq i (WGate (i+1) x) $ go (i+2) xs
+
+testcase10 = WSeq 1 (WReset 2 "z") $
+             WSeq 3 (toStmt 4 $ [X "x"] ++ ccx "x" "y" "z" ++ [T "z"] ++ ccx "x" "y" "z" ++ [X "x"]) $
+             WSeq 100 (WWhile 101 $ WGate 102 $ CNOT "x" "y") $
+             toStmt 103 $ [X "x"] ++ ccx "x" "y" "z" ++ [T "z"] ++ ccx "x" "y" "z" ++ [X "x"]
