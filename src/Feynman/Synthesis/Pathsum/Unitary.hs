@@ -50,8 +50,6 @@ import Feynman.Synthesis.Pathsum.Clifford
 
 import Feynman.Verification.Symbolic
 
-import Debug.Trace
-
 {-----------------------------------
  Types
  -----------------------------------}
@@ -115,7 +113,7 @@ reducibles sop = snd $ foldr go (Set.empty, Set.empty) (outVals sop) where
     _                                         -> (Set.union seen (vars p), Set.difference reducibles (vars p))
 
 -- | Computes a linearization of the ket by mapping monomials to unique variables
-linearize :: Ord v => [SBool v] -> ExtractionState AffineTrans
+linearize :: (Ord v, Ord (PowerProduct v)) => [SBool v] -> ExtractionState AffineTrans
 linearize xs = reindex $ evalState (mapM linearizePoly xs) (0, Map.empty) where
   linearizePoly f = foldM linearizeTerm (bitI 0 0, False) (toTermList f)
   linearizeTerm (bv, parity) (r, mono)
@@ -133,7 +131,7 @@ linearize xs = reindex $ evalState (mapM linearizePoly xs) (0, Map.empty) where
         return maxBit
 
 -- | Computes a linearization of the ket by mapping monomials to unique variables
-linearizeV2 :: Ord v => [SBool v] -> ExtractionState AffineTrans
+linearizeV2 :: (Ord v, Ord (PowerProduct v)) => [SBool v] -> ExtractionState AffineTrans
 linearizeV2 xs =
   let supp = Set.toDescList . foldr Set.union (Set.empty) . map (Set.fromAscList . support) $ xs
       ctx  = Map.fromDescList $ zip supp [0..]
