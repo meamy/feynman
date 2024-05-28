@@ -11,7 +11,12 @@ module Feynman.Algebra.Polynomial.Multilinear.Groebner(
   mvd,
   buchberger,
   reduceBasis,
-  rbuchberger
+  rbuchberger,
+  eliminateVars,
+  eliminateAll,
+  idealPlus,
+  idealTimes,
+  idealIntersection
   ) where
 
 import Data.List
@@ -177,6 +182,10 @@ eliminateVars elim ideal = ideal'' where
   basis   = rbuchberger ideal'
   ideal'' = map (rename (\(XVar v) -> v)) $ project basis
   project = filter (not . any eliminate . vars)
+
+-- | Eliminates all variables mark as elimination from an ideal
+eliminateAll :: (Elim v, Ord (PowerProduct v), Eq r, Fractional r) => [PseudoBoolean v r] -> [PseudoBoolean v r]
+eliminateAll = filter (not . any eliminate . vars) . rbuchberger
 
 {-------------------------------
  Operations on ideals

@@ -138,7 +138,7 @@ lexOrd m n = compare (getVars m) (getVars n)
 grevlexOrd :: Ord v => Monomial v repr -> Monomial v repr -> Ordering
 grevlexOrd m n
     | k /= l    = compare k l
-    | otherwise = compare (Set.toAscList $ getVars n) (Set.toAscList $ getVars m)
+    | otherwise = compare (Set.toAscList $ getVars m) (Set.toAscList $ getVars n)
     where k = degree m
           l = degree n
 
