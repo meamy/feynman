@@ -105,7 +105,8 @@ data Ctx = Ctx {
   terms   :: Map (SBool Var) Term,
   phase   :: Angle,
   orphans :: [Term],
-  pp      :: PseudoBoolean Var Angle
+  pp      :: PseudoBoolean Var Angle,
+  ideal   :: TransIdeal
 } deriving Show
 
 -- | Allocate a new variable
@@ -162,10 +163,10 @@ elimVar x = modify $ \st -> st { pp = remVar x $ pp st }
 -- | Substitute a variable
 substVar :: Var -> SBool Var -> State Ctx ()
 substVar x bexp = modify go where
-  go st = st { terms = Map.mapKeysWith c f $ terms st,
+  go st = st { --terms = Map.mapKeysWith c f $ terms st,
                pp    = P.subst x bexp $ pp st,
                ket   = Map.map (P.subst x bexp) $ ket st }
-  f = dropConstant . P.subst x bexp
+  --f = dropConstant . P.subst x bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
 -- | Matches a instance of [HH] with maximum degree /cutoff/
@@ -194,20 +195,21 @@ applyReductions cutoff = do
       return $ (ofVar y + bexp):xs
 
 -- | Reduce with respect to a groebner basis for a set of polynomials
-reduceAll :: TransIdeal -> State Ctx ()
-reduceAll ideal = do
+reduceTerms :: State Ctx ()
+reduceTerms = do
   st <- get
   let comb (s,a) (t,b) = (Set.union s t, a + b)
-  put $ st { terms = Map.mapKeysWith comb (flip mvd ideal) $ terms st }
+  put $ st { terms = Map.mapKeysWith comb (flip mvd $ ideal st) $ terms st }
 
--- | Reduce the state
-reduceState :: State Ctx [SBool Var]
-reduceState = do
+-- | Computes an ideal for the state
+computeIdeal :: State Ctx ()
+computeIdeal = do
   i1 <- applyReductions (Just 1) -- linear reductions
   i2 <- applyReductions (Just 2) -- quadratic reductions
   ik <- applyReductions Nothing -- all other reductions
+  modify (\st -> st { ideal = foldl (\gb -> reduceBasis . addToBasis gb) (ideal st) $ i1 ++ i2 ++ ik })
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
-  return $ i1 ++ i2 ++ ik
+  --return $ i1 ++ i2 ++ ik
 
 -- | Abstract transformers for individual gates
 applyGate :: (Primitive, Loc) -> State Ctx ()
@@ -243,7 +245,7 @@ applyGate (gate, l) = case gate of
 
 -- | The initial state
 initialState :: [ID] -> [ID] -> Ctx
-initialState vars inputs = Ctx nVars 0 (Map.fromList ket) Map.empty 0 [] 0 where
+initialState vars inputs = Ctx nVars 0 (Map.fromList ket) Map.empty 0 [] 0 [] where
   nVars = length inputs
   ket = (zip inputs [ofVar (Init x) | x <- [0..]]) ++ (zip (vars\\inputs) $ repeat 0)
   
@@ -323,29 +325,32 @@ star f = go f where
 fastForward :: (PseudoBoolean Var Angle, TransIdeal) -> State Ctx ()
 fastForward (poly, summary) = do
   ctx <- get
-  Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
-  Trace.trace ("poly: \n" ++ show poly) $ return ()
-  Trace.trace ("summary: \n" ++ show summary) $ return ()
+  Trace.trace ("Ctx: \n" ++ show ctx ++ "\n") $ return ()
+  Trace.trace ("poly: \n" ++ show poly ++ "\n") $ return ()
+  Trace.trace ("summary: \n" ++ show summary ++ "\n") $ return ()
   let n = nVars ctx
   let t = nTemps ctx
   let (ids, st) = unzip . Map.toList $ ket ctx
   let trans = rbuchberger $ map (\(p,i) -> ofVar (Temp $ i+n+t)+p) $ zip st [0..]
-  Trace.trace ("trans shifted: \n" ++ show trans) $ return ()
+  Trace.trace ("trans shifted: \n" ++ show trans ++ "\n") $ return ()
   let evars = [Temp $ i+n+t | i <- [0..n-1]]
   let poly' = (rename (shiftInits $ Just (t+n)) . rename (shiftPrimes $ Just t)) $ poly
   let sum'  = map (rename (shiftInits $ Just (t+n)) . rename (shiftPrimes $ Just t)) summary
-  Trace.trace ("poly shifted: \n" ++ show poly') $ return ()
-  Trace.trace ("summary shifted: \n" ++ show sum') $ return ()
+  Trace.trace ("poly shifted: \n" ++ show poly' ++ "\n") $ return ()
+  Trace.trace ("summary shifted: \n" ++ show sum' ++ "\n") $ return ()
   let ideal = idealPlus trans sum'
+  Trace.trace ("transition ideal: \n" ++ show ideal  ++ "\n") $ return ()
   let pRed  = mvdInPP poly' ideal
-  Trace.trace ("poly reduced: \n" ++ show pRed) $ return ()
+  Trace.trace ("poly reduced: \n" ++ show pRed ++ "\n") $ return ()
   let trans' = eliminateVars evars $ ideal
-  Trace.trace ("composition: \n" ++ show trans') $ return ()
+  Trace.trace ("existentials removed: \n" ++ show trans' ++ "\n") $ return ()
+  let ideal'= idealPlus ideal trans'
   let ket'  = Map.fromList $ zip ids (map (flip mvd trans') [ofVar (Temp $ i+t) | i <- [0..n-1]])
   let ctx'  = ctx { nTemps = t+n,
                     pp     = pp ctx + pRed,
-                    ket    = ket' }
-  Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
+                    ket    = ket',
+                    ideal  = ideal'}
+  Trace.trace ("Ctx': \n" ++ show ctx' ++ "\n") $ return ()
   put $ ctx'
 
 -- | Summarizes a conditional
@@ -381,34 +386,36 @@ applyStmt stmt = case stmt of
   WReset _ v   -> getSt v >>= \bv -> setSt v 0
   WMeasure _ v -> getSt v >> return ()
   WIf _ s1 s2  -> do
-    reduceState
     ctx <- get
     let vars  = Map.keys $ ket ctx
-    let ctx'  = execState (applyStmt s1 >> reduceState) $ initialState vars vars
-    let ctx'' = execState (applyStmt s2 >> reduceState) $ initialState vars vars
+    let ctx'  = execState (processBlock s1) $ initialState vars vars
+    let ctx'' = execState (processBlock s2) $ initialState vars vars
     summary <- branchSummary ctx' ctx''
     fastForward summary
   WWhile _ s   -> do
-    reduceState
     ctx <- get
     let vars = Map.keys $ ket ctx
-    let ctx' = execState (applyStmt s >> reduceState) $ initialState vars vars
+    let ctx' = execState (processBlock s) $ initialState vars vars
     summary <- loopSummary ctx'
     fastForward summary
+
+-- | Analysis
+processBlock :: WStmt -> State (Ctx) ()
+processBlock stmt = applyStmt stmt >> computeIdeal >> reduceTerms
 
 -- | Generate substitution list
 genSubstList :: [ID] -> [ID] -> WStmt -> Map Loc Angle
 genSubstList vars inputs stmt =
 
-  let result = execState (applyStmt stmt >> reduceState) $ initialState vars inputs
-      phases = (snd . unzip . Map.toList $ terms result) ++ orphans result
+  let result = execState (processBlock stmt) $ initialState vars inputs
+      phases = (Map.toList $ terms result) ++ [(1, t) | t <- orphans result]
       gphase = phase result
 
-      go (locs, angle) map =
+      go (poly, (locs, angle)) map =
         let (loc, angle') = case Set.findMin locs of
               (l, 0) -> (l, angle)
               (l, 1) -> (l, (-angle))
-            update (l,_) = Map.insert l (if loc == l then angle' else 0)
+            update (l,_) = Map.insert l (if poly /= 0 && loc == l then angle' else 0)
         in
           Set.foldr update map locs
 

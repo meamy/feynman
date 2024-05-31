@@ -10,6 +10,7 @@ Portability : portable
 module Feynman.Algebra.Polynomial.Multilinear.Groebner(
   mvd,
   buchberger,
+  addToBasis,
   reduceBasis,
   rbuchberger,
   eliminateVars,
