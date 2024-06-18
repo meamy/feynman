@@ -57,6 +57,14 @@ extendLeft i = (flip shift) i . zeroExtend i
 getParity :: F2Vec -> Bool
 getParity bv = bv@.(width bv - 1)
 
+-- | Adds two terms together
+addTerms :: Term -> Term -> Term
+addTerms (s, t) (s', t') = (Set.union s s', t + t')
+
+-- | Zeros the angle in a term
+zeroAngle :: Term -> Term
+zeroAngle (s, t) = (s, 0)
+
 {-----------------------------------
  Optimization algorithm
  -----------------------------------}
@@ -175,10 +183,16 @@ branchSummary ctx' ctx'' = do
   return $ join ar1 ar2
 
 -- | Summarizes a loop
-loopSummary :: Ctx -> State (Ctx) AffineRelation
-loopSummary ctx' = do
-  modify (\ctx -> ctx { orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ terms ctx') })
-  return $ star . projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
+loopSummary :: Ctx -> Map ID F2Vec -> State (Ctx) AffineRelation
+loopSummary ctx' input = do
+  let summary     = star . projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
+  let canon       = compose (makeExplicit . ARD . fromList . Map.elems $ input) summary
+  let (tms,ztrms) = Map.partitionWithKey go $ Map.mapKeysWith addTerms reduce (terms ctx') where
+        reduce bv = reduceVector (unARD canon) (zeroExtend (Map.size input) bv)
+        go bv _   = bv /= 0
+  modify (\ctx -> ctx { terms   = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle ztrms),
+                        orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ tms) })
+  Trace.trace ("Zeros and terms:\n" ++ show ztrms ++ "\n" ++ show tms) $ return summary
   --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
 -- | Abstract transformers for while statements
@@ -199,8 +213,9 @@ applyStmt stmt = case stmt of
   WWhile _ s   -> do
     ctx <- get
     let vars = Map.keys $ ket ctx
+    let zrs   = Map.keys $ Map.filter (/= 0) $ ket ctx
     let ctx' = execState (applyStmt s) $ initialState vars vars
-    summary <- loopSummary ctx'
+    summary <- loopSummary ctx' (ket ctx)
     fastForward summary
 
 -- | Generate substitution list
@@ -283,4 +298,11 @@ testcase6 = WSeq 1 (WGate 2 $ T "y") $
             WSeq 3 (WWhile 4 $
                     WSeq 5 (WGate 6 $ T "x") $
                     WWhile 7 $ (WGate 8 $ X "y")) $
+            WGate 9 $ Tinv "y"
+
+testcase7 = WSeq 1 (WGate 2 $ T "y") $
+            WSeq 3 (WReset 4 "x") $
+            WSeq 5 (WWhile 6 $
+                    WSeq 7 (WGate 8 $ T "y") $
+                            WGate 7 $ T "x") $
             WGate 9 $ Tinv "y"

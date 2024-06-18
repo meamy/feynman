@@ -176,6 +176,13 @@ instance (IsString v) => IsString (EVar v) where
 instance Ord v => Ord (PowerProduct (EVar v)) where
   compare = lexdegOrd
 
+-- | Re-orders according to elimination order
+reorder :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [v] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
+reorder elim ideal = ideal'' where
+  ideal'  = map (rename (\v -> if v `elem` elim then YVar v else XVar v)) $ ideal
+  basis   = rbuchberger ideal'
+  ideal'' = map (rename toVar) $ basis
+
 -- | Eliminate a set of variables from an ideal
 eliminateVars :: (Ord v, Ord (PowerProduct v), Eq r, Fractional r) => [v] -> [PseudoBoolean v r] -> [PseudoBoolean v r]
 eliminateVars elim ideal = ideal'' where
