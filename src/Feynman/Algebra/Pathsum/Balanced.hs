@@ -551,15 +551,32 @@ applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
  ----------------------------}
 
 -- | Choi matrix of computational basis measurement
-measureChoi :: (Eq g, Abelian g) => Pathsum g
-measureChoi = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
+measureGate :: (Eq g, Abelian g) => Pathsum g
+measureGate = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
         y  = ofVar $ PVar 0
 
--- | CPM operator of computational basis measurement
-measure :: (Eq g, Abelian g) => Pathsum g
-measure = unChoi measureChoi
+-- | Applicative version of the Choi matrix.
+--
+--   Requires the index of the corresponding input and output
+applyMeasure :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyMeasure i j (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals where
+  pp' = pp + (lift $ y * (ovals!!i + ovals!!j))
+  y   = ofVar $ PVar p
+
+-- | Trace out a qubit in a vectorized density matrix.
+--
+--   Requires the index of the corresponding input and output.
+--
+--   Effectively "closes the loop" if the density matrix was generated
+--   by an eta on an operator. More generally represents a linear operator
+--          X \otimes Y -> Y
+--   corresponding to a measurement on X followed by dropping X
+traceOut :: (Eq g, Abelian g) => Int -> Int -> Pathsum g -> Pathsum g
+traceOut i j sop@(Pathsum s d o p pp ovals) = sop .> embed epsilon (o-2) mp (\_ -> 0) where
+  mp 0 = i
+  mp 1 = j
 
 {----------------------------
  Bind, unbind, and subst
@@ -1146,8 +1163,8 @@ teleportChannel :: Pathsum DMod2
 teleportChannel = channelize ((identity 1) <> bellstate) .>
                   channelize (cxgate <> (identity 1)) .>
                   channelize (hgate <> cxgate) .>
-                  embed measure 4 (* 3) (* 3) .>
-                  embed measure 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
+                  embed measureGate 4 (* 3) (* 3) .>
+                  embed measureGate 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
                   channelize (swapgate <> hgate) .>
                   channelize ((identity 1) <> cxgate) .>
                   channelize (swapgate <> hgate) .>
@@ -1175,7 +1192,7 @@ aState = fresh .> hgate .> tgate
 teleportTChannel :: Pathsum DMod2
 teleportTChannel = channelize ((identity 1) <> aState) .>
                    channelize (cxgate) .>
-                   embed measure 2 (\i -> i*2 + 1) (\j -> j*2 + 1) .>
+                   embed measureGate 2 (\i -> i*2 + 1) (\j -> j*2 + 1) .>
                    channelize (controlled sgate) .>
                    embed epsilon 2 (\i -> i*2 + 1) (\j -> j*2 + 1) -- trace out the resource state
 
