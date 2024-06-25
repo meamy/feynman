@@ -123,12 +123,19 @@ simGate uexp = case uexp of
   CXGate arg1 arg2 -> do
     argslist <- expandArgs [arg1, arg2]
     forM_ argslist callCX
+  UGate theta phi lambda arg -> do
+    arglist <- expandArgs [arg]
+    forM_ arglist $ callU theta phi lambda 
   BarrierGate _ -> return ()
 
   where
     callCX :: [Arg] -> State Env ()
     callCX (a1:a2:_) =
       simGate' $ CXGate a1 a2
+
+    callU :: Exp -> Exp -> Exp -> [Arg] -> State Env ()
+    callU theta phi lambda (arg:_) =
+      simGate' $ UGate theta phi lambda arg
 
     -- expand args (consisting of registers and indexed registers)
     -- into lists of args only with indexed registers
