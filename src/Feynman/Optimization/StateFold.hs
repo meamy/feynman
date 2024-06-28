@@ -22,6 +22,8 @@ import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
+import Debug.Trace as Trace
+
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
    to help find extra T reductions. Allows identification of
@@ -91,13 +93,21 @@ applyReductions cutoff = do
   poly     <- gets pp
   pathVars <- gets paths
   outVars  <- gets (Set.unions . map (Set.map unvar . vars) . Map.elems . ket)
-  case matchHH poly (Set.difference pathVars outVars) pathVars cutoff of
-    Nothing           -> return []
-    Just (x, y, bexp) -> do
+  let ideal = matchI poly (Set.difference pathVars outVars) pathVars cutoff
+  let hhIst = matchRandomHH poly (Set.difference pathVars outVars) pathVars cutoff
+  let omIst = matchOmega poly (Set.difference pathVars outVars) pathVars
+  case (hhIst, omIst) of
+    (Just (x, y, bexp), _) -> do
       elimVar x
       substVar y bexp
       xs <- applyReductions cutoff
-      return $ (ofVar (var y) + bexp):xs
+      return $ ((ofVar (var y) + bexp):xs) ++ ideal
+    (Nothing, Just (x, bexp)) -> do
+      elimVar x
+      let poly = constant (Discrete $ fromDyadic $ dyadic 1 2) + distribute (Discrete $ fromDyadic $ dyadic 3 1) (P.lift bexp)
+      modify (\st -> st { pp = pp st + poly })
+      return []
+    (Nothing, Nothing)     -> return ideal
 
 -- Remove an internal variable
 elimVar :: Int -> State Ctx ()
@@ -112,6 +122,14 @@ substVar x bexp = modify go where
   f = dropConstant . P.subst (var x) bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
+-- Matches a instance of [I]
+matchI :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> [SBool String]
+matchI pp cand paths cutoff = filter isValid . catMaybes . map (go . var) $ Set.toDescList cand where
+  go v = toBooleanPoly . quotVar v $ pp
+  isValid pp = case cutoff of
+    Just d  -> degree pp <= d
+    Nothing -> True
+
 -- Matches a instance of [HH]
 matchHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
 matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
@@ -122,6 +140,14 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
   validSoln (u, sub) = case cutoff of
     Just d  -> degree sub <= d && Set.member (unvar u) paths
     Nothing -> Set.member (unvar u) paths
+
+-- Matches an instance of the [omega] rule
+matchOmega :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe (Int, SBool String)
+matchOmega pp cand paths = msum . map (go . var) $ Set.toDescList cand where
+  go v = do
+    pp' <- toBooleanPoly . addFactor v $ pp
+    return (unvar v, pp')
+  addFactor v p = constant (Discrete $ fromDyadic $ dyadic 3 1) + quotVar v p
 
 -- Matches a random instance of [HH]
 matchRandomHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
@@ -178,14 +204,21 @@ applyGate (gate, l) = case gate of
   _      -> error $ "Unsupported gate " ++ show gate
 
 {- Run the analysis on a circuit and state -}
-runCircuit :: [Primitive] -> Ctx -> Ctx
-runCircuit circ = execState $ do
-  mapM_ applyGate (zip circ [2..])
-  i1 <- applyReductions (Just 1) -- linear reductions
-  i2 <- applyReductions (Just 2) -- quadratic reductions
-  ik <- applyReductions Nothing -- all other reductions
-  --reduceAll $ i1 ++ i2 ++ ik
-  return ()
+runCircuit :: Int -> [Primitive] -> Ctx -> Ctx
+runCircuit d circ = execState $ (mapM_ applyGate (zip circ [2..])) >> go where
+  go | d == 1 = do
+         i1 <- applyReductions (Just 1) -- linear reductions
+         return ()
+     | d > 1  = do
+         i1 <- applyReductions (Just 1) -- linear reductions
+         id <- applyReductions (Just d) -- reductions up to degree d
+         --Trace.trace ("Linear equations: " ++ show i1) $ return ()
+         --Trace.trace ("All equations: " ++ show id) $ return ()
+         return ()
+     | d < 1  = do
+         i1 <- applyReductions (Just 1) -- linear reductions
+         id <- applyReductions Nothing  -- all reductions
+         return ()
 
 {- Generates an initial state -}
 initialState :: [ID] -> [ID] -> Ctx
@@ -194,9 +227,9 @@ initialState vars inputs = st where
   dim = length inputs
   ket = (zip inputs [ofVar (var x) | x <- [0..]]) ++ (zip (vars\\inputs) $ repeat 0)
   
-stateFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-stateFold vars inputs circ =
-  let result = runCircuit circ $ initialState vars inputs
+stateFold :: Int -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+stateFold d vars inputs circ =
+  let result = runCircuit d circ $ initialState vars inputs
       phases = Map.elems $ terms result
       (map, gphase) = foldr go (Map.empty, phase result) phases where
         go (locs, angle) (map, gphase) =

@@ -238,6 +238,12 @@ removeSwaps = reverse . go (Map.empty, []) where
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
     _          -> go (ctx, (substGate (get ctx) x):acc) xs
 
+expandCNOT :: [Primitive] -> [Primitive]
+expandCNOT = concatMap go where
+  go x = case x of
+    CNOT c t      -> [H t, CZ c t, H t]
+    _             -> [x]
+
 -- Builtin circuits
 
 cs :: ID -> ID -> [Primitive]
