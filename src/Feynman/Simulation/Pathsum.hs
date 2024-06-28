@@ -89,7 +89,7 @@ simExp e = case e of
   UOpExp op e' -> liftM (evalUOp op) $ simExp e'
   BOpExp e1 op e2 -> do
     e1' <- simExp e1
-    e2' <- simExp e1
+    e2' <- simExp e2
     return $ (evalBOp op) e1' e2'
 
 pushEnv :: [ID] -> [Exp] -> [ID] -> [Arg] -> State Env ()
@@ -270,9 +270,8 @@ simGate uexp = case uexp of
         popEnv
       UGate theta phi lambda arg ->
         let thetaPlusPi = BOpExp theta PlusOp PiExp
-            phiPlusThreePi = BOpExp theta PlusOp $ BOpExp PiExp 
-                                          PlusOp $ BOpExp PiExp 
-                                          PlusOp PiExp in
+            phiPlusThreePi = BOpExp phi PlusOp $ 
+                             BOpExp PiExp TimesOp $ IntExp 3 in
           mapM_ simGate' [
             CallGate "rz" [lambda] [arg],
             CallGate "h" [] [arg],
