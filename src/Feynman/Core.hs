@@ -28,11 +28,11 @@ apply2 f a b = case (a,b) of
   (Discrete a, Continuous b)   -> Continuous $ f (toDouble a) b
   (Continuous a, Discrete b)   -> Continuous $ f a (toDouble b)
   (Continuous a, Continuous b) -> Continuous $ f a b
-  where toDouble = fromRational . toRational
+  where toDouble = (pi *) . fromRational . toRational
 
 discretize :: Angle -> DyadicRational
 discretize (Discrete a)   = unpack a
-discretize (Continuous a) = toDyadic a
+discretize (Continuous a) = toDyadic (a/pi)
 
 -- Phase of pi*(a/2^b) reduced mod 2
 dyadicPhase :: DyadicRational -> Angle
