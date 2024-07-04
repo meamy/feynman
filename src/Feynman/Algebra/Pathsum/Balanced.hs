@@ -314,9 +314,17 @@ roothalf = Pathsum 1 0 0 0 0 []
 iunit :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 iunit = Pathsum 0 0 0 0 (constant half) []
 
+-- | \(-i\)
+minusi :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+minusi = Pathsum 0 0 0 0 (constant (-1 * half)) []
+
 -- | \(e^{i\pi/4}\)
 omega :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 omega = Pathsum 0 0 0 0 (constant (half * half)) []
+
+-- | \(e^{-i\pi/4}\)
+omegabar :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+omegabar = Pathsum 0 0 0 0 (constant (-1 * half * half)) []
 
 -- | A fresh, 0-valued ancilla
 fresh :: (Eq g, Num g) => Pathsum g

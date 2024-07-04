@@ -52,7 +52,7 @@ getBinding id = gets $ search id . binds
   where
     search id (b:bs) = case Map.lookup id b of
       Just bind -> bind
-      Nothing -> search id bs 
+      Nothing -> search id bs
 
 -- action returns offset of allocated register
 allocatePathsum :: Int -> State Env Int
@@ -241,8 +241,9 @@ simGate uexp = case uexp of
         modify $ \env -> env { pathsum = applyMCRz lambda' offsets $ pathsum env }
       CallGate "u3" [theta, phi, lambda] [arg] -> 
         simGate' $ UGate theta phi lambda arg
-      CallGate "u2" [phi, lambda] [arg] -> 
+      CallGate "u2" [phi, lambda] [arg] -> do
         simGate' $ UGate (BOpExp PiExp DivOp $ IntExp 2) phi lambda arg
+        modify $ \env -> env { pathsum = pathsum env <> omegabar }
       CallGate "u1" [lambda] [arg] ->
         simGate' $ UGate (IntExp 0) (IntExp 0) lambda arg
       CallGate "cu1" [lambda] [arg1, arg2] -> let
@@ -271,7 +272,7 @@ simGate uexp = case uexp of
       UGate theta phi lambda arg ->
         let thetaPlusPi = BOpExp theta PlusOp PiExp
             phiPlusThreePi = BOpExp phi PlusOp $ 
-                             BOpExp PiExp TimesOp $ IntExp 3 in
+                             BOpExp PiExp TimesOp $ IntExp 3 in do
           mapM_ simGate' [
             CallGate "rz" [lambda] [arg],
             CallGate "h" [] [arg],
@@ -282,6 +283,7 @@ simGate uexp = case uexp of
             CallGate "s" [] [arg],
             CallGate "h" [] [arg],
             CallGate "rz" [phiPlusThreePi] [arg] ]
+          modify $ \env -> env { pathsum = pathsum env <> minusi }
       CXGate arg1 arg2 -> do
         offset1 <- getOffset arg1
         offset2 <- getOffset arg2
