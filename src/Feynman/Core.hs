@@ -103,14 +103,14 @@ data Circuit = Circuit { qubits :: [ID],
 
 {- Flow-agnostic while programs -}
 
-data WStmt =
-    WSkip Loc
-  | WGate Loc Primitive
-  | WSeq Loc WStmt WStmt
-  | WReset Loc ID
-  | WMeasure Loc ID
-  | WIf Loc WStmt WStmt
-  | WWhile Loc WStmt
+data WStmt a =
+    WSkip a
+  | WGate a Primitive
+  | WSeq a [WStmt a]
+  | WReset a ID
+  | WMeasure a ID
+  | WIf a (WStmt a) (WStmt a)
+  | WWhile a (WStmt a)
 
 {- Utilities -}
 foldCirc f b c = foldl (foldStmt f . body) b (decls c)
@@ -200,6 +200,16 @@ ids = Set.toList . foldr f Set.empty
           Rx theta x    -> [x]
           Ry theta x    -> [x]
           Uninterp s xs -> xs
+
+idsW :: WStmt a -> [ID]
+idsW = Set.toList . go where
+  go (WSkip _)      = Set.empty
+  go (WGate _ g)    = Set.fromList $ ids [g]
+  go (WSeq _ xs)    = Set.unions $ map go xs
+  go (WReset _ x)   = Set.singleton x
+  go (WMeasure _ x) = Set.singleton x
+  go (WIf _ s1 s2)  = Set.union (go s1) (go s2)
+  go (WWhile _ s)   = go s
 
 converge :: Eq a => (a -> a) -> a -> a
 converge f a
@@ -300,14 +310,14 @@ instance Show Circuit where
           inputline = ".i " ++ showLst (filter (`Set.member` inputs circ) (qubits circ))
           body      = map show (decls circ)
 
-instance Show WStmt where
+instance Show (WStmt a) where
   show stmt = intercalate "\n" $ go stmt where
-    go :: WStmt -> [String]
+    go :: (WStmt a) -> [String]
     go (WSkip _)      = ["SKIP"]
     go (WGate _ gate) = [show gate]
-    go (WSeq _ s1 s2) = go s1 ++ go s2
-    go (WReset _ v)   = ["RESET " ++ show v]
-    go (WMeasure _ v) = ["* <- MEASURE " ++ show v]
+    go (WSeq _ xs)    = concatMap go xs
+    go (WReset _ v)   = ["RESET " ++ v]
+    go (WMeasure _ v) = ["* <- MEASURE " ++ v]
     go (WIf _ s1 s2)  = ["IF * THEN:"] ++ (map ('\t':) $ go s1)
                         ++ ["ELSE:"] ++ (map ('\t':) $ go s2)
     go (WWhile _ s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
