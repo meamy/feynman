@@ -1,10 +1,20 @@
 {
-module Frontend.OpenQASM3.Lexer (Alex, AlexPosn(..), Lexeme(..), alexError, alexGetInput, alexMonadScan, runAlex) where
+module Feynman.Frontend.OpenQASM3.Lexer
+  (
+    Alex,
+    AlexPosn(..),
+    Lexeme(..),
+    alexError,
+    alexGetInput,
+    alexMonadScan,
+    runAlex
+  )
+where
 
-import Ast
 import Data.Char (chr)
 import Debug.Trace (trace)
-import Frontend.OpenQASM3.Syntax
+import Feynman.Frontend.OpenQASM3.Ast
+import Feynman.Frontend.OpenQASM3.Syntax
 
 }
 

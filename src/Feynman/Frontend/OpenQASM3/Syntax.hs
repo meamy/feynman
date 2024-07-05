@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
-module Frontend.OpenQASM3.Syntax
+module Feynman.Frontend.OpenQASM3.Syntax
   ( ParseNode,
     SyntaxNode,
     Token (..),
@@ -20,15 +20,15 @@ module Frontend.OpenQASM3.Syntax
   )
 where
 
-import Ast
 import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Debug.Trace (trace)
+import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
 import Numeric
 import Text.Read (readMaybe)
 
-type ParseNode = Ast.Node Tag SourceRef
+type ParseNode = Ast.Node Tag Ast.SourceRef
 
 type SyntaxNode = Ast.Node Tag ()
 
@@ -297,7 +297,7 @@ pretty (Ast.Node DelayStmt (designator : gateOperands) _) = "delay[" ++ pretty d
 pretty (Ast.Node DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
   "defcal "
     ++ pretty defcalTarget
-    ++ (if isNilNode defcalArgs then " " else "(" ++ prettyList defcalArgs ++ ") ")
+    ++ (if Ast.isNilNode defcalArgs then " " else "(" ++ prettyList defcalArgs ++ ") ")
     ++ prettyList defcalOps
     ++ prettyReturnType returnType
     ++ " "
@@ -314,14 +314,14 @@ pretty (Ast.Node ForStmt [anyType, ident, loopExpr, loopStmt] _) =
 pretty (Ast.Node GateStmt [ident, params, args, stmts] _) =
   "gate "
     ++ pretty ident
-    ++ (if isNilNode params then "" else "(" ++ prettyList params ++ ")")
-    ++ (if isNilNode args then "" else ' ' : prettyList args)
+    ++ (if Ast.isNilNode params then "" else "(" ++ prettyList params ++ ")")
+    ++ (if Ast.isNilNode args then "" else ' ' : prettyList args)
     ++ " "
     ++ pretty stmts
 pretty (Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) =
   ( case modifiers of
       Ast.NilNode -> ""
-      Ast.Node {children = cs} -> concatMap ((++ " ") . pretty) cs
+      Ast.Node {Ast.children = cs} -> concatMap ((++ " ") . pretty) cs
   )
     ++ pretty target
     ++ prettyMaybeList "(" params ")"
@@ -395,7 +395,7 @@ pretty (Ast.Node (DefcalTarget tgt _) [] _) = tgt -- "measure", "reset", "delay"
 pretty (Ast.Node ArgumentDefinition [anyType, ident] _) = pretty anyType ++ " " ++ pretty ident
 {- Error cases -}
 -- Should have been handled above -- usually implies some change to how the surrounding renders
-pretty NilNode = trace "Unhandled NilNode for pretty" undefined
+pretty Ast.NilNode = trace "Unhandled NilNode for pretty" undefined
 -- Should have been handled above -- we can't know which separator to use
 pretty (Ast.Node List elems _) = trace ("Unhandled List node for pretty with children: " ++ show elems) undefined
 -- Fallback
@@ -403,7 +403,7 @@ pretty node = trace ("\nMissing pattern for pretty: " ++ show node ++ "\n") unde
 
 -- The syntax tree is as close to canonicalized as the tree easily gets
 syntaxTreeFrom :: Ast.Node Tag c -> SyntaxNode
-syntaxTreeFrom NilNode = NilNode
+syntaxTreeFrom Ast.NilNode = Ast.NilNode
 -- Strip extra parens
 syntaxTreeFrom (Ast.Node ParenExpr [expr] _) = syntaxTreeFrom expr
 syntaxTreeFrom (Ast.Node ParenExpr children _) = undefined
@@ -422,7 +422,7 @@ syntaxTreeFrom (Ast.Node (BinaryOperatorExpr _) children _) = undefined
 -- Pass everything else through untouched
 syntaxTreeFrom (Ast.Node tag children _) = Ast.Node tag (map syntaxTreeFrom children) ()
 
-parenthesizeNonTrivialExpr :: Node Tag c -> Node Tag c
+parenthesizeNonTrivialExpr :: Ast.Node Tag c -> Ast.Node Tag c
 parenthesizeNonTrivialExpr expr =
   if isTrivialExpr expr then expr else Ast.Node ParenExpr [expr] (Ast.context expr)
   where
@@ -634,25 +634,25 @@ prettyIndex :: (Show c) => Ast.Node Tag c -> String
 prettyIndex idx = if Ast.tag idx == List then prettyList idx else pretty idx
 
 prettyList :: (Show c) => Ast.Node Tag c -> String
-prettyList NilNode = ""
+prettyList Ast.NilNode = ""
 prettyList (Ast.Node List elems _) = prettyListElements elems
 
 prettyMaybeDsgn :: (Show c) => Ast.Node Tag c -> String
 prettyMaybeDsgn expr = prettyMaybe "[" expr "]"
 
 prettyMaybeList :: (Show c) => String -> Ast.Node Tag c -> String -> String
-prettyMaybeList _ NilNode _ = ""
+prettyMaybeList _ Ast.NilNode _ = ""
 prettyMaybeList pre (Ast.Node List elems _) post = pre ++ prettyListElements elems ++ post
 
 prettyMaybe :: (Show c) => String -> Ast.Node Tag c -> String -> String
-prettyMaybe _ NilNode _ = ""
+prettyMaybe _ Ast.NilNode _ = ""
 prettyMaybe pre expr post = pre ++ pretty expr ++ post
 
 prettyListElements :: (Show c) => [Ast.Node Tag c] -> String
 prettyListElements elems = intercalate ", " (map pretty elems)
 
 prettyReturnType :: (Show c) => Ast.Node Tag c -> String
-prettyReturnType NilNode = ""
+prettyReturnType Ast.NilNode = ""
 prettyReturnType returnType = " -> " ++ pretty returnType
 
 indent :: String -> String

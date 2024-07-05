@@ -1,6 +1,6 @@
-module Frontend.OpenQASM3.Result where
+module Feynman.Frontend.OpenQASM3.Result where
 
-import Frontend.OpenQASM3.Chatty
+import Feynman.Frontend.OpenQASM3.Chatty
 
 newtype Failure = Failure {failMessage :: String} deriving (Eq, Read, Show)
 

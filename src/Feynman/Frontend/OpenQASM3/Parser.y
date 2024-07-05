@@ -1,14 +1,14 @@
 {
-module Frontend.OpenQASM3.Parser (parseQasm3, parseString) where
+module Feynman.Frontend.OpenQASM3.Parser (parseQasm3, parseString) where
 
-import Ast qualified
 import Control.Monad (mplus)
 import Data.Char
 import Debug.Trace (trace)
-import Frontend.OpenQASM3.Result
-import Frontend.OpenQASM3.Lexer (Lexeme(..))
-import Frontend.OpenQASM3.Lexer qualified as L
-import Frontend.OpenQASM3.Syntax
+import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
+import Feynman.Frontend.OpenQASM3.Result
+import Feynman.Frontend.OpenQASM3.Lexer (Lexeme(..))
+import qualified Feynman.Frontend.OpenQASM3.Lexer as L
+import Feynman.Frontend.OpenQASM3.Syntax
 
 }
 

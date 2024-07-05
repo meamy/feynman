@@ -1,18 +1,18 @@
-module Frontend.OpenQASM3 where
+module Feynman.Frontend.OpenQASM3.SemanticGraph where
 
-import Ast qualified
 import Control.Monad
 import Control.Monad.State (runState)
-import Control.Monad.State qualified as State
-import Data.Data qualified as Ast
+import qualified Control.Monad.State as State
+import qualified Data.Data as Ast
 import Data.Int (Int64)
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Word (Word64)
 import Debug.Trace
-import Frontend.OpenQASM3.Chatty
-import Frontend.OpenQASM3.Result
-import Frontend.OpenQASM3.Syntax qualified as Q3
+import qualified Feynman.Frontend.OpenQASM3.Ast
+import Feynman.Frontend.OpenQASM3.Chatty
+import Feynman.Frontend.OpenQASM3.Result
+import qualified Feynman.Frontend.OpenQASM3.Syntax as Q3
 
 data Ref = NilRef | Ref Int deriving (Eq, Ord, Read, Show)
 
@@ -420,7 +420,6 @@ semanticGraphExpressionTypeFrom (Ast.Node Q3.MutableArrayRefTypeSpec [sclrType, 
   baseType <- semanticGraphExpressionTypeFrom sclrType
   dimCount <- semanticGraphExpressionFrom dimExpr
   return $ ArrayRefType True baseType dimCount
-
 
 {-
 semanticGraphFrom (Ast.Node (Q3.DefcalTarget tgt _) [] _) = undefined

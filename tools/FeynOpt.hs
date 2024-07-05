@@ -1,4 +1,6 @@
 {-# LANGUAGE TupleSections #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
 import Feynman.Core (Primitive, ID, expandCNOT)
@@ -36,6 +38,7 @@ import Benchmarks (runBenchmarks,
                    benchmarksAll,
                    benchmarkFolder,
                    formatFloatN)
+
 
 {- Toolkit passes -}
 
@@ -173,6 +176,45 @@ runQASM passes verify pureCircuit fname src = do
           qasm'' <- return $ foldr (qasmPass pureCircuit) qasm' passes
           return (qasm', qasm'')
 
+{- QASM3 -}
+
+qasm3Pass :: Bool -> Pass -> (QASM -> QASM)
+qasm3Pass pureCircuit pass = case pass of
+  Triv        -> id
+  Inline      -> inline
+  MCT         -> inline
+  CT          -> inline
+  Simplify    -> id
+  Phasefold   -> applyOpt phaseFold pureCircuit
+  Statefold d -> applyOpt (stateFold d) pureCircuit
+  CNOTMin     -> applyOpt minCNOT pureCircuit
+  TPar        -> applyOpt tpar pureCircuit
+  Cliff       -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  CZ          -> applyOpt (\_ _ -> expandCNOT) pureCircuit
+
+runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
+runQASM3 passes verify pureCircuit fname src = do
+  start <- getCPUTime
+  end   <- parseAndPass `seq` getCPUTime
+  case parseAndPass of
+    Left err        -> putStrLn $ "ERROR: " ++ err
+    Right (qasm, qasm') -> do
+      let time = (fromIntegral $ end - start) / 10^9
+      putStrLn $ "// Feynman -- quantum circuit toolkit"
+      putStrLn $ "// Original (" ++ fname ++ "):"
+      mapM_ putStrLn . map ("//   " ++) $ showStats qasm
+      putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+      mapM_ putStrLn . map ("//   " ++) $ showStats qasm'
+      emit qasm'
+  where printErr (Left l)  = Left $ show l
+        printErr (Right r) = Right r
+        parseAndPass = do
+          let qasm   = parse . lexer $ src
+          symtab <- check qasm
+          let qasm'  = desugar symtab qasm -- For correct gate counts
+          qasm'' <- return $ foldr (qasmPass pureCircuit) qasm' passes
+          return (qasm', qasm'')
+
 {- Main program -}
 
 printHelp :: IO ()
@@ -213,38 +255,51 @@ printHelp = mapM_ putStrLn lines
           ]
 
 
-parseArgs :: [Pass] -> Bool -> Bool -> [String] -> IO ()
-parseArgs passes verify pureCircuit []     = printHelp
-parseArgs passes verify pureCircuit (x:xs) = case x of
+data Options = Options {passes :: [Pass], verify :: Bool, pureCircuit :: Bool, useQASM3 :: Bool}
+
+defaultOptions = Options {passes = [], verify = False, pureCircuit = False, useQASM3 = False}
+
+
+parseArgs :: Bool -> Options -> [String] -> IO ()
+parseArgs doneSwitches options []     = printHelp
+parseArgs doneSwitches options (x:xs) = case x of
+  f | doneSwitches -> runFile f
   "-h"           -> printHelp
-  "-purecircuit" -> parseArgs (passes) verify True xs
-  "-inline"      -> parseArgs (Inline:passes) verify pureCircuit xs
-  "-mctExpand"   -> parseArgs (MCT:passes) verify pureCircuit xs
-  "-toCliffordT" -> parseArgs (CT:passes) verify pureCircuit xs
-  "-simplify"    -> parseArgs (Simplify:passes) verify pureCircuit xs
-  "-phasefold"   -> parseArgs (Phasefold:passes) verify pureCircuit xs
-  "-statefold"   -> parseArgs ((Statefold $ read (head xs)):passes) verify pureCircuit (tail xs)
-  "-cnotmin"     -> parseArgs (CNOTMin:passes) verify pureCircuit xs
-  "-tpar"        -> parseArgs (TPar:passes) verify pureCircuit xs
-  "-clifford"    -> parseArgs (Cliff:passes) verify pureCircuit xs
-  "-cxcz"        -> parseArgs (CZ:passes) verify pureCircuit xs
-  "-decompile"   -> parseArgs (Decompile:passes) verify pureCircuit xs
-  "-O2"          -> parseArgs (o2 ++ passes) verify pureCircuit xs
-  "-O3"          -> parseArgs (o3 ++ passes) verify pureCircuit xs
-  "-O4"          -> parseArgs (o4 ++ passes) verify pureCircuit xs
-  "-verify"      -> parseArgs passes True pureCircuit xs
-  "-benchmarks"  -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass passes) (benchVerif verify)
+  "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
+  "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
+  "-mctExpand"   -> parseArgs doneSwitches options {passes = MCT:passes options} xs
+  "-toCliffordT" -> parseArgs doneSwitches options {passes = CT:passes options} xs
+  "-simplify"    -> parseArgs doneSwitches options {passes = Simplify:passes options} xs
+  "-phasefold"   -> parseArgs doneSwitches options {passes = Phasefold:passes options} xs
+  "-statefold"   -> parseArgs doneSwitches options {passes = (Statefold $ read (head xs)):passes options} (tail xs)
+  "-cnotmin"     -> parseArgs doneSwitches options {passes = CNOTMin:passes options} xs
+  "-tpar"        -> parseArgs doneSwitches options {passes = TPar:passes options} xs
+  "-clifford"    -> parseArgs doneSwitches options {passes = Cliff:passes options} xs
+  "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs
+  "-decompile"   -> parseArgs doneSwitches options {passes = Decompile:passes options} xs
+  "-O2"          -> parseArgs doneSwitches options {passes = o2 ++ passes options} xs
+  "-O3"          -> parseArgs doneSwitches options {passes = o3 ++ passes options} xs
+  "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs
+  "-verify"      -> parseArgs doneSwitches options {verify = True} xs
+  "-benchmarks"  -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
+  "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
+  "--"           -> parseArgs True options xs
   "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
 --  "VerAlg"       -> runVerSuite
-  "Small"        -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksSmall
-  "Med"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksMedium
-  "All"          -> runBenchmarks (benchPass passes) (benchVerif verify) benchmarksAll
-  f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
-  f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= runQASM passes verify pureCircuit f
+  "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
+  "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
+  "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
+  f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
         o3 = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         o4 = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
+        runFile f | (drop (length f - 5) f) == ".qasm" =
+          if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
+                              else readFile f >>= runQASM (passes options) (verify options) (pureCircuit options) f
+        runFile f = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp
+
 
 main :: IO ()
-main = getArgs >>= parseArgs [] False False
+main = getArgs >>= parseArgs False defaultOptions

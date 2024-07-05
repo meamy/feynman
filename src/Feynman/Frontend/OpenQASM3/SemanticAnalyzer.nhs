@@ -1,16 +1,16 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use head" #-}
-module Frontend.OpenQASM3.SemanticAnalyzer where
+module Feynman.Frontend.OpenQASM3.SemanticAnalyzer where
 
-import Ast qualified
-import Control.Monad.State qualified as State
+import qualified Control.Monad.State as State
 import Data.Int (Int64)
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
-import Frontend.OpenQASM3.SemanticGraph
-import Frontend.OpenQASM3.Syntax
+import qualified Feynman.Frontend.OpenQASM3.Ast
+import Feynman.Frontend.OpenQASM3.SemanticGraph
+import Feynman.Frontend.OpenQASM3.Syntax
 
 type SemanticStateM a = State.State SemanticState a
 
