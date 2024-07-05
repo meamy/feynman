@@ -14,14 +14,15 @@ import Control.Monad.State.Strict
 
 data Env = Env {
   pathsum :: Pathsum DMod2,
-  binds :: [Map ID Binding]
+  binds :: [Map ID Binding],
+  density :: Bool
 } deriving (Show)
 
 data Binding =
     QReg { size :: Int,
            offset :: Int }
   | CReg { size :: Int,
-           stored :: Int }
+           offset :: Int }
   | QVar { offset :: Int }
   | CVar { value :: Double }
   | Gate { cparams :: [ID],
@@ -30,7 +31,17 @@ data Binding =
   deriving (Show)
 
 initEnv :: Env
-initEnv = Env (ket []) [Map.empty]
+initEnv = Env (ket []) [Map.empty] False
+
+isDensity :: State Env Bool
+isDensity = gets $ density
+
+densifyEnv :: State Env ()
+densifyEnv = modify $ \env -> 
+  if density env then
+    env 
+  else
+    env { pathsum = vectorize . densify $ pathsum env, density = True }
 
 readGateDef :: ID -> State Env Binding
 readGateDef id = gets $ search id . binds
@@ -54,13 +65,19 @@ getBinding id = gets $ search id . binds
       Just bind -> bind
       Nothing -> search id bs
 
+getPSSize :: State Env Int
+getPSSize = do
+  density <- isDensity
+  if density then
+    gets $ (`div` 2) . outDeg . pathsum
+  else
+    gets $ outDeg . pathsum
+
 -- action returns offset of allocated register
 allocatePathsum :: Int -> State Env Int
 allocatePathsum size = do
-  env <- get
-  let ps = pathsum env
-  let offset = outDeg ps
-  put env { pathsum = ps <> (ket $ replicate size 0) }
+  offset <- getPSSize
+  modify $ \env -> env { pathsum = pathsum env <> (ket $ replicate size 0) }
   return offset
 
 addBind :: ID -> Binding -> State Env ()
@@ -71,12 +88,8 @@ addBind id binding = do
 
 getOffset :: Arg -> State Env Int
 getOffset arg = case arg of
-  Var id -> do 
-    ~(QVar offset) <- getBinding id
-    return offset
-  Offset id index -> do 
-    ~(QReg _ offset) <- getBinding id
-    return $ offset + index
+  Var id -> liftM offset $ getBinding id
+  Offset id index -> liftM ((+)index . offset) $ getBinding id
 
 simExp :: Exp -> State Env Double
 simExp e = case e of
@@ -111,7 +124,9 @@ simDeclare dec = case dec of
   VarDec id (Qreg size)           -> do
                                       offset <- allocatePathsum size
                                       addBind id (QReg size offset)
-  VarDec id (Creg size)           -> addBind id (CReg size 0)
+  VarDec id (Creg size)           -> do
+                                      offset <- allocatePathsum size
+                                      addBind id (CReg size offset)
   GateDec id cparams qparams body -> addBind id (Gate cparams qparams body)
   UIntDec _ _ _                   -> return ()
 
@@ -158,146 +173,204 @@ simGate uexp = case uexp of
               Var id -> return $ Offset id n
               Offset _ _ -> return arg
     
-    -- assumes that no args are registers
+    -- assumes that no args are registers, i.e. all args are Offset id j
     simGate' :: UExp -> State Env ()
-    simGate' uexp = case uexp of
-      CallGate "cx" [] [arg1, arg2] -> simGate' $ CXGate arg1 arg2
-      CallGate "id" [] [arg] -> return ()
-      CallGate "x" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyX offset $ pathsum env }
-      CallGate "y" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyY offset $ pathsum env }
-      CallGate "z" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyZ offset $ pathsum env }
-      CallGate "h" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyH offset $ pathsum env }
-      CallGate "s" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyS offset $ pathsum env }
-      CallGate "sdg" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applySdg offset $ pathsum env }
-      CallGate "t" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyT offset $ pathsum env }
-      CallGate "tdg" [] [arg] -> do
-        offset <- getOffset arg
-        modify $ \env -> env { pathsum = applyTdg offset $ pathsum env }
-      CallGate "rz" [exp] [arg] -> do
-        offset <- getOffset arg
-        phi <- simExp exp
-        let phi' = fromDyadic $ discretize $ Continuous phi
-        modify $ \env -> env { pathsum = applyRz phi' offset $ pathsum env }
-      CallGate "rx" [exp] [arg] -> do
-        offset <- getOffset arg
-        theta <- simExp exp
-        let theta' = fromDyadic $ discretize $ Continuous theta
-        modify $ \env -> 
-          env { pathsum = applyH offset 
-                        . applyRz theta' offset 
-                        . applyH offset 
-                        $ pathsum env}
-      CallGate "ry" [exp] [arg] -> do
-        offset <- getOffset arg
-        theta <- simExp exp
-        let theta' = fromDyadic $ discretize $ Continuous theta
-        modify $ \env -> 
-          env { pathsum = applyRz theta' offset
-                        . applyH offset 
-                        . applyRz theta' offset 
-                        . applyH offset 
-                        $ pathsum env }
-      CallGate "cz" [] [arg1, arg2] -> do
-        offset1 <- getOffset arg1
-        offset2 <- getOffset arg2
-        modify $ \env -> env { pathsum = applyCZ offset1 offset2 $ pathsum env }
-      CallGate "cy" [] [arg1, arg2] -> mapM_ simGate' [ CallGate "sdg" [] [arg2],
-                                                        CallGate "cx" [] [arg1, arg2],
-                                                        CallGate "s" [] [arg2] ]
-      CallGate "ch" [] [arg1, arg2] -> mapM_ simGate' [ CallGate "h" [] [arg2],
-                                                        CallGate "sdg" [] [arg2],
-                                                        CallGate "cx" [] [arg1, arg2],
-                                                        CallGate "h" [] [arg2],
-                                                        CallGate "t" [] [arg2],
-                                                        CallGate "cx" [] [arg1, arg2],
-                                                        CallGate "t" [] [arg2],
-                                                        CallGate "h" [] [arg2],
-                                                        CallGate "s" [] [arg2],
-                                                        CallGate "x" [] [arg2],
-                                                        CallGate "s" [] [arg1]]
-      CallGate "ccx" [] [arg1, arg2, arg3] -> do
-        offset1 <- getOffset arg1
-        offset2 <- getOffset arg2
-        offset3 <- getOffset arg3
-        modify $ \env -> env { pathsum = applyCCX offset1 offset2 offset3 $ pathsum env }
-      CallGate "crz" [exp] args -> do
-        offsets <- mapM getOffset args
-        lambda <- simExp exp
-        let lambda' = fromDyadic $ discretize $ Continuous lambda
-        modify $ \env -> env { pathsum = applyMCRz lambda' offsets $ pathsum env }
-      CallGate "u3" [theta, phi, lambda] [arg] -> 
-        simGate' $ UGate theta phi lambda arg
-      CallGate "u2" [phi, lambda] [arg] -> do
-        simGate' $ UGate (BOpExp PiExp DivOp $ IntExp 2) phi lambda arg
-        modify $ \env -> env { pathsum = pathsum env <> omegabar }
-      CallGate "u1" [lambda] [arg] ->
-        simGate' $ UGate (IntExp 0) (IntExp 0) lambda arg
-      CallGate "cu1" [lambda] [arg1, arg2] -> let
-        halfLambda = BOpExp lambda DivOp (IntExp 2)
-        minusHalfLambda = BOpExp lambda TimesOp (IntExp $ -1) in
-          mapM_ simGate' [ CallGate "u1" [halfLambda] [arg1],
+    simGate' uexp = do
+      n <- getPSSize
+      density <- isDensity
+      case uexp of
+        CallGate "cx" [] [arg1, arg2] -> simGate' $ CXGate arg1 arg2
+        CallGate "id" [] [arg] -> return ()
+        CallGate "x" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyX offset . applyX (offset + n) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyX offset $ pathsum env }
+        CallGate "y" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = negate . applyY offset . applyY (offset + n) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyY offset $ pathsum env }
+        CallGate "z" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyZ offset . applyZ (offset + n) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyZ offset $ pathsum env }
+        CallGate "h" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyH offset . applyH (offset + n) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyH offset $ pathsum env }
+        CallGate "s" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applySdg offset . applyS (offset + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyS offset $ pathsum env }
+        CallGate "sdg" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyS offset . applySdg (offset + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applySdg offset $ pathsum env }
+        CallGate "t" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyTdg offset . applyT (offset + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyT offset $ pathsum env }
+        CallGate "tdg" [] [arg] -> do
+          offset <- getOffset arg
+          if density then
+            modify $ \env -> env { pathsum = applyT offset . applyTdg (offset + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyTdg offset $ pathsum env }
+        CallGate "rz" [exp] [arg] -> do
+          offset <- getOffset arg
+          phi <- simExp exp
+          let phi' = fromDyadic $ discretize $ Continuous phi
+          if density then
+            modify $ \env -> env { pathsum = applyRz (-phi') offset . applyRz phi' (offset + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyRz phi' offset $ pathsum env }
+        CallGate "rx" [exp] [arg] ->
+          mapM_ simGate' [ CallGate "h" [] [arg],
+                           CallGate "rz" [exp] [arg],
+                           CallGate "h" [] [arg] ]
+        CallGate "ry" [exp] [arg] ->
+          mapM_ simGate' [ CallGate "rz" [exp] [arg],
+                           CallGate "h" [] [arg],
+                           CallGate "rz" [exp] [arg],
+                           CallGate "h" [] [arg] ]
+        CallGate "cz" [] [arg1, arg2] -> do
+          offset1 <- getOffset arg1
+          offset2 <- getOffset arg2
+          if density then
+            modify $ \env -> env { pathsum = applyCZ offset1 offset2 . applyCZ (offset1 + n) (offset2 + n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyCZ offset1 offset2 $ pathsum env }
+        CallGate "cy" [] [arg1, arg2] -> 
+          mapM_ simGate' [ CallGate "sdg" [] [arg2],
                            CallGate "cx" [] [arg1, arg2],
-                           CallGate "u1" [minusHalfLambda] [arg2],
+                           CallGate "s" [] [arg2] ]
+        CallGate "ch" [] [arg1, arg2] -> 
+          mapM_ simGate' [ CallGate "h" [] [arg2],
+                           CallGate "sdg" [] [arg2],
                            CallGate "cx" [] [arg1, arg2],
-                           CallGate "u1" [halfLambda] [arg2] ]
-      CallGate "cu3" [theta, phi, lambda] [arg1, arg2] -> let
-        e1 = BOpExp (BOpExp lambda MinusOp phi) DivOp (IntExp 2)
-        e2 = BOpExp theta DivOp (IntExp $ -2)
-        e3 = BOpExp (BOpExp phi PlusOp lambda) DivOp (IntExp $ -2)
-        e4 = BOpExp theta DivOp (IntExp 2) in
-          mapM_ simGate' [ CallGate "u1" [e1] [arg2],
+                           CallGate "h" [] [arg2],
+                           CallGate "t" [] [arg2],
                            CallGate "cx" [] [arg1, arg2],
-                           CallGate "u3" [e2, IntExp 0, e3] [arg2],
-                           CallGate "cx" [] [arg1, arg2],
-                           CallGate "u3" [e4, phi, IntExp 0] [arg2] ]
-      CallGate id exps args -> do
-        ~(Gate cparams qparams body) <- getBinding id
-        pushEnv cparams exps qparams args
-        mapM_ simGate' body
-        popEnv
-      UGate theta phi lambda arg ->
-        let thetaPlusPi = BOpExp theta PlusOp PiExp
-            phiPlusThreePi = BOpExp phi PlusOp $ 
-                             BOpExp PiExp TimesOp $ IntExp 3 in do
-          mapM_ simGate' [
-            CallGate "rz" [lambda] [arg],
-            CallGate "h" [] [arg],
-            CallGate "s" [] [arg],
-            CallGate "h" [] [arg],
-            CallGate "rz" [thetaPlusPi] [arg],
-            CallGate "h" [] [arg],
-            CallGate "s" [] [arg],
-            CallGate "h" [] [arg],
-            CallGate "rz" [phiPlusThreePi] [arg] ]
-          modify $ \env -> env { pathsum = pathsum env <> minusi }
-      CXGate arg1 arg2 -> do
-        offset1 <- getOffset arg1
-        offset2 <- getOffset arg2
-        env <- get
-        put env { pathsum = applyCX offset1 offset2 $ pathsum env }
+                           CallGate "t" [] [arg2],
+                           CallGate "h" [] [arg2],
+                           CallGate "s" [] [arg2],
+                           CallGate "x" [] [arg2],
+                           CallGate "s" [] [arg1] ]
+        CallGate "ccx" [] [arg1, arg2, arg3] -> do
+          offset1 <- getOffset arg1
+          offset2 <- getOffset arg2
+          offset3 <- getOffset arg3
+          if density then
+            modify $ \env -> 
+              env { pathsum = applyCCX offset1 offset2 offset3 
+                            . applyCCX (offset1+n) (offset2+n) (offset3+n) 
+                            $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyCCX offset1 offset2 offset3 $ pathsum env }
+        CallGate "crz" [exp] args -> do
+          offsets <- mapM getOffset args
+          lambda <- simExp exp
+          let lambda' = fromDyadic $ discretize $ Continuous lambda
+          if density then
+            modify $ \env -> 
+              env { pathsum = applyMCRz (-lambda') offsets 
+                            . applyMCRz lambda' (map (+n) offsets)
+                            $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyMCRz lambda' offsets $ pathsum env }
+        CallGate "u3" [theta, phi, lambda] [arg] -> 
+          simGate' $ UGate theta phi lambda arg
+        CallGate "u2" [phi, lambda] [arg] -> do
+          simGate' $ UGate (BOpExp PiExp DivOp $ IntExp 2) phi lambda arg
+          if not density then
+            modify $ \env -> env { pathsum = pathsum env <> omegabar }
+          else
+            return ()
+        CallGate "u1" [lambda] [arg] ->
+          simGate' $ UGate (IntExp 0) (IntExp 0) lambda arg
+        CallGate "cu1" [lambda] [arg1, arg2] -> let
+          halfLambda = BOpExp lambda DivOp (IntExp 2)
+          minusHalfLambda = BOpExp lambda TimesOp (IntExp $ -1) in
+            mapM_ simGate' [ CallGate "u1" [halfLambda] [arg1],
+                             CallGate "cx" [] [arg1, arg2],
+                             CallGate "u1" [minusHalfLambda] [arg2],
+                             CallGate "cx" [] [arg1, arg2],
+                             CallGate "u1" [halfLambda] [arg2] ]
+        CallGate "cu3" [theta, phi, lambda] [arg1, arg2] -> let
+          e1 = BOpExp (BOpExp lambda MinusOp phi) DivOp (IntExp 2)
+          e2 = BOpExp theta DivOp (IntExp $ -2)
+          e3 = BOpExp (BOpExp phi PlusOp lambda) DivOp (IntExp $ -2)
+          e4 = BOpExp theta DivOp (IntExp 2) in
+            mapM_ simGate' [ CallGate "u1" [e1] [arg2],
+                             CallGate "cx" [] [arg1, arg2],
+                             CallGate "u3" [e2, IntExp 0, e3] [arg2],
+                             CallGate "cx" [] [arg1, arg2],
+                             CallGate "u3" [e4, phi, IntExp 0] [arg2] ]
+        CallGate id exps args -> do
+          ~(Gate cparams qparams body) <- getBinding id
+          pushEnv cparams exps qparams args
+          mapM_ simGate' body
+          popEnv
+        UGate theta phi lambda arg ->
+          let thetaPlusPi = BOpExp theta PlusOp PiExp
+              phiPlusThreePi = BOpExp phi PlusOp $ 
+                              BOpExp PiExp TimesOp $ IntExp 3 in do
+            mapM_ simGate' [
+              CallGate "rz" [lambda] [arg],
+              CallGate "h" [] [arg],
+              CallGate "s" [] [arg],
+              CallGate "h" [] [arg],
+              CallGate "rz" [thetaPlusPi] [arg],
+              CallGate "h" [] [arg],
+              CallGate "s" [] [arg],
+              CallGate "h" [] [arg],
+              CallGate "rz" [phiPlusThreePi] [arg] ]
+            if not density then
+              modify $ \env -> env { pathsum = pathsum env <> minusi }
+            else
+              return ()
+        CXGate arg1 arg2 -> do
+          offset1 <- getOffset arg1
+          offset2 <- getOffset arg2
+          if density then
+            modify $ \env -> env { pathsum = applyCX offset1 offset2 . applyCX (offset1+n) (offset2+n) $ pathsum env}
+          else
+            modify $ \env -> env { pathsum = applyCX offset1 offset2 $ pathsum env }
 
 simReset :: Arg -> State Env ()
 simReset arg = return ()
+
+simMeasure :: Arg -> Arg -> State Env ()
+simMeasure arg1 arg2 = densifyEnv >> case (arg1, arg2) of
+  (Var id1, Var id2) -> do
+    ~(QReg size _) <- getBinding id1
+    forM_ [0..size-1] (\i -> simMeasure' (Offset id1 i) (Offset id2 i))
+  (Offset _ _, Offset _ _) -> simMeasure' arg1 arg2
+  where
+    simMeasure' arg1 arg2 = do
+      offset <- getOffset arg1
+      n <- getPSSize
+      modify $ \env -> env { pathsum =  applyMeasure offset (offset + n) $ pathsum env }
+      simGate $ CXGate arg1 arg2
 
 simQExp :: QExp -> State Env ()
 simQExp qexp = case qexp of
   GateExp exp -> simGate exp
   ResetExp arg -> simReset arg
-  MeasureExp _ _ -> return ()
+  MeasureExp arg1 arg2 -> simMeasure arg1 arg2
 
 simStmt :: Stmt -> State Env ()
 simStmt stmt = case stmt of
