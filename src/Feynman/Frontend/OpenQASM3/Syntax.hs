@@ -2,11 +2,10 @@
 
 module Feynman.Frontend.OpenQASM3.Syntax
   ( ParseNode,
-    SyntaxNode,
     Token (..),
     Tag (..),
     pretty,
-    syntaxTreeFrom,
+    normalizeParens,
     tokenIdentifierName,
     tokenIntegerVal,
     tokenFloatVal,
@@ -29,8 +28,6 @@ import Numeric
 import Text.Read (readMaybe)
 
 type ParseNode = Ast.Node Tag Ast.SourceRef
-
-type SyntaxNode = Ast.Node Tag ()
 
 data Token
   = EofToken
@@ -260,7 +257,7 @@ data Tag
 
 -- Convert the syntax tree back into a string form that can be parsed into an
 -- equivalent tree
-pretty :: (Show c) => Ast.Node Tag c -> String
+pretty :: Ast.Node Tag c -> String
 pretty (Ast.Node (Program _ _ EofToken) stmts _) =
   concatMap ((++ "\n") . pretty) stmts
 pretty (Ast.Node (Program _ _ tok) stmts _) =
@@ -397,30 +394,30 @@ pretty (Ast.Node ArgumentDefinition [anyType, ident] _) = pretty anyType ++ " " 
 -- Should have been handled above -- usually implies some change to how the surrounding renders
 pretty Ast.NilNode = trace "Unhandled NilNode for pretty" undefined
 -- Should have been handled above -- we can't know which separator to use
-pretty (Ast.Node List elems _) = trace ("Unhandled List node for pretty with children: " ++ show elems) undefined
+pretty (Ast.Node List elems _) = trace ("Unhandled List node for pretty with children: " ++ show (map pretty elems)) undefined
 -- Fallback
-pretty node = trace ("\nMissing pattern for pretty: " ++ show node ++ "\n") undefined
+pretty (Ast.Node tag elems _) = trace ("Missing pattern for pretty: Ast.Node " ++ show tag ++ " " ++ show (map pretty elems)) undefined
 
 -- The syntax tree is as close to canonicalized as the tree easily gets
-syntaxTreeFrom :: Ast.Node Tag c -> SyntaxNode
-syntaxTreeFrom Ast.NilNode = Ast.NilNode
+normalizeParens :: Ast.Node Tag c ->  Ast.Node Tag c
+normalizeParens Ast.NilNode = Ast.NilNode
 -- Strip extra parens
-syntaxTreeFrom (Ast.Node ParenExpr [expr] _) = syntaxTreeFrom expr
-syntaxTreeFrom (Ast.Node ParenExpr children _) = undefined
+normalizeParens (Ast.Node ParenExpr [expr] _) = normalizeParens expr
+normalizeParens (Ast.Node ParenExpr children _) = undefined
 -- Parenthesize nontrivial expressions associated with index operators
-syntaxTreeFrom (Ast.Node IndexExpr [expr, list] _) =
-  Ast.Node IndexExpr [parenthesizeNonTrivialExpr $ syntaxTreeFrom expr, syntaxTreeFrom list] ()
-syntaxTreeFrom (Ast.Node IndexExpr children _) = undefined
+normalizeParens (Ast.Node IndexExpr [expr, list] ctx) =
+  Ast.Node IndexExpr [parenthesizeNonTrivialExpr $ normalizeParens expr, normalizeParens list] ctx
+normalizeParens (Ast.Node IndexExpr children _) = undefined
 -- Parenthesize nontrivial expressions associated with other unary operators
-syntaxTreeFrom (Ast.Node unop@(UnaryOperatorExpr _) [expr] _) =
-  Ast.Node unop [parenthesizeNonTrivialExpr $ syntaxTreeFrom expr] ()
-syntaxTreeFrom (Ast.Node (UnaryOperatorExpr _) children _) = undefined
+normalizeParens (Ast.Node unop@(UnaryOperatorExpr _) [expr] ctx) =
+  Ast.Node unop [parenthesizeNonTrivialExpr $ normalizeParens expr] ctx
+normalizeParens (Ast.Node (UnaryOperatorExpr _) children _) = undefined
 -- Parenthesize nontrivial expressions associated with binary operators
-syntaxTreeFrom (Ast.Node binop@(BinaryOperatorExpr _) [exprA, exprB] _) =
-  Ast.Node binop [parenthesizeNonTrivialExpr $ syntaxTreeFrom exprA, parenthesizeNonTrivialExpr $ syntaxTreeFrom exprB] ()
-syntaxTreeFrom (Ast.Node (BinaryOperatorExpr _) children _) = undefined
+normalizeParens (Ast.Node binop@(BinaryOperatorExpr _) [exprA, exprB] ctx) =
+  Ast.Node binop [parenthesizeNonTrivialExpr $ normalizeParens exprA, parenthesizeNonTrivialExpr $ normalizeParens exprB] ctx
+normalizeParens (Ast.Node (BinaryOperatorExpr _) children _) = undefined
 -- Pass everything else through untouched
-syntaxTreeFrom (Ast.Node tag children _) = Ast.Node tag (map syntaxTreeFrom children) ()
+normalizeParens (Ast.Node tag children ctx) = Ast.Node tag (map normalizeParens children) ctx
 
 parenthesizeNonTrivialExpr :: Ast.Node Tag c -> Ast.Node Tag c
 parenthesizeNonTrivialExpr expr =
@@ -630,28 +627,28 @@ prettyTiming (TimeUs t) = show t ++ "us"
 prettyTiming (TimeMs t) = show t ++ "ms"
 prettyTiming (TimeS t) = show t ++ "s"
 
-prettyIndex :: (Show c) => Ast.Node Tag c -> String
+prettyIndex :: Ast.Node Tag c -> String
 prettyIndex idx = if Ast.tag idx == List then prettyList idx else pretty idx
 
-prettyList :: (Show c) => Ast.Node Tag c -> String
+prettyList :: Ast.Node Tag c -> String
 prettyList Ast.NilNode = ""
 prettyList (Ast.Node List elems _) = prettyListElements elems
 
-prettyMaybeDsgn :: (Show c) => Ast.Node Tag c -> String
+prettyMaybeDsgn :: Ast.Node Tag c -> String
 prettyMaybeDsgn expr = prettyMaybe "[" expr "]"
 
-prettyMaybeList :: (Show c) => String -> Ast.Node Tag c -> String -> String
+prettyMaybeList :: String -> Ast.Node Tag c -> String -> String
 prettyMaybeList _ Ast.NilNode _ = ""
 prettyMaybeList pre (Ast.Node List elems _) post = pre ++ prettyListElements elems ++ post
 
-prettyMaybe :: (Show c) => String -> Ast.Node Tag c -> String -> String
+prettyMaybe :: String -> Ast.Node Tag c -> String -> String
 prettyMaybe _ Ast.NilNode _ = ""
 prettyMaybe pre expr post = pre ++ pretty expr ++ post
 
-prettyListElements :: (Show c) => [Ast.Node Tag c] -> String
+prettyListElements :: [Ast.Node Tag c] -> String
 prettyListElements elems = intercalate ", " (map pretty elems)
 
-prettyReturnType :: (Show c) => Ast.Node Tag c -> String
+prettyReturnType :: Ast.Node Tag c -> String
 prettyReturnType Ast.NilNode = ""
 prettyReturnType returnType = " -> " ++ pretty returnType
 

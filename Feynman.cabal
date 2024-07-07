@@ -63,6 +63,7 @@ library
                        Feynman.Frontend.OpenQASM3.Driver
                        Feynman.Frontend.OpenQASM3.Lexer
                        Feynman.Frontend.OpenQASM3.Parser
+                       Feynman.Frontend.OpenQASM3.Semantics
                        Feynman.Frontend.OpenQASM3.Syntax
 
   build-tools:         alex, happy

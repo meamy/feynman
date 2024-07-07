@@ -6,12 +6,13 @@ module Main (main) where
 import Feynman.Core (Primitive, ID, expandCNOT)
 import qualified Feynman.Frontend.DotQC as DotQC
 import qualified Feynman.Frontend.OpenQASM.Lexer as OpenQASMLexer
-import qualified Feynman.Frontend.OpenQASM.Syntax as OpenQASMSyntax
 import qualified Feynman.Frontend.OpenQASM.Parser as OpenQASMParser
+import qualified Feynman.Frontend.OpenQASM.Syntax as OpenQASMSyntax
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
-import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
 import qualified Feynman.Frontend.OpenQASM3.Driver as OpenQASM3Driver
 import qualified Feynman.Frontend.OpenQASM3.Parser as OpenQASM3Parser
+import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Semantics
+import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
@@ -36,7 +37,6 @@ import Benchmarks (runBenchmarks,
                    benchmarksAll,
                    benchmarkFolder,
                    formatFloatN)
-import Feynman.Frontend.OpenQASM3.Syntax (syntaxTreeFrom)
 
 
 {- Toolkit passes -}
@@ -177,13 +177,13 @@ runQASM passes verify pureCircuit fname src = do
 
 {- QASM3 -}
 
-qasm3Pass :: Bool -> Pass -> (OpenQASM3Syntax.SyntaxNode -> OpenQASM3Syntax.SyntaxNode)
+qasm3Pass :: Bool -> Pass -> (OpenQASM3Semantics.Program -> Chatty.Chatty String String OpenQASM3Semantics.Program)
 qasm3Pass pureCircuit pass = case pass of
-  Triv        -> id
+  Triv        -> return
   Inline      -> OpenQASM3Driver.inline
   MCT         -> OpenQASM3Driver.inline
   CT          -> OpenQASM3Driver.inline
-  Simplify    -> id
+  Simplify    -> return
   Phasefold   -> OpenQASM3Driver.applyOpt phaseFold pureCircuit
   Statefold d -> OpenQASM3Driver.applyOpt (stateFold d) pureCircuit
   CNOTMin     -> OpenQASM3Driver.applyOpt minCNOT pureCircuit
@@ -197,24 +197,23 @@ runQASM3 passes verify pureCircuit fname src = do
   let !result =
         ( do
             parseTree <- OpenQASM3Parser.parseString src
-            let syntaxTree = syntaxTreeFrom parseTree
-            symtab <- OpenQASM3Driver.check syntaxTree
-            let origQasm = OpenQASM3Driver.desugar symtab syntaxTree -- For correct gate counts
-            let optQasm = foldr (qasm3Pass pureCircuit) origQasm passes
-            return (origQasm, optQasm)
+            program <- OpenQASM3Driver.analyze parseTree
+            normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
+            optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
+            return (normalized, optimized)
         )
   mapM_ putStrLn (Chatty.messages result)
   end <- getCPUTime
   let time = (fromIntegral $ end - start) / 10 ^ 9
   case result of
-    Chatty.Value _ (origQasm3, optQasm3) ->
+    Chatty.Value _ (normalized, optimized) ->
       ( do
           putStrLn $ "// Feynman -- quantum circuit toolkit"
           putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats origQasm3
+          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats normalized
           putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optQasm3
-          putStrLn $ OpenQASM3Syntax.pretty optQasm3
+          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optimized
+          putStrLn $ OpenQASM3Driver.emit optimized
           return ()
       )
     Chatty.Failure _ err ->
