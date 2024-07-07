@@ -2,12 +2,58 @@ module Feynman.Frontend.OpenQASM3.Driver where
 
 import qualified Control.Monad.State as State
 import Data.Int (Int64)
-import qualified Data.Map.Strict as Map
+--import qualified Data.Map.Strict as Map
+import Data.Map (Map, (!))
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
+import Feynman.Core
 import qualified Feynman.Frontend.OpenQASM3.Ast
+import Feynman.Frontend.OpenQASM3.Chatty
 --import Feynman.Frontend.OpenQASM3.SemanticGraph
 import Feynman.Frontend.OpenQASM3.Syntax
+
+type Ctx = Map String SyntaxNode
+
+check :: SyntaxNode -> Chatty String String Ctx
+check = undefined
+--check (QASM _ stmts) = foldM checkStmt Map.empty stmts
+
+-- Expands all implicitly mapped functions
+desugar :: Ctx -> SyntaxNode -> SyntaxNode
+desugar = undefined
+--desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
+
+-- Inlines all local definitions & non-primitive operations
+-- Note: non-strictness can hopefully allow for some efficient
+--       fusion with operations on inlined code
+inline :: SyntaxNode -> SyntaxNode
+inline = undefined
+--inline (QASM ver stmts) = QASM ver . snd . foldl f (Map.empty, []) $ stmts
+
+-- Provides an optimization interface for the main IR
+applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> Bool -> SyntaxNode -> SyntaxNode
+applyOpt = undefined
+--applyOpt opt pureCircuit (QASM ver stmts) = QASM ver $ optStmts stmts
+
+{- Statistics -}
+
+-- Assumes inlined code
+gateCounts :: SyntaxNode -> Map ID Int
+gateCounts = undefined
+--gateCounts (QASM ver stmts) = 
+
+bitCounts :: SyntaxNode -> (Int, Int)
+bitCounts = undefined
+--bitCounts (QASM ver stmts) = foldl bcStmt (0, 0) stmts
+
+--depth :: QASM -> Int
+--gateDepth :: [ID] -> QASM -> Int
+
+showStats :: SyntaxNode -> [String]
+showStats = undefined
+--showStats qasm =
+--          ["cbits: " ++ show cbits, "qubits: " ++ show qbits] ++
+--          map (\ (gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts qasm'
 
 {-
 

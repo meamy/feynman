@@ -5,7 +5,7 @@ import Control.Monad (mplus)
 import Data.Char
 import Debug.Trace (trace)
 import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
-import Feynman.Frontend.OpenQASM3.Result
+import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
 import Feynman.Frontend.OpenQASM3.Lexer (Lexeme(..))
 import qualified Feynman.Frontend.OpenQASM3.Lexer as L
 import Feynman.Frontend.OpenQASM3.Syntax
@@ -745,8 +745,8 @@ lexer f = (=<< skipComments) f
                _ -> return lex
       return res
 
-parseString :: String -> Result ParseNode
+parseString :: String -> Chatty.Chatty String String ParseNode
 parseString programStr = case L.runAlex programStr parseQasm3 of
-  Left errMsg -> failResult errMsg
+  Left errMsg -> Chatty.fail errMsg
   Right parseTree -> return parseTree
 }

@@ -1,19 +1,17 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, BangPatterns #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
 import Feynman.Core (Primitive, ID, expandCNOT)
-import Feynman.Frontend.DotQC hiding (showStats)
-import Feynman.Frontend.OpenQASM.Lexer (lexer)
-import Feynman.Frontend.OpenQASM.Syntax (QASM,
-                                         check,
-                                         desugar,
-                                         emit,
-                                         inline,
-                                         applyOpt,
-                                         showStats)
-import Feynman.Frontend.OpenQASM.Parser (parse)
+import qualified Feynman.Frontend.DotQC as DotQC
+import qualified Feynman.Frontend.OpenQASM.Lexer as OpenQASMLexer
+import qualified Feynman.Frontend.OpenQASM.Syntax as OpenQASMSyntax
+import qualified Feynman.Frontend.OpenQASM.Parser as OpenQASMParser
+import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
+import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
+import qualified Feynman.Frontend.OpenQASM3.Driver as OpenQASM3Driver
+import qualified Feynman.Frontend.OpenQASM3.Parser as OpenQASM3Parser
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
@@ -38,6 +36,7 @@ import Benchmarks (runBenchmarks,
                    benchmarksAll,
                    benchmarkFolder,
                    formatFloatN)
+import Feynman.Frontend.OpenQASM3.Syntax (syntaxTreeFrom)
 
 
 {- Toolkit passes -}
@@ -57,33 +56,33 @@ data Pass = Triv
 
 {- DotQC -}
 
-optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC -> DotQC
-optimizeDotQC f qc = qc { decls = map go $ decls qc }
+optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC.DotQC -> DotQC.DotQC
+optimizeDotQC f qc = qc { DotQC.decls = map go $ DotQC.decls qc }
   where go decl =
-          let circuitQubits = qubits qc ++ params decl
-              circuitInputs = (Set.toList $ inputs qc) ++ params decl
-              wrap g        = fromCliffordT . g . toCliffordT
+          let circuitQubits = DotQC.qubits qc ++ DotQC.params decl
+              circuitInputs = (Set.toList $ DotQC.inputs qc) ++ DotQC.params decl
+              wrap g        = DotQC.fromCliffordT . g . DotQC.toCliffordT
           in
-            decl { body = wrap (f circuitQubits circuitQubits) $ body decl }
+            decl { DotQC.body = wrap (f circuitQubits circuitQubits) $ DotQC.body decl }
 
-decompileDotQC :: DotQC -> DotQC
-decompileDotQC qc = qc { decls = map go $ decls qc }
+decompileDotQC :: DotQC.DotQC -> DotQC.DotQC
+decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
   where go decl =
-          let circuitQubits  = qubits qc ++ params decl
-              circuitInputs  = (Set.toList $ inputs qc) ++ params decl
-              resynthesize c = case resynthesizeCircuit $ toCliffordT c of
+          let circuitQubits  = DotQC.qubits qc ++ DotQC.params decl
+              circuitInputs  = (Set.toList $ DotQC.inputs qc) ++ DotQC.params decl
+              resynthesize c = case resynthesizeCircuit $ DotQC.toCliffordT c of
                 Nothing -> c
-                Just c' -> fromExtractionBasis c'
+                Just c' -> DotQC.fromExtractionBasis c'
           in
-            decl { body = resynthesize $ body decl }
+            decl { DotQC.body = resynthesize $ DotQC.body decl }
 
-dotQCPass :: Pass -> (DotQC -> DotQC)
+dotQCPass :: Pass -> (DotQC.DotQC -> DotQC.DotQC)
 dotQCPass pass = case pass of
   Triv        -> id
-  Inline      -> inlineDotQC
-  MCT         -> expandToffolis
-  CT          -> expandAll
-  Simplify    -> simplifyDotQC
+  Inline      -> DotQC.inlineDotQC
+  MCT         -> DotQC.expandToffolis
+  CT          -> DotQC.expandAll
+  Simplify    -> DotQC.simplifyDotQC
   Phasefold   -> optimizeDotQC phaseFold
   Statefold d -> optimizeDotQC (stateFold d)
   CNOTMin     -> optimizeDotQC minCNOT
@@ -92,15 +91,15 @@ dotQCPass pass = case pass of
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   Decompile   -> decompileDotQC
 
-equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
+equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =
-  let circ    = toCliffordT . toGatelist $ qc
-      circ'   = toCliffordT . toGatelist $ qc'
-      vars    = union (qubits qc) (qubits qc')
-      ins     = Set.toList $ inputs qc
+  let circ    = DotQC.toCliffordT . DotQC.toGatelist $ qc
+      circ'   = DotQC.toCliffordT . DotQC.toGatelist $ qc'
+      vars    = union (DotQC.qubits qc) (DotQC.qubits qc')
+      ins     = Set.toList $ DotQC.inputs qc
       result  = validate False vars ins circ circ'
   in
-    case (inputs qc == inputs qc', result) of
+    case (DotQC.inputs qc == DotQC.inputs qc', result) of
       (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
       (_, NotIdentity ce)   -> Left $ "Circuits not equivalent (" ++ ce ++ ")"
       (_, Inconclusive sop) -> Left $ "Failed to verify: \n  " ++ show sop
@@ -116,42 +115,42 @@ runDotQC passes verify fname src = do
       let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc
+      mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc
       putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("#   " ++) $ showCliffordTStats qc'
+      mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
       putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
-          qc  <- printErr $ parseDotQC src
+          qc  <- printErr $ DotQC.parseDotQC src
           qc' <- return $ foldr dotQCPass qc passes
-          seq (depth $ toGatelist qc') (return ()) -- Nasty solution to strictifying
+          seq (DotQC.depth $ DotQC.toGatelist qc') (return ()) -- Nasty solution to strictifying
           when verify . void $ equivalenceCheckDotQC qc qc'
           return (qc, qc')
 
 {- Deprecated transformations for benchmark suites -}
-benchPass :: [Pass] -> (DotQC -> Either String DotQC)
+benchPass :: [Pass] -> (DotQC.DotQC -> Either String DotQC.DotQC)
 benchPass passes = \qc -> Right $ foldr dotQCPass qc passes
 
-benchVerif :: Bool -> Maybe (DotQC -> DotQC -> Either String DotQC)
+benchVerif :: Bool -> Maybe (DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC)
 benchVerif True  = Just equivalenceCheckDotQC
 benchVerif False = Nothing
 
 {- QASM -}
 
-qasmPass :: Bool -> Pass -> (QASM -> QASM)
+qasmPass :: Bool -> Pass -> (OpenQASMSyntax.QASM -> OpenQASMSyntax.QASM)
 qasmPass pureCircuit pass = case pass of
   Triv        -> id
-  Inline      -> inline
-  MCT         -> inline
-  CT          -> inline
+  Inline      -> OpenQASMSyntax.inline
+  MCT         -> OpenQASMSyntax.inline
+  CT          -> OpenQASMSyntax.inline
   Simplify    -> id
-  Phasefold   -> applyOpt phaseFold pureCircuit
-  Statefold d -> applyOpt (stateFold d) pureCircuit
-  CNOTMin     -> applyOpt minCNOT pureCircuit
-  TPar        -> applyOpt tpar pureCircuit
-  Cliff       -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
-  CZ          -> applyOpt (\_ _ -> expandCNOT) pureCircuit
+  Phasefold   -> OpenQASMSyntax.applyOpt phaseFold pureCircuit
+  Statefold d -> OpenQASMSyntax.applyOpt (stateFold d) pureCircuit
+  CNOTMin     -> OpenQASMSyntax.applyOpt minCNOT pureCircuit
+  TPar        -> OpenQASMSyntax.applyOpt tpar pureCircuit
+  Cliff       -> OpenQASMSyntax.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  CZ          -> OpenQASMSyntax.applyOpt (\_ _ -> expandCNOT) pureCircuit
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -163,57 +162,66 @@ runQASM passes verify pureCircuit fname src = do
       let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "// Feynman -- quantum circuit toolkit"
       putStrLn $ "// Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("//   " ++) $ showStats qasm
+      mapM_ putStrLn . map ("//   " ++) $ OpenQASMSyntax.showStats qasm
       putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("//   " ++) $ showStats qasm'
-      emit qasm'
+      mapM_ putStrLn . map ("//   " ++) $ OpenQASMSyntax.showStats qasm'
+      OpenQASMSyntax.emit qasm'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
-          let qasm   = parse . lexer $ src
-          symtab <- check qasm
-          let qasm'  = desugar symtab qasm -- For correct gate counts
+          let qasm   = OpenQASMParser.parse . OpenQASMLexer.lexer $ src
+          symtab <- OpenQASMSyntax.check qasm
+          let qasm'  = OpenQASMSyntax.desugar symtab qasm -- For correct gate counts
           qasm'' <- return $ foldr (qasmPass pureCircuit) qasm' passes
           return (qasm', qasm'')
 
 {- QASM3 -}
 
-qasm3Pass :: Bool -> Pass -> (QASM -> QASM)
+qasm3Pass :: Bool -> Pass -> (OpenQASM3Syntax.SyntaxNode -> OpenQASM3Syntax.SyntaxNode)
 qasm3Pass pureCircuit pass = case pass of
   Triv        -> id
-  Inline      -> inline
-  MCT         -> inline
-  CT          -> inline
+  Inline      -> OpenQASM3Driver.inline
+  MCT         -> OpenQASM3Driver.inline
+  CT          -> OpenQASM3Driver.inline
   Simplify    -> id
-  Phasefold   -> applyOpt phaseFold pureCircuit
-  Statefold d -> applyOpt (stateFold d) pureCircuit
-  CNOTMin     -> applyOpt minCNOT pureCircuit
-  TPar        -> applyOpt tpar pureCircuit
-  Cliff       -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
-  CZ          -> applyOpt (\_ _ -> expandCNOT) pureCircuit
+  Phasefold   -> OpenQASM3Driver.applyOpt phaseFold pureCircuit
+  Statefold d -> OpenQASM3Driver.applyOpt (stateFold d) pureCircuit
+  CNOTMin     -> OpenQASM3Driver.applyOpt minCNOT pureCircuit
+  TPar        -> OpenQASM3Driver.applyOpt tpar pureCircuit
+  Cliff       -> OpenQASM3Driver.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  CZ          -> OpenQASM3Driver.applyOpt (\_ _ -> expandCNOT) pureCircuit
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
-  end   <- parseAndPass `seq` getCPUTime
-  case parseAndPass of
-    Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qasm, qasm') -> do
-      let time = (fromIntegral $ end - start) / 10^9
-      putStrLn $ "// Feynman -- quantum circuit toolkit"
-      putStrLn $ "// Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("//   " ++) $ showStats qasm
-      putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("//   " ++) $ showStats qasm'
-      emit qasm'
-  where printErr (Left l)  = Left $ show l
-        printErr (Right r) = Right r
-        parseAndPass = do
-          let qasm   = parse . lexer $ src
-          symtab <- check qasm
-          let qasm'  = desugar symtab qasm -- For correct gate counts
-          qasm'' <- return $ foldr (qasmPass pureCircuit) qasm' passes
-          return (qasm', qasm'')
+  let !result =
+        ( do
+            parseTree <- OpenQASM3Parser.parseString src
+            let syntaxTree = syntaxTreeFrom parseTree
+            symtab <- OpenQASM3Driver.check syntaxTree
+            let origQasm = OpenQASM3Driver.desugar symtab syntaxTree -- For correct gate counts
+            let optQasm = foldr (qasm3Pass pureCircuit) origQasm passes
+            return (origQasm, optQasm)
+        )
+  mapM_ putStrLn (Chatty.messages result)
+  end <- getCPUTime
+  let time = (fromIntegral $ end - start) / 10 ^ 9
+  case result of
+    Chatty.Value _ (origQasm3, optQasm3) ->
+      ( do
+          putStrLn $ "// Feynman -- quantum circuit toolkit"
+          putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
+          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats origQasm3
+          putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optQasm3
+          putStrLn $ OpenQASM3Syntax.pretty optQasm3
+          return ()
+      )
+    Chatty.Failure _ err ->
+      ( do
+          putStrLn ("ERROR: " ++ err)
+          return ()
+      )
 
 {- Main program -}
 
