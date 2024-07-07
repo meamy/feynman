@@ -245,7 +245,7 @@ typeOfValue (ComplexValue bits realPart imagPart) = ComplexType $ LiteralParam b
 
 -- typeOfValue (ArrayValue elT dims _) = ArrayType {elementType = baseType, sizes = sizes}
 
-{-
+{- This table taken from OpenQASM3 documentation -- language/types.html
 arccos   | float on [-1, 1] -> float on [0, pi]                                         | Inverse cosine.
 arcsin   | float on [-1, 1] -> float on [-pi / 2, pi / 2]                               | Inverse sine.
 arctan   | float -> float on [-pi / 2, pi / 2]                                          | Inverse tangent.

@@ -11,6 +11,7 @@ import qualified Feynman.Frontend.OpenQASM3.Lexer as L
 import Feynman.Frontend.OpenQASM3.Syntax
 
 }
+-- This grammar was directly adapted from the official OpenQASM3 grammar from grammar/index.html
 
 %name parseQasm3 program
 

@@ -17,6 +17,7 @@ import Feynman.Frontend.OpenQASM3.Ast
 import Feynman.Frontend.OpenQASM3.Syntax
 
 }
+-- This lexer was directly adapted from the official OpenQASM3 grammar from grammar/index.html
 
 %wrapper "monad"
 
