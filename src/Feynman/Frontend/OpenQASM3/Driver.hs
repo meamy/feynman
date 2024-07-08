@@ -214,7 +214,9 @@ gate u3(theta,phi,lambda) q { U(theta,phi,lambda) q; }
 type Result c = Chatty.Chatty String String c
 
 analyze :: Ast.Node Syntax.Tag c -> Result Semantics.Program
-analyze = Semantics.analyze
+analyze node = do
+  (program, analysis) <- Semantics.analyze node
+  return program
 
 normalize :: Semantics.Program -> Result Semantics.Program
 normalize = return

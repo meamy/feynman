@@ -1,121 +1,64 @@
 module Feynman.Frontend.OpenQASM3.Semantics where
 
 import Control.Monad
-import Control.Monad.State (runState)
+import Control.Monad.Except
+import Control.Monad.State
 import qualified Control.Monad.State as State
 import Data.Int (Int64)
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Data.Word (Word64)
 import Debug.Trace
+import Feynman.Core
 import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
 import qualified Feynman.Frontend.OpenQASM3.Syntax as Syntax
 
 data Ref = NilRef | Ref Int deriving (Eq, Ord, Read, Show)
 
-data IdentifierAttributes = IdentifierAttributes
-  { identName :: String,
-    identRef :: Ref,
-    identScopeRef :: Ref
-    -- identType :: ExpressionType,
-    -- identValue :: ConstantValue
-  }
-  deriving (Eq, Read, Show)
+data Context = Context {ref :: Ref, symbols :: (Map.Map String Context)} deriving (Eq, Read, Show)
 
-initialIdentifierAttributes :: IdentifierAttributes
-initialIdentifierAttributes =
-  IdentifierAttributes
-    { identName = "",
-      identRef = NilRef,
-      identScopeRef = NilRef
-      -- identType = NilType,
-      -- identValue = NilValue
-    }
+data Program = Program Block deriving (Eq, Read, Show)
 
--- data TypeParameter a = LiteralParam a | VariableParam Ref
---   deriving (Eq, Ord, Read, Show)
-
--- data ConstantValue
---   = NilValue
---   | IntValue Int
---   | TupleValue [ConstantValue]
---   deriving (Eq, Read, Show)
-
--- expressionTypeFromNode :: p -> ExpressionType
--- expressionTypeFromNode node = NilType -- TODO
-
-data SemanticGraph = SemanticGraph
-  { semGraphProgram :: Program,
-    semGraphScopes :: Map.Map Ref LexicalScope,
-    semGraphIdentifiers :: Map.Map Ref IdentifierAttributes
-    -- semGraphExpressions :: Map.Map Ref SemanticNode,
-    -- semGraphTypes :: Map.Map Ref ExpressionType,
-    -- semGraphValues :: Map.Map Ref ConstantValue,
-  }
-  deriving (Eq, Read, Show)
-
-initialSemanticGraph :: SemanticGraph
-initialSemanticGraph =
-  SemanticGraph
-    { semGraphProgram = Program [],
-      semGraphScopes = Map.empty,
-      semGraphIdentifiers = Map.empty
-      -- semGraphExpressions = Map.empty,
-      -- semGraphTypes = Map.empty,
-      -- semGraphValues = Map.empty
-    }
-
-data LexicalScope = LexicalScope
-  { lexScopeParentRef :: Ref,
-    lexScopeIdentifiers :: Map.Map String IdentifierAttributes
-  }
-  deriving (Eq, Read, Show)
-
-initialLexicalScope :: LexicalScope
-initialLexicalScope = LexicalScope NilRef Map.empty
-
-data Program = Program [Statement] deriving (Eq, Read, Show)
+type Block = [(Context, Statement)]
 
 data Statement
-  = -- AliasDeclarationStmt ExpressionType Identifier {-rvalue|bitconcat-} [Expression]
-    ConstDeclarationStmt ExpressionType Identifier {-const-} Expression
-  | ClassicalDeclarationStmt IoModifier {-ctype-} ExpressionType Identifier Expression
-  | QuantumDeclarationStmt {-qtype-} ExpressionType Identifier
+  = -- AliasDeclarationStmt Type ID {-rvalue|bitconcat-} [Expression]
+    ConstDeclarationStmt Type ID {-const-} Expression
+  | ClassicalDeclarationStmt IoModifier {-ctype-} Type ID Expression
+  | QuantumDeclarationStmt {-qtype-} Type ID
   | AssignmentStmt {-lvalue-} Expression Expression
   | CompoundAssignmentStmt AssignmentOperator {-lvalue-} Expression Expression
-  | GateCallStmt Identifier [Expression] [Expression] -- [modifiers::List<GateModifier>, target::Identifier, params::List<Expression>?, designator::Expression?, args::List<(HardwareQubit | IndexedIdentifier)>?]
+  | GateCallStmt [GateModifier {-gate-}] ID [Expression] [Expression]
   | ResetStmt {-qvalue-} Expression
   | BarrierStmt {-qvalue-} [Expression]
   | DelayStmt {-tvalue-} Expression {-qvalue-} Expression
-  | BoxStmt Identifier [Statement]
+  | BoxStmt ID Block
   | BreakStmt
   | ContinueStmt
   | EndStmt
   | ReturnStmt {-rvalue-} Expression
   | ExpressionStmt Expression
-  | IfStmt {-rvalue-} Expression [Statement] [Statement]
-  | ForStmt {-ctype-} ExpressionType Identifier {-rvalue-} Expression [Statement]
-  | WhileStmt {-rvalue-} Expression [Statement]
-  -- \| GateDefinitionStmt Identifier ...
-  -- \| FunctionDefinitionStmt Identifier ...
+  | IfStmt {-rvalue-} Expression Block Block
+  | ForStmt {-ctype-} Type ID {-rvalue-} Expression Block
+  | WhileStmt {-rvalue-} Expression Block
+  | GateDefinitionStmt ID [(ID, Type)] [ID] Block
+  | FunctionDefinitionStmt ID [(ID, Type)] Type Block
   deriving (Eq, Read, Show)
-
-data Identifier = Identifier Ref String deriving (Eq, Read, Show)
 
 data Expression
   = NilExpr
-  | IdentifierExpr Ref
-  | LiteralExpr ConstantValue
+  | IdentifierExpr ID
+  | LiteralExpr Expression
   | IndexExpr {-rvalue|qvalue-} Expression {-bitvalue|arrayvalue|rangevalue|setvalue-} Expression
   | UnaryOperatorExpr UnaryOperator {-rvalue-} Expression
   | BinaryOperatorExpr
       BinaryOperator
       {-rvalue-} Expression
       {-rvalue-} Expression
-  | CastExpr {-ctype-} ExpressionType {-rvalue-} Expression
-  | DurationOfExpr [Statement]
-  | CallExpr Ref {-rvalue-} [Expression]
+  | CastExpr {-ctype-} Type {-rvalue-} Expression
+  | DurationOfExpr Block
+  | CallExpr ID {-rvalue-} [Expression]
   | ArrayInitExpr {-rvalue|arrayvalue-} [Expression]
   | SetInitExpr {-rvalue-} [Expression]
   | RangeInitExpr
@@ -125,7 +68,7 @@ data Expression
   | MeasureExpr {-qvalue-} [Expression]
   deriving (Eq, Read, Show)
 
-data ExpressionType
+data Type
   = NilType
   | BitType Expression -- size
   | IntType Expression -- size
@@ -135,11 +78,11 @@ data ExpressionType
   | BoolType
   | DurationType
   | StretchType
-  | ComplexType ExpressionType -- base
+  | ComplexType Type -- base
   | QubitType Expression -- size
   | HwQubitType Int -- hwindex
-  | ArrayType ExpressionType Expression -- base, size
-  | ArrayRefType Bool ExpressionType Expression -- mutable, base, dim
+  | ArrayType Type Expression -- base, size
+  | ArrayRefType Bool Type Expression -- mutable, base, dim
   deriving (Eq, Read, Show)
 
 data AssignmentOperator
@@ -260,115 +203,149 @@ tan      | (float or angle) -> float                                            
 
 -}
 
-type Result v = Chatty.Chatty String String v
+data Analysis c = Analysis {nextRef :: Int, nextSymbols :: Map.Map String Context, sources :: Map.Map Ref c}
 
-analyze :: Ast.Node Syntax.Tag c -> Result Program
-analyze (Ast.Node (Syntax.Program _ _ tok) stmts _) = do
-  statements <- sequence (map analyzeStatementAnnotations stmts)
-  return $ Program (catMaybes statements)
+type Result c v = StateT (Analysis c) (Chatty.Chatty String String) v
 
-analyzeStatementAnnotations :: Ast.Node Syntax.Tag c -> Result (Maybe Statement)
+freshAnalysis :: Analysis c
+freshAnalysis = Analysis 1 Map.empty Map.empty
+
+analyze :: Ast.Node Syntax.Tag c -> Chatty.Chatty String String (Program, Analysis c)
+analyze (Ast.Node (Syntax.Program _ _ tok) stmts _) =
+  evalStateT
+    ( do
+        statements <- mapM analyzeStatementAnnotations stmts
+        analysis <- get
+        return (Program (catMaybes statements), analysis)
+    )
+    freshAnalysis
+
+newContext :: StateT (Analysis c) (Chatty.Chatty String String) Context
+newContext = do
+  Analysis {nextRef = n, nextSymbols = syms} <- get
+  modify (\s -> s {nextRef = n + 1})
+  return $ Context {ref = Ref n, symbols = syms}
+
+analyzeFail :: String -> Result c d
+analyzeFail = lift . Chatty.fail
+
+analyzeStatementAnnotations :: Ast.Node Syntax.Tag c -> Result c (Maybe (Context, Statement))
 analyzeStatementAnnotations (Ast.Node Syntax.Statement [] _) = trace "Empty statement" undefined
 analyzeStatementAnnotations (Ast.Node Syntax.Statement [content] ctx) = analyzeStatement content
-analyzeStatementAnnotations (Ast.Node Syntax.Statement (_ : _) _) = Chatty.fail "Annotations not supported"
+analyzeStatementAnnotations (Ast.Node Syntax.Statement (_ : _) _) = analyzeFail "Annotations not supported"
 
-analyzeStatement :: Ast.Node Syntax.Tag c -> Result (Maybe Statement)
-analyzeStatement (Ast.Node (Syntax.Pragma ctnt _) [] _) = Chatty.fail "\"pragma\" statements not supported"
-analyzeStatement (Ast.Node Syntax.AliasDeclStmt (ident : exprs) _) = Chatty.fail "\"alias\" not supported"
-analyzeStatement (Ast.Node (Syntax.AssignmentStmt op) [target, expr] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.BarrierStmt gateOperands _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.BoxStmt [time, stmts] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.BreakStmt [] _) = return $ Just BreakStmt
-analyzeStatement (Ast.Node (Syntax.CalStmt calBlock) [] _) = Chatty.fail "\"cal\" not supported"
-analyzeStatement (Ast.Node (Syntax.DefcalgrammarStmt _ cgname) [] _) = Chatty.fail "\"defcalgrammar\" not supported"
-analyzeStatement (Ast.Node Syntax.ClassicalDeclStmt [anyType, ident, maybeExpr] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.ConstDeclStmt [sclrType, ident, maybeExpr] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.ContinueStmt [] _) = return $ Just ContinueStmt
-analyzeStatement (Ast.Node Syntax.DefStmt [ident, argDefs, returnType, stmts] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.DelayStmt (designator : gateOperands) _) = Chatty.fail "TODO"
+analyzeStatement :: Ast.Node Syntax.Tag c -> Result c (Maybe (Context, Statement))
+analyzeStatement (Ast.Node (Syntax.Pragma ctnt _) [] _) = analyzeFail "\"pragma\" statements not supported"
+analyzeStatement (Ast.Node Syntax.AliasDeclStmt (ident : exprs) _) = analyzeFail "\"alias\" not supported"
+analyzeStatement (Ast.Node (Syntax.AssignmentStmt op) [target, expr] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.BarrierStmt gateOperands _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.BoxStmt [time, stmts] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.BreakStmt [] _) = trivialStatement BreakStmt
+analyzeStatement (Ast.Node (Syntax.CalStmt calBlock) [] _) = analyzeFail "\"cal\" not supported"
+analyzeStatement (Ast.Node (Syntax.DefcalgrammarStmt _ cgname) [] _) = analyzeFail "\"defcalgrammar\" not supported"
+analyzeStatement (Ast.Node Syntax.ClassicalDeclStmt [anyType, ident, maybeExpr] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.ConstDeclStmt [sclrType, ident, maybeExpr] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.ContinueStmt [] _) = trivialStatement ContinueStmt
+analyzeStatement (Ast.Node Syntax.DefStmt [ident, argDefs, returnType, stmts] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.DelayStmt (designator : gateOperands) _) = analyzeFail "TODO"
 analyzeStatement (Ast.Node Syntax.DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
-  Chatty.fail "\"defcal\" not supported"
-analyzeStatement (Ast.Node Syntax.EndStmt [] _) = return $ Just EndStmt
-analyzeStatement (Ast.Node Syntax.ExpressionStmt [expr] _) =
-  Just . ExpressionStmt <$> analyzeExpression expr
+  analyzeFail "\"defcal\" not supported"
+analyzeStatement (Ast.Node Syntax.EndStmt [] _) = trivialStatement EndStmt
+analyzeStatement (Ast.Node Syntax.ExpressionStmt [expr] _) = do
+  ctx <- newContext
+  newExpr <- analyzeExpression expr
+  return $ Just (ctx, ExpressionStmt newExpr)
 analyzeStatement (Ast.Node Syntax.ExternStmt [ident, paramTypes, returnType] _) =
-  Chatty.fail "Extern not supported"
+  analyzeFail "Extern not supported"
 analyzeStatement (Ast.Node Syntax.ForStmt [declType, ident, condExpr, loopStmt] _) = do
+  ctx <- newContext
   newDeclType <- analyzeExpressionType declType
   newIdent <- analyzeIdentifier ident
   newCondExpr <- analyzeExpression condExpr
   loopStmts <- catMaybes <$> analyzeBlock loopStmt
-  return $ Just $ ForStmt newDeclType newIdent newCondExpr loopStmts
-analyzeStatement (Ast.Node Syntax.GateStmt [ident, params, args, stmts] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) = Chatty.fail "TODO"
+  return $ Just (ctx, ForStmt newDeclType newIdent newCondExpr loopStmts)
+analyzeStatement (Ast.Node Syntax.GateStmt [ident, params, args, stmts] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) = analyzeFail "TODO"
 analyzeStatement (Ast.Node Syntax.IfStmt [condExpr, thenBlock, maybeElseBlock] _) = do
+  ctx <- newContext
   newCondExpr <- analyzeExpression condExpr
   thenStmts <- catMaybes <$> analyzeBlock thenBlock
   elseStmts <- catMaybes <$> analyzeBlock maybeElseBlock
-  return $ Just $ IfStmt newCondExpr thenStmts elseStmts
+  return $ Just (ctx, IfStmt newCondExpr thenStmts elseStmts)
 analyzeStatement (Ast.Node (Syntax.IncludeStmt _ tok) [] _) =
   trace "includes must be resolved before analysis" undefined
-analyzeStatement (Ast.Node Syntax.InputIoDeclStmt [anyType, ident] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.OutputIoDeclStmt [anyType, ident] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.MeasureArrowAssignmentStmt [msrExpr, maybeTgt] _) = Chatty.fail "TODO"
+analyzeStatement (Ast.Node Syntax.InputIoDeclStmt [anyType, ident] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.OutputIoDeclStmt [anyType, ident] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.MeasureArrowAssignmentStmt [msrExpr, maybeTgt] _) = analyzeFail "TODO"
 analyzeStatement (Ast.Node Syntax.CregOldStyleDeclStmt [ident, maybeSize] _) = do
+  ctx <- newContext
   newSize <- analyzeExpression maybeSize
   let declType = BitType newSize
   newIdent <- analyzeIdentifier ident
-  return $ Just $ ClassicalDeclarationStmt NilIoMod declType newIdent NilExpr
+  return $ Just (ctx, ClassicalDeclarationStmt NilIoMod declType newIdent NilExpr)
 analyzeStatement (Ast.Node Syntax.QregOldStyleDeclStmt [ident, maybeSize] _) = do
+  ctx <- newContext
   newSize <- analyzeExpression maybeSize
   let declType = QubitType newSize
   newIdent <- analyzeIdentifier ident
-  return $ Just $ QuantumDeclarationStmt declType newIdent
+  return $ Just (ctx, QuantumDeclarationStmt declType newIdent)
 analyzeStatement (Ast.Node Syntax.QuantumDeclStmt [qubitType, ident] _) = do
+  ctx <- newContext
   newQubitType <- analyzeExpressionType qubitType
   newIdent <- analyzeIdentifier ident
-  return $ Just $ QuantumDeclarationStmt newQubitType newIdent
-analyzeStatement (Ast.Node Syntax.ResetStmt [gateOp] _) = Chatty.fail "TODO"
-analyzeStatement (Ast.Node Syntax.ReturnStmt [maybeExpr] _) =
-  Just . ReturnStmt <$> analyzeExpression maybeExpr
+  return $ Just (ctx, QuantumDeclarationStmt newQubitType newIdent)
+analyzeStatement (Ast.Node Syntax.ResetStmt [gateOp] _) = analyzeFail "TODO"
+analyzeStatement (Ast.Node Syntax.ReturnStmt [maybeExpr] _) = do
+  ctx <- newContext
+  newMaybeExpr <- analyzeExpression maybeExpr
+  return $ Just (ctx, ReturnStmt newMaybeExpr)
 analyzeStatement (Ast.Node Syntax.WhileStmt [condExpr, loopBlock] _) = do
+  ctx <- newContext
   newCondExpr <- analyzeExpression condExpr
   loopStmts <- catMaybes <$> analyzeBlock loopBlock
-  return $ Just $ WhileStmt newCondExpr loopStmts
+  return $ Just (ctx, WhileStmt newCondExpr loopStmts)
 analyzeStatement node = trace ("Missing pattern for analyzeStatement: " ++ Syntax.pretty node) undefined
 
-analyzeBlock :: Ast.Node Syntax.Tag c -> Result [Maybe Statement]
+trivialStatement :: Statement -> StateT (Analysis c) (Chatty.Chatty String String) (Maybe (Context, Statement))
+trivialStatement stmt = do
+  ctx <- newContext
+  lift (return $ Just (ctx, stmt))
+
+analyzeBlock :: Ast.Node Syntax.Tag c -> Result c [Maybe (Context, Statement)]
 analyzeBlock (Ast.Node Syntax.Scope stmts _) = mapM analyzeStatement stmts
 analyzeBlock stmt = sequence [analyzeStatement stmt]
 
-analyzeIdentifier :: Ast.Node Syntax.Tag c -> Result Identifier
-analyzeIdentifier ident = Chatty.fail "TODO" -- TODO
+analyzeIdentifier :: Ast.Node Syntax.Tag c -> Result c ID
+analyzeIdentifier ident = analyzeFail "TODO" -- TODO
 
-analyzeConstantValue :: Ast.Node Syntax.Tag c -> Result ConstantValue
-analyzeConstantValue constVal = Chatty.fail "TODO" -- TODO
+analyzeConstantValue :: Ast.Node Syntax.Tag c -> Result c ConstantValue
+analyzeConstantValue constVal = analyzeFail "TODO" -- TODO
 
-analyzeExpression :: Ast.Node Syntax.Tag c -> Result Expression
+analyzeExpression :: Ast.Node Syntax.Tag c -> Result c Expression
 analyzeExpression Ast.NilNode = return NilExpr
 analyzeExpression (Ast.Node Syntax.ParenExpr [expr] _) = analyzeExpression expr
-analyzeExpression (Ast.Node Syntax.IndexExpr [expr, index] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.UnaryOperatorExpr op) [expr] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.BinaryOperatorExpr op) [left, right] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.CastExpr [anyType, expr] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.DurationOfExpr stmts _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.CallExpr (ident : exprs) _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.Identifier _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.IntegerLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.FloatLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.ImaginaryLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.BooleanLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.BitstringLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.TimingLiteral _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node (Syntax.HardwareQubit _ tok) [] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.ArrayInitExpr elems _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.SetInitExpr elems _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.RangeInitExpr [begin, step, end] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.DimExpr [size] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.MeasureExpr [gateOp] _) = Chatty.fail "TODO" -- TODO
-analyzeExpression (Ast.Node Syntax.IndexedIdentifier [ident, index] _) = Chatty.fail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.IndexExpr [expr, index] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.UnaryOperatorExpr op) [expr] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.BinaryOperatorExpr op) [left, right] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.CastExpr [anyType, expr] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.DurationOfExpr stmts _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.CallExpr (ident : exprs) _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.Identifier _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.IntegerLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.FloatLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.ImaginaryLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.BooleanLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.BitstringLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.TimingLiteral _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node (Syntax.HardwareQubit _ tok) [] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.ArrayInitExpr elems _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.SetInitExpr elems _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.RangeInitExpr [begin, step, end] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.DimExpr [size] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.MeasureExpr [gateOp] _) = analyzeFail "TODO" -- TODO
+analyzeExpression (Ast.Node Syntax.IndexedIdentifier [ident, index] _) = analyzeFail "TODO" -- TODO
 
-analyzeGateModifier :: Ast.Node Syntax.Tag c -> Result GateModifier
+analyzeGateModifier :: Ast.Node Syntax.Tag c -> Result c GateModifier
 analyzeGateModifier (Ast.Node Syntax.InvGateModifier [] _) = return InvGateMod
 analyzeGateModifier (Ast.Node Syntax.PowGateModifier [expr] _) =
   PowGateMod <$> analyzeExpression expr
@@ -377,7 +354,7 @@ analyzeGateModifier (Ast.Node Syntax.CtrlGateModifier [maybeExpr] _) =
 analyzeGateModifier (Ast.Node Syntax.NegCtrlGateModifier [maybeExpr] _) =
   NegCtrlGateMod <$> analyzeExpression maybeExpr
 
-analyzeExpressionType :: Ast.Node Syntax.Tag c -> Result ExpressionType
+analyzeExpressionType :: Ast.Node Syntax.Tag c -> Result c Type
 analyzeExpressionType Ast.NilNode = return NilType
 analyzeExpressionType (Ast.Node Syntax.BitTypeSpec [maybeSize] _) =
   BitType <$> analyzeExpression maybeSize
@@ -404,7 +381,7 @@ analyzeExpressionType (Ast.Node Syntax.ArrayTypeSpec (sclrType : exprs) _) = do
   baseType <- analyzeExpressionType sclrType
   recurseArrayDimensions baseType exprs
   where
-    recurseArrayDimensions :: ExpressionType -> [Ast.Node Syntax.Tag c] -> Result ExpressionType
+    recurseArrayDimensions :: Type -> [Ast.Node Syntax.Tag c] -> Result c Type
     recurseArrayDimensions innerType [] = return innerType
     recurseArrayDimensions innerType (dimExpr : dimExprs) = do
       newDimExpr <- analyzeExpression dimExpr
