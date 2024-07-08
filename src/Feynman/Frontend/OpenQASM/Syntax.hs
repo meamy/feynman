@@ -370,12 +370,12 @@ desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
           -- Note that we can't expand v due to the design of QASM. Fun.
           IfStmt v i qexp -> map (IfStmt v i) $ g qexp
         g qexp = case qexp of
-          MeasureExp a b  -> map (uncurry MeasureExp) $ zip (expand a) (expand b)
+          MeasureExp a b  -> zipWith MeasureExp (expand a) (expand b)
           ResetExp a      -> map ResetExp $ expand a
           GateExp uexp    -> map GateExp $ h uexp
         h uexp = case uexp of
           UGate e1 e2 e3 a -> map (UGate e1 e2 e3) $ expand a
-          CXGate a b       -> map (uncurry CXGate) $ zip (expand a) (expand b)
+          CXGate a b       -> zipWith CXGate (expand a) (expand b)
           BarrierGate xs   -> [BarrierGate $ concatMap expand xs]
           -- Can cause problems if not all argument registers have the same length
           CallGate v e xs  -> map (CallGate v e) $ transpose (map expand xs)
