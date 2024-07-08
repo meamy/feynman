@@ -258,6 +258,7 @@ data Tag
 -- Convert the syntax tree back into a string form that can be parsed into an
 -- equivalent tree
 pretty :: Ast.Node Tag c -> String
+pretty Ast.NilNode = ""
 pretty (Ast.Node (Program _ _ EofToken) stmts _) =
   concatMap ((++ "\n") . pretty) stmts
 pretty (Ast.Node (Program _ _ tok) stmts _) =

@@ -199,6 +199,16 @@ ids = Set.toList . foldr f Set.empty
           Ry theta x    -> [x]
           Uninterp s xs -> xs
 
+idsW :: WStmt a -> [ID]
+idsW = Set.toList . go where
+  go (WSkip _)      = Set.empty
+  go (WGate _ g)    = Set.fromList $ ids [g]
+  go (WSeq _ xs)    = Set.unions $ map go xs
+  go (WReset _ x)   = Set.singleton x
+  go (WMeasure _ x) = Set.singleton x
+  go (WIf _ s1 s2)  = Set.union (go s1) (go s2)
+  go (WWhile _ s)   = go s
+
 converge :: Eq a => (a -> a) -> a -> a
 converge f a
   | a' == a   = a'

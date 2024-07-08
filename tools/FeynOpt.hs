@@ -3,7 +3,7 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
-import Feynman.Core (Primitive, ID, expandCNOT)
+import Feynman.Core (Primitive, ID, expandCNOT, idsW)
 import qualified Feynman.Frontend.DotQC as DotQC
 import qualified Feynman.Frontend.OpenQASM.Lexer as OpenQASMLexer
 import qualified Feynman.Frontend.OpenQASM.Parser as OpenQASMParser
@@ -13,10 +13,12 @@ import qualified Feynman.Frontend.OpenQASM3.Driver as OpenQASM3Driver
 import qualified Feynman.Frontend.OpenQASM3.Parser as OpenQASM3Parser
 import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Semantics
 import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
+import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as Tr
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
+import Feynman.Optimization.RelationalFold
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
@@ -30,6 +32,8 @@ import Control.Monad
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
+
+import Debug.Trace as Trace
 
 import Benchmarks (runBenchmarks,
                    benchmarksSmall,
@@ -197,9 +201,14 @@ runQASM3 passes verify pureCircuit fname src = do
   let !result =
         ( do
             parseTree <- OpenQASM3Parser.parseString src
-            program <- OpenQASM3Driver.analyze parseTree
-            normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
-            optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
+            let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
+            let wstmt = Tr.buildModel normalized
+            let vlst  = idsW wstmt
+            let optList = genSubstList vlst vlst wstmt
+            let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
+            --program <- OpenQASM3Driver.analyze parseTree
+            --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
+            --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
             return (normalized, optimized)
         )
   mapM_ putStrLn (Chatty.messages result)
@@ -209,11 +218,12 @@ runQASM3 passes verify pureCircuit fname src = do
     Chatty.Value _ (normalized, optimized) ->
       ( do
           putStrLn $ "// Feynman -- quantum circuit toolkit"
-          putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats normalized
-          putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-          mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optimized
-          putStrLn $ OpenQASM3Driver.emit optimized
+          --putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
+          --mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats normalized
+          --putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+          --mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optimized
+          --putStrLn $ OpenQASM3Driver.emit optimized
+          putStrLn $ OpenQASM3Syntax.pretty optimized
           return ()
       )
     Chatty.Failure _ err ->
