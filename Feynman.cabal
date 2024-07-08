@@ -65,6 +65,7 @@ library
                        Feynman.Frontend.OpenQASM3.Parser
                        Feynman.Frontend.OpenQASM3.Semantics
                        Feynman.Frontend.OpenQASM3.Syntax
+                       Feynman.Frontend.OpenQASM3.Syntax.Transformations
 
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,
