@@ -449,7 +449,7 @@ tokenIdentifierName (AnnotationKeywordToken str) = str
 tokenIntegerVal :: Token -> Integer
 tokenIntegerVal tok =
   case tok of
-    BinaryIntegerLiteralToken str -> readLiteral readBin $ stripPrefix 'b' str
+    BinaryIntegerLiteralToken str -> error "Unimplemented" --readLiteral readBin $ stripPrefix 'b' str
     OctalIntegerLiteralToken str -> readLiteral readOct $ stripPrefix 'o' str
     DecimalIntegerLiteralToken str -> readLiteral readDec str
     HexIntegerLiteralToken str -> readLiteral readHex $ stripPrefix 'x' str
