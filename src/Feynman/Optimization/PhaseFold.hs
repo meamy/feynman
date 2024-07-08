@@ -360,11 +360,11 @@ applyLoop ctx ctx' = Ctx dim ket' terms' orphans' phase where
 -}
   
 -- | Abstract transformers for while statements
-applyStmt :: WStmt -> State (Ctx F2Vec) ()
+applyStmt :: WStmt Loc -> State (Ctx F2Vec) ()
 applyStmt stmt = case stmt of
   WSkip _      -> return ()
   WGate l gate -> applyGate (gate, l)
-  WSeq _ s1 s2 -> applyStmt s1 >> applyStmt s2
+  WSeq _ xs    -> mapM_ applyStmt xs
   WReset _ v   -> getSt v >>= \bv -> setSt v (bitVec (width bv) 0)
   WMeasure _ v -> getSt v >> return ()
   WIf _ s1 s2  -> do
@@ -385,7 +385,7 @@ applyStmt stmt = case stmt of
     fastForward summary
 
 -- | Generate substitution list
-genSubstList :: [ID] -> [ID] -> WStmt -> Map Loc Angle
+genSubstList :: [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
 genSubstList vars inputs stmt =
 
   let result = execState (applyStmt stmt) $ initialState' vars inputs
@@ -404,7 +404,7 @@ genSubstList vars inputs stmt =
     Trace.trace ("Final state: \n" ++ show result) $ foldr go Map.empty phases
 
 -- | Apply substitution list
-applyOpt :: Map Loc Angle -> WStmt -> WStmt
+applyOpt :: Map Loc Angle -> WStmt Loc -> WStmt Loc
 applyOpt opts stmt = go stmt where
   go stmt = case stmt of
     WSkip l      -> WSkip l
@@ -412,8 +412,8 @@ applyOpt opts stmt = go stmt where
       Nothing    -> WGate l gate
       Just angle ->
         let gatelist = synthesizePhase (getTarget gate) angle in
-          foldr (WSeq l) (WSkip l) $ map (WGate l) gatelist
-    WSeq l s1 s2 -> WSeq l (go s1) (go s2)
+          WSeq l $ map (WGate l) gatelist
+    WSeq l xs    -> WSeq l (map go xs)
     WReset l v   -> stmt
     WMeasure l v -> stmt
     WIf l s1 s2  -> WIf l (go s1) (go s2)
@@ -428,30 +428,30 @@ applyOpt opts stmt = go stmt where
     Rz _ x -> x
 
 -- | Optimization algorithm
-phaseFoldpp :: [ID] -> [ID] -> WStmt -> WStmt
+phaseFoldpp :: [ID] -> [ID] -> WStmt Loc -> WStmt Loc
 phaseFoldpp vars inputs stmt = applyOpt opts stmt where
   opts = genSubstList vars inputs stmt
 
 -- Testing
 vars = ["x", "y"]
-testcase1 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WWhile 4 $ WGate 5 $ CNOT "x" "y") $
-            WGate 6 $ Tinv "x"
+testcase1 = WSeq 1 [WGate 2 $ T "x",
+                    WWhile 4 $ WGate 5 $ CNOT "x" "y",
+                    WGate 6 $ Tinv "x"]
 test1 = genSubstList vars vars testcase1
 test2 = execState (applyStmt testcase1) (initialState' vars vars)
 
-testcase2 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WIf 4 (WGate 5 $ CNOT "x" "y") (WSkip 6)) $
-            WGate 7 $ Tinv "x"
+testcase2 = WSeq 1 [WGate 2 $ T "x",
+                    WIf 4 (WGate 5 $ CNOT "x" "y") (WSkip 6),
+                    WGate 7 $ Tinv "x"]
 
-testcase3 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WReset 4 "x") $
-            WGate 5 $ T "x"
+testcase3 = WSeq 1 [WGate 2 $ T "x",
+                    WReset 4 "x",
+                    WGate 5 $ T "x"]
 
-testcase4 = WSeq 1 (WGate 2 $ CNOT "x" "y") $
-            WSeq 3 (WGate 4 $ T "y") $
-            WSeq 5 (WGate 6 $ CNOT "x" "y") $
-            WSeq 7 (WWhile 8 $ WGate 9 $ Swap "x" "y") $
-            WSeq 10 (WGate 11 $ CNOT "x" "y") $
-            WSeq 12 (WGate 13 $ Tinv "y") $
-            WGate 14 $ CNOT "x" "y"
+testcase4 = WSeq 1 [WGate 2 $ CNOT "x" "y",
+                    WGate 4 $ T "y",
+                    WGate 6 $ CNOT "x" "y",
+                    WWhile 8 $ WGate 9 $ Swap "x" "y",
+                    WGate 11 $ CNOT "x" "y",
+                    WGate 13 $ Tinv "y",
+                    WGate 14 $ CNOT "x" "y"]
