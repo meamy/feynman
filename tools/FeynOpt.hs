@@ -95,7 +95,7 @@ equivalenceCheckDotQC qc qc' =
       circ'   = toCliffordT . toGatelist $ qc'
       vars    = union (qubits qc) (qubits qc')
       ins     = Set.toList $ inputs qc
-      result  = validate False vars ins circ circ'
+      result  = validate True vars ins circ circ'
   in
     case (inputs qc == inputs qc', result) of
       (False, _)            -> Left $ "Circuits not equivalent (different inputs)"

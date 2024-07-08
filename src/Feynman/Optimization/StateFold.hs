@@ -116,9 +116,18 @@ elimVar x = modify $ \st -> st { pp = remVar (var x) $ pp st }
 -- Substitute a variable
 substVar :: Int -> SBool String -> State Ctx ()
 substVar x bexp = modify go where
-  go st = st { terms = Map.mapKeysWith c f $ terms st,
+  go st = st { terms = applyToPP $ terms st,
                pp    = P.subst (var x) bexp $ pp st,
                ket   = Map.map (P.subst (var x) bexp) $ ket st }
+  applyToPP terms =
+    let (xterms, nxterms) = Map.partitionWithKey (\m _ -> Set.member (var x) $ vars m) terms
+        xterms'  =
+          if getConstant bexp == 1
+          then Map.map (\(s, a) -> (Set.map (\(l,p) -> (l, 1 + p)) s, -a)) xterms
+          else xterms
+        xterms'' = Map.mapKeysWith c f $ xterms'
+    in
+      Map.unionWith c xterms'' nxterms
   f = dropConstant . P.subst (var x) bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
