@@ -244,6 +244,12 @@ expandCNOT = concatMap go where
     CNOT c t      -> [H t, CZ c t, H t]
     _             -> [x]
 
+expandCZ :: [Primitive] -> [Primitive]
+expandCZ = concatMap go where
+  go x = case x of
+    CZ c t      -> [H t, CNOT c t, H t]
+    _           -> [x]
+
 -- Builtin circuits
 
 cs :: ID -> ID -> [Primitive]

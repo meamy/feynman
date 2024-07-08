@@ -22,8 +22,6 @@ import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
-import Debug.Trace as Trace
-
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
    to help find extra T reductions. Allows identification of
@@ -94,7 +92,7 @@ applyReductions cutoff = do
   pathVars <- gets paths
   outVars  <- gets (Set.unions . map (Set.map unvar . vars) . Map.elems . ket)
   let ideal = matchI poly (Set.difference pathVars outVars) pathVars cutoff
-  let hhIst = matchRandomHH poly (Set.difference pathVars outVars) pathVars cutoff
+  let hhIst = matchHH poly (Set.difference pathVars outVars) pathVars cutoff
   let omIst = matchOmega poly (Set.difference pathVars outVars) pathVars
   case (hhIst, omIst) of
     (Just (x, y, bexp), _) -> do
@@ -106,7 +104,8 @@ applyReductions cutoff = do
       elimVar x
       let poly = constant (Discrete $ fromDyadic $ dyadic 1 2) + distribute (Discrete $ fromDyadic $ dyadic 3 1) (P.lift bexp)
       modify (\st -> st { pp = pp st + poly })
-      return []
+      xs <- applyReductions cutoff
+      return $ xs ++ ideal
     (Nothing, Nothing)     -> return ideal
 
 -- Remove an internal variable
@@ -133,7 +132,7 @@ substVar x bexp = modify go where
 
 -- Matches a instance of [I]
 matchI :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> [SBool String]
-matchI pp cand paths cutoff = filter isValid . catMaybes . map (go . var) $ Set.toDescList cand where
+matchI pp cand paths cutoff = filter isValid . catMaybes . map (go . var) $ Set.toAscList cand where
   go v = toBooleanPoly . quotVar v $ pp
   isValid pp = case cutoff of
     Just d  -> degree pp <= d
@@ -141,7 +140,7 @@ matchI pp cand paths cutoff = filter isValid . catMaybes . map (go . var) $ Set.
 
 -- Matches a instance of [HH]
 matchHH :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe Int -> Maybe (Int, Int, SBool String)
-matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
+matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toAscList cand where
   go v = do
     pp'      <- toBooleanPoly . quotVar v $ pp
     (u, sub) <- find validSoln $ solveForX pp'
@@ -152,7 +151,7 @@ matchHH pp cand paths cutoff = msum . map (go . var) $ Set.toDescList cand where
 
 -- Matches an instance of the [omega] rule
 matchOmega :: PseudoBoolean String Angle -> Set Int -> Set Int -> Maybe (Int, SBool String)
-matchOmega pp cand paths = msum . map (go . var) $ Set.toDescList cand where
+matchOmega pp cand paths = msum . map (go . var) $ Set.toAscList cand where
   go v = do
     pp' <- toBooleanPoly . addFactor v $ pp
     return (unvar v, pp')
@@ -175,7 +174,7 @@ matchRandomHH pp cand paths cutoff = pickRandom . catMaybes . map (go . var) $ S
 reduceAll :: [SBool String] -> State Ctx ()
 reduceAll ideal = do
   st <- get
-  let gbasis = reduceBasis $ buchberger ideal
+  let gbasis = rbuchberger ideal
   let comb (s,a) (t,b) = (Set.union s t, a + b)
   put $ st { terms = Map.mapKeysWith comb (flip mvd gbasis) $ terms st }
 
@@ -221,8 +220,6 @@ runCircuit d circ = execState $ (mapM_ applyGate (zip circ [2..])) >> go where
      | d > 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions
          id <- applyReductions (Just d) -- reductions up to degree d
-         --Trace.trace ("Linear equations: " ++ show i1) $ return ()
-         --Trace.trace ("All equations: " ++ show id) $ return ()
          return ()
      | d < 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions

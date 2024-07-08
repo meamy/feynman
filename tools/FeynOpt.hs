@@ -1,7 +1,7 @@
 {-# LANGUAGE TupleSections #-}
 module Main (main) where
 
-import Feynman.Core (Primitive, ID, expandCNOT)
+import Feynman.Core (Primitive, ID, expandCNOT, expandCZ)
 import Feynman.Frontend.DotQC hiding (showStats)
 import Feynman.Frontend.OpenQASM.Lexer (lexer)
 import Feynman.Frontend.OpenQASM.Syntax (QASM,
@@ -50,6 +50,7 @@ data Pass = Triv
           | TPar
           | Cliff
           | CZ
+          | CX
           | Decompile
 
 {- DotQC -}
@@ -87,6 +88,7 @@ dotQCPass pass = case pass of
   TPar        -> optimizeDotQC tpar
   Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
+  CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
 
 equivalenceCheckDotQC :: DotQC -> DotQC -> Either String DotQC
@@ -149,6 +151,7 @@ qasmPass pureCircuit pass = case pass of
   TPar        -> applyOpt tpar pureCircuit
   Cliff       -> applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> applyOpt (\_ _ -> expandCNOT) pureCircuit
+  CX          -> applyOpt (\_ _ -> expandCZ) pureCircuit
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -200,7 +203,9 @@ printHelp = mapM_ putStrLn lines
           "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
           "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
-          "  -O4\t\tPhase folding + state folding + simplify + clifford resynthesis + CNOT min",
+          "  -apf\t\tAffine phase folding algorithm (equiv. to pyzx)",
+          "  -qpf\t\tQuadratic phase folding algorithm",
+          "  -ppf\t\tPolynomial phase folding algorithm",
           "",
           "Verification passes:",
           "  -verify\tPerform verification algorithm of [A18] after all passes",
@@ -228,10 +233,13 @@ parseArgs passes verify pureCircuit (x:xs) = case x of
   "-tpar"        -> parseArgs (TPar:passes) verify pureCircuit xs
   "-clifford"    -> parseArgs (Cliff:passes) verify pureCircuit xs
   "-cxcz"        -> parseArgs (CZ:passes) verify pureCircuit xs
+  "-czcx"        -> parseArgs (CX:passes) verify pureCircuit xs
   "-decompile"   -> parseArgs (Decompile:passes) verify pureCircuit xs
   "-O2"          -> parseArgs (o2 ++ passes) verify pureCircuit xs
   "-O3"          -> parseArgs (o3 ++ passes) verify pureCircuit xs
-  "-O4"          -> parseArgs (o4 ++ passes) verify pureCircuit xs
+  "-apf"         -> parseArgs (apf ++ passes) verify pureCircuit xs
+  "-qpf"         -> parseArgs (qpf ++ passes) verify pureCircuit xs
+  "-ppf"         -> parseArgs (ppf ++ passes) verify pureCircuit xs
   "-verify"      -> parseArgs passes True pureCircuit xs
   "-benchmarks"  -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass passes) (benchVerif verify)
   "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
@@ -242,9 +250,11 @@ parseArgs passes verify pureCircuit (x:xs) = case x of
   f | (drop (length f - 3) f) == ".qc" -> B.readFile f >>= runDotQC passes verify f
   f | (drop (length f - 5) f) == ".qasm" -> readFile f >>= runQASM passes verify pureCircuit f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
-  where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
-        o3 = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4 = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+  where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
+        o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
 
 main :: IO ()
 main = getArgs >>= parseArgs [] False False
