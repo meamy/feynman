@@ -213,12 +213,14 @@ gate u3(theta,phi,lambda) q { U(theta,phi,lambda) q; }
 
 type Result c = Chatty.Chatty String String c
 
+{-
+
 analyze :: Ast.Node Syntax.Tag c -> Result Semantics.Program
 analyze node = do
   (program, analysis) <- Semantics.analyze node
   return program
 
-normalize :: Semantics.Program -> Result Semantics.Program
+normalize :: SyntaxNode c -> Result Semantics.Program
 normalize = return
 
 -- Inlines all local definitions & non-primitive operations
@@ -256,3 +258,5 @@ showStats _ = ["Stats not available for QASM3"]
 
 emit :: Semantics.Program -> String
 emit _ = "Not implemented\n"
+
+-}

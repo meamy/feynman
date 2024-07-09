@@ -41,6 +41,7 @@ import Benchmarks (runBenchmarks,
                    benchmarksAll,
                    benchmarkFolder,
                    formatFloatN)
+import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Syntax
 
 
 {- Toolkit passes -}
@@ -181,7 +182,8 @@ runQASM passes verify pureCircuit fname src = do
 
 {- QASM3 -}
 
-qasm3Pass :: Bool -> Pass -> (OpenQASM3Semantics.Program -> Chatty.Chatty String String OpenQASM3Semantics.Program)
+{-
+qasm3Pass :: Bool -> Pass -> (OpenQASM3Syntax.SyntaxNode c -> Chatty.Chatty String String (OpenQASM3Syntax.SyntaxNode c))
 qasm3Pass pureCircuit pass = case pass of
   Triv        -> return
   Inline      -> OpenQASM3Driver.inline
@@ -194,6 +196,7 @@ qasm3Pass pureCircuit pass = case pass of
   TPar        -> OpenQASM3Driver.applyOpt tpar pureCircuit
   Cliff       -> OpenQASM3Driver.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> OpenQASM3Driver.applyOpt (\_ _ -> expandCNOT) pureCircuit
+-}
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do

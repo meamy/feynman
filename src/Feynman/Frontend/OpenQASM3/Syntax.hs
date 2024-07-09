@@ -177,8 +177,8 @@ data Tag
   | BreakStmt -- []
   | CalStmt {calBlockTok :: Token} -- []
   | DefcalgrammarStmt {calgrammarName :: String, calgrammarTok :: Token} -- []
-  | ClassicalDeclStmt -- [ScalarTypeSpec | ArrayTypeSpec, Identifier, DeclarationExpr?]
-  | ConstDeclStmt -- [ScalarTypeSpec, Identifier, DeclarationExpr]
+  | ClassicalDeclStmt -- [ScalarTypeSpec | ArrayTypeSpec, Identifier, InitializerExpr?]
+  | ConstDeclStmt -- [ScalarTypeSpec, Identifier, InitializerExpr]
   | ContinueStmt -- []
   | DefStmt -- [Identifier, List<ArgumentDefinition>, ScalarTypeSpec?, Scope]
   | DefcalStmt -- [DefcalTarget, List<(Expression | ArgumentDefinition)>?, List<HardwareQubit | Identifier>, ScalarTypeSpec?, CalBlock]
@@ -189,7 +189,7 @@ data Tag
   | ForStmt -- [ScalarTypeSpec, Identifier, (Expression | Range | Set), (Statement | Scope)]
   | GateStmt -- [Identifier, List<Identifier>?, List<Identifier>, Scope]
   | GateCallStmt -- [modifiers::List<GateModifier>, target::Identifier, params::List<Expression>?, designator::Expression?, args::List<(HardwareQubit | IndexedIdentifier)>?]
-  | IfStmt -- [condition::Expression, thenBlock::(Statement | Scope), elseBlock::(Statement | Scope)?
+  | IfStmt -- [condition::Expression, then::(Statement | Scope), else::(Statement | Scope)?
   | IncludeStmt {includePath :: String, includeTok :: Token} -- []
   | InputIoDeclStmt -- [(ScalarTypeSpec | ArrayTypeSpec), Identifier]
   | OutputIoDeclStmt -- [(ScalarTypeSpec | ArrayTypeSpec), Identifier]
