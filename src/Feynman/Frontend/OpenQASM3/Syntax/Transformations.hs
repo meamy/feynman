@@ -296,3 +296,12 @@ applyPFOpt replacements node = go node where
     Sinv _     -> "sdg"
     T _        -> "t"
     Tinv _     -> "tdg"
+
+-- Counts gate calls
+countGateCalls :: Ast.Node Tag c -> Map String Int
+countGateCalls node = go Map.empty node where
+  go counts Ast.NilNode = counts
+  go counts node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
+    let id = getIdent target in
+      Map.insertWith (+) id 1 counts
+  go counts (Ast.Node tag children c) = foldl go counts children
