@@ -184,22 +184,6 @@ runQASM passes verify pureCircuit fname src = do
 
 {- QASM3 -}
 
-{-
-qasm3Pass :: Bool -> Pass -> (OpenQASM3Syntax.SyntaxNode c -> Chatty.Chatty String String (OpenQASM3Syntax.SyntaxNode c))
-qasm3Pass pureCircuit pass = case pass of
-  Triv        -> return
-  Inline      -> OpenQASM3Driver.inline
-  MCT         -> OpenQASM3Driver.inline
-  CT          -> OpenQASM3Driver.inline
-  Simplify    -> return
-  Phasefold   -> OpenQASM3Driver.applyOpt phaseFold pureCircuit
-  Statefold d -> OpenQASM3Driver.applyOpt (stateFold d) pureCircuit
-  CNOTMin     -> OpenQASM3Driver.applyOpt minCNOT pureCircuit
-  TPar        -> OpenQASM3Driver.applyOpt tpar pureCircuit
-  Cliff       -> OpenQASM3Driver.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
-  CZ          -> OpenQASM3Driver.applyOpt (\_ _ -> expandCNOT) pureCircuit
--}
-
 showCounts :: Map String Int -> [String]
 showCounts = map f . Map.toList where
   f (gate, count) = gate ++ ": " ++ show count
@@ -211,14 +195,11 @@ runQASM3 passes verify pureCircuit fname src = do
         ( do
             parseTree <- OpenQASM3Parser.parseString src
             let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
-            let wstmt = Tr.buildModel normalized
+            let wstmt = OpenQASM3Driver.buildModel normalized
             let vlst  = idsW wstmt
             let optList = genSubstList vlst vlst wstmt
             --let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
-            let optimized = Tr.applyPFOpt optList normalized
-            --program <- OpenQASM3Driver.analyze parseTree
-            --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
-            --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
+            let optimized = OpenQASM3Driver.applyPFOpt optList normalized
             return (normalized, optimized)
         )
   mapM_ putStrLn (Chatty.messages result)
@@ -232,7 +213,6 @@ runQASM3 passes verify pureCircuit fname src = do
           mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
           putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
           mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
-          --putStrLn $ OpenQASM3Driver.emit optimized
           putStrLn $ OpenQASM3Syntax.pretty optimized
           return ()
       )

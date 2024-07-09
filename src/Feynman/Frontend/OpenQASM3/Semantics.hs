@@ -65,7 +65,7 @@ data ConstantValue
   deriving (Eq, Read, Show)
 
 typeOfValue :: ConstantValue -> TypeSpec
-typeOfValue (BitValue bits _) = BitType (bits)
+typeOfValue (BitValue bits _) = BitType bits
 typeOfValue (IntValue bits _) = IntType bits
 typeOfValue (UintValue bits _) = UintType bits
 typeOfValue (FloatValue bits _) = FloatType bits
@@ -138,7 +138,7 @@ normalizeStatement :: SyntaxNode c -> AnalysisResult c [SyntaxNode c]
 normalizeStatement (Node Statement [] _) = return []
 normalizeStatement (Node Statement (content : annotations) ctx) = do
   normContent <- normalizeStmtContent content
-  unless (null annotations) (analyzeFail "annotations not supported")
+  unless (null annotations) (analyzeFail "Statement annotations are not supported")
   return $ map (\nc -> Node Statement [nc] ctx) normContent
 
 -- expectAnnotation (Node (Annotation {}) _ _) = return ()
@@ -146,21 +146,21 @@ normalizeStatement (Node Statement (content : annotations) ctx) = do
 
 normalizeStmtContent :: SyntaxNode c -> AnalysisResult c [SyntaxNode c]
 normalizeStmtContent (Node (Pragma ctnt _) [] _) =
-  analyzePrepend "\"pragma\" statements not supported" $ return []
-normalizeStmtContent (Node AliasDeclStmt (ident : exprs) _) = analyzeFail "\"alias\" not supported"
+  analyzePrepend "Ignoring \"pragma\" statement" $ return []
+normalizeStmtContent (Node AliasDeclStmt (ident : exprs) _) = analyzeFail "\"alias\" statements are not supported"
 normalizeStmtContent node@(Node (AssignmentStmt op) [target, expr] _) = do
   -- require assignable
   target <- normalizeLvalueExpr target
   -- require compatible types
   expr <- normalizeRvalueExpr expr
   return [node {children = [target, expr]}]
-normalizeStmtContent (Node BarrierStmt gateOperands _) = analyzePrepend "ignoring \"barrier\"" $ return []
+normalizeStmtContent (Node BarrierStmt gateOperands _) = analyzePrepend "Ignoring \"barrier\" statement" $ return []
 normalizeStmtContent (Node BoxStmt [time, scope] _) =
-  analyzePrepend "treating \"box\" as scope" (normalizeStmtContent scope)
+  analyzePrepend "Treating \"box\" statement as scope" (normalizeStmtContent scope)
 normalizeStmtContent node@(Node BreakStmt [] _) = trivialStatement node
-normalizeStmtContent (Node (CalStmt calBlock) [] _) = analyzePrepend "ignoring \"cal\"" $ return []
+normalizeStmtContent (Node (CalStmt calBlock) [] _) = analyzePrepend "Ignoring \"cal\" statement" $ return []
 normalizeStmtContent (Node (DefcalgrammarStmt _ cgname) [] _) =
-  analyzePrepend "ignoring \"defcalgrammar\"" $ return []
+  analyzePrepend "Ignoring \"defcalgrammar\" statement" $ return []
 normalizeStmtContent node@(Node ClassicalDeclStmt [declType, ident, maybeInitExpr] _) = do
   -- require classical type
   declType <- normalizeClassicalDeclType declType
@@ -177,9 +177,9 @@ normalizeStmtContent node@(Node ConstDeclStmt [declType, ident, initExpr] _) = d
 normalizeStmtContent node@(Node ContinueStmt [] _) = trivialStatement node
 normalizeStmtContent (Node DefStmt [ident, argDefs, returnType, stmts] _) = analyzeFail "TODO \"def\""
 normalizeStmtContent (Node DelayStmt (designator : gateOperands) _) =
-  analyzePrepend "ignoring \"delay\"" $ return []
+  analyzePrepend "Ignoring \"delay\" statement" $ return []
 normalizeStmtContent (Node DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
-  analyzePrepend "ignoring \"defcal\"" $ return []
+  analyzePrepend "Ignoring \"defcal\" statement" $ return []
 normalizeStmtContent (Node EndStmt [] _) = (lift . return) []
 normalizeStmtContent node@(Node ExpressionStmt [expr] _) = do
   expr <- normalizeRvalueExpr expr
@@ -237,7 +237,7 @@ normalizeStmtContent node@(Node QuantumDeclStmt [qubitType, ident] _) = do
   -- qubitType <- normalizeQubitType qubitType
   ident <- normalizeIdentifier ident
   return [node {children = [qubitType, ident]}]
-normalizeStmtContent (Node ResetStmt [gateOp] _) = analyzeFail "\"reset\" not supported"
+normalizeStmtContent (Node ResetStmt [gateOp] _) = analyzeFail "\"reset\" statements are not supported"
 normalizeStmtContent node@(Node ReturnStmt [maybeExpr] _) = do
   maybeExpr <- normalizeExpr maybeExpr
   return [node {children = [maybeExpr]}]
