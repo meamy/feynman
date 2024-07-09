@@ -9,6 +9,7 @@ import qualified Data.List as List
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Traversable (for)
+import Data.Bits (testBit)
 
 import Control.Monad.State.Strict
 
@@ -77,14 +78,21 @@ getPSSize = do
 allocatePathsum :: Int -> State Env Int
 allocatePathsum size = do
   offset <- getPSSize
-  modify $ \env -> env { pathsum = pathsum env <> (ket $ replicate size 0) }
+  modify allocate
   return offset
+  where
+    allocate env@(Env ps _ False) = env { pathsum = ps <> (ket $ replicate size 0) }
+    allocate env@(Env ps _ True)  = env { pathsum = newps }
+      where
+        oldsize  = outDeg ps `div` 2
+        embedded = embed ps (size * 2) (\i -> i) (\i -> if i < oldsize then i else i + size)
+        newps = (ket $ replicate (size*2) 0) .> embedded
 
 addBind :: ID -> Binding -> State Env ()
 addBind id binding = do
   env <- get
   let ~(b:bs) = binds env
-  put $ env {binds = Map.insert id binding b : bs}
+  put $ env { binds = Map.insert id binding b : bs }
 
 getOffset :: Arg -> State Env Int
 getOffset arg = case arg of
@@ -105,6 +113,10 @@ simExp e = case e of
     e2' <- simExp e2
     return $ (evalBOp op) e1' e2'
 
+pushEmptyEnv :: State Env ()
+pushEmptyEnv =
+  modify $ \env -> env { binds = Map.empty : binds env }
+
 pushEnv :: [ID] -> [Exp] -> [ID] -> [Arg] -> State Env ()
 pushEnv cparams exps qparams args = do
   cbindings <- liftM (map CVar) $ mapM simExp exps
@@ -116,7 +128,7 @@ pushEnv cparams exps qparams args = do
 popEnv :: State Env ()
 popEnv = do
   env <- get
-  let b:bs = binds env
+  let _:bs = binds env
   put $ env {binds = bs}
 
 simDeclare :: Dec -> State Env ()
@@ -152,8 +164,9 @@ simGate uexp = case uexp of
     callU theta phi lambda (arg:_) =
       simGate' $ UGate theta phi lambda arg
 
-    -- expand args (consisting of registers and indexed registers)
-    -- into lists of args only with indexed registers
+    -- expand args (which could be a mixed list 
+    -- of registers and indexed registers)
+    -- into lists of only indexed registers
     expandArgs :: [Arg] -> State Env [[Arg]]
     expandArgs args = do
       -- fold over args to see if any are registers
@@ -319,6 +332,18 @@ simGate uexp = case uexp of
                              CallGate "u3" [e2, IntExp 0, e3] [arg2],
                              CallGate "cx" [] [arg1, arg2],
                              CallGate "u3" [e4, phi, IntExp 0] [arg2] ]
+        CallGate "mct" [] args -> do
+          offsets <- mapM getOffset args
+          if density then
+            modify $ \env -> env { pathsum = applyMCT (init offsets) (last offsets) . applyMCT (map (+n) $ init offsets) ((+n) $ last offsets) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyMCT (init offsets) (last offsets) $ pathsum env }
+        CallGate "mcz" [] args -> do
+          offsets <- mapM getOffset args
+          if density then
+            modify $ \env -> env { pathsum = applyMCZ offsets . applyMCZ (map (+n) offsets) $ pathsum env }
+          else
+            modify $ \env -> env { pathsum = applyMCZ offsets $ pathsum env }
         CallGate id exps args -> do
           ~(Gate cparams qparams body) <- getBinding id
           pushEnv cparams exps qparams args
@@ -346,12 +371,29 @@ simGate uexp = case uexp of
           offset1 <- getOffset arg1
           offset2 <- getOffset arg2
           if density then
-            modify $ \env -> env { pathsum = applyCX offset1 offset2 . applyCX (offset1+n) (offset2+n) $ pathsum env}
+            modify $ \env -> env { pathsum = applyCX offset1 offset2 . applyCX (offset1+n) (offset2+n) $ pathsum env }
           else
             modify $ \env -> env { pathsum = applyCX offset1 offset2 $ pathsum env }
 
 simReset :: Arg -> State Env ()
-simReset arg = return ()
+simReset arg = case arg of
+  Offset id index -> do
+    pushEmptyEnv
+    simDeclare $ VarDec tempid $ Qreg 1
+    simGate $ CXGate arg (Offset tempid 0)
+    simGate $ CXGate (Offset tempid 0) arg
+    popEnv
+  Var id -> do
+    size <- liftM size $ getBinding id
+    pushEmptyEnv
+    simDeclare $ VarDec tempid $ Qreg size
+    simGate $ CXGate arg (Var tempid)
+    simGate $ CXGate (Var tempid) arg
+    popEnv
+  where
+    tempid = case arg of
+      Offset id _ -> id ++ "_temp"
+      Var id      -> id ++ "_temp"
 
 simMeasure :: Arg -> Arg -> State Env ()
 simMeasure arg1 arg2 = densifyEnv >> case (arg1, arg2) of
@@ -377,12 +419,25 @@ simStmt stmt = case stmt of
   IncStmt _ -> return ()
   DecStmt dec -> simDeclare dec
   QStmt qexp -> simQExp qexp
-  IfStmt x n qexp -> do
-    c <- getValue x
-    if c == n then
-      simQExp qexp
-    else
-      return ()
+  IfStmt c n qexp -> do
+    ~(CReg size _) <- getBinding c
+    let controls = map (\i -> Offset c i) . filter (testBit n) $ [0..size-1]
+    simControlled controls qexp
+
+simControlled :: [Arg] -> QExp -> State Env ()
+simControlled controls qexp = case qexp of
+  GateExp exp -> simControlledGate controls exp
+  MeasureExp _ _ -> undefined
+  ResetExp _ -> undefined
+  
+simControlledGate :: [Arg] -> UExp -> State Env ()
+simControlledGate controls uexp = case uexp of
+  CXGate arg1 arg2 -> simGate $ CallGate "mct" [] (controls ++ [arg1, arg2])
+  CallGate "cx" [] [arg1, arg2] -> simGate $ CallGate "mct" [] (controls ++ [arg1, arg2])
+  CallGate "id" _ _ -> return ()
+  CallGate "x" [] [arg] -> simGate $ CallGate "mct" [] (controls ++ [arg])
+  CallGate "z" [] [arg] -> simGate $ CallGate "mcz" [] (controls ++ [arg])
+  CallGate "y" [] [arg] -> undefined --TODO--
 
 simQASM :: QASM -> Env
 simQASM (QASM _ stmts) =
