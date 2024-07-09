@@ -27,6 +27,8 @@ import System.CPUTime     (getCPUTime)
 
 import Data.List
 import qualified Data.Set as Set
+import Data.Map (Map)
+import qualified Data.Map as Map
 
 import Control.Monad
 
@@ -195,6 +197,10 @@ qasm3Pass pureCircuit pass = case pass of
   Cliff       -> OpenQASM3Driver.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> OpenQASM3Driver.applyOpt (\_ _ -> expandCNOT) pureCircuit
 
+showCounts :: Map String Int -> [String]
+showCounts = map f . Map.toList where
+  f (gate, count) = gate ++ ": " ++ show count
+
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
@@ -205,7 +211,8 @@ runQASM3 passes verify pureCircuit fname src = do
             let wstmt = Tr.buildModel normalized
             let vlst  = idsW wstmt
             let optList = genSubstList vlst vlst wstmt
-            let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
+            --let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
+            let optimized = Tr.applyPFOpt optList normalized
             --program <- OpenQASM3Driver.analyze parseTree
             --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
             --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
@@ -218,10 +225,10 @@ runQASM3 passes verify pureCircuit fname src = do
     Chatty.Value _ (normalized, optimized) ->
       ( do
           putStrLn $ "// Feynman -- quantum circuit toolkit"
-          --putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-          --mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats normalized
-          --putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-          --mapM_ putStrLn . map ("//   " ++) $ OpenQASM3Driver.showStats optimized
+          putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
+          mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
+          putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+          mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
           --putStrLn $ OpenQASM3Driver.emit optimized
           putStrLn $ OpenQASM3Syntax.pretty optimized
           return ()
