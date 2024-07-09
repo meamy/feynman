@@ -199,7 +199,7 @@ meets (x:xs) = canonicalize $ ARD rel where
 -- | Sequential composition
 compose :: AffineRelation -> AffineRelation -> AffineRelation
 compose ar1 ar2
-  | vars ar1 /= vars ar2 = error "Can't compose relations on different sets of variables"
+  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
   | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
       v = (vars ar1) `div` 2
       mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar2] ++
@@ -208,7 +208,7 @@ compose ar1 ar2
 -- | Union
 join :: AffineRelation -> AffineRelation -> AffineRelation
 join ar1 ar2
-  | vars ar1 /= vars ar2 = error "Can't join relations on different sets of variables"
+  | vars ar1 /= vars ar2 = error $ "Can't join relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
   | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
       v = vars ar1
       constraints = [append r r | r <- rows ar1] ++ [append (bitVec (v+1) 0) r | r <- rows ar2]
@@ -238,7 +238,7 @@ makeExplicitFF (ARD (F2Mat m n vals))
 -- | Sequential composition in the [X|X'] order
 composeFF :: AffineRelation -> AffineRelation -> AffineRelation
 composeFF ar1 ar2
-  | vars ar1 /= vars ar2 = error "Can't compose relations on different sets of variables"
+  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
   | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
       v = (vars ar1) `div` 2
       mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar1] ++

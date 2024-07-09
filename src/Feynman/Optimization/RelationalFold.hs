@@ -137,10 +137,10 @@ applyGate (gate, loc) = case gate of
     let args = getArgs gate
     _ <- mapM getSt args
     ctx <- get
-    Trace.trace (show ctx) $ return ()
+    --Trace.trace (show ctx) $ return ()
     alloc $ length args
     ctx' <- get
-    Trace.trace (show ctx') $ return ()
+    --Trace.trace (show ctx') $ return ()
     dim' <- gets dim
     mapM_ (\(v,i) -> setSt v $ bitI dim' i) $ zip args [0..]
 
@@ -186,7 +186,7 @@ branchSummary ctx' ctx'' = do
 loopSummary :: Ctx -> Map ID F2Vec -> State (Ctx) AffineRelation
 loopSummary ctx' input = do
   let summary     = star . projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
-  let canon       = compose (makeExplicit . ARD . fromList . Map.elems $ input) summary
+  let canon       = ARD $ compose' (makeExplicit . ARD . fromList . Map.elems $ input) summary
   let (tms,ztrms) = Map.partitionWithKey go $ Map.mapKeysWith addTerms reduce (terms ctx') where
         reduce bv = reduceVector (unARD canon) (zeroExtend (Map.size input) bv)
         go bv _   = bv /= 0

@@ -18,7 +18,7 @@ import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
-import Feynman.Optimization.RelationalFold
+import Feynman.Optimization.RelationalFoldNL
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
