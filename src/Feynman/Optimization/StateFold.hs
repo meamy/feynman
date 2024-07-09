@@ -224,6 +224,7 @@ runCircuit d circ = execState $ (mapM_ applyGate (zip circ [2..])) >> go where
      | d < 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions
          id <- applyReductions Nothing  -- all reductions
+         reduceAll $ i1 ++ id
          return ()
 
 {- Generates an initial state -}

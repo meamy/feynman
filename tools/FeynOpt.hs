@@ -62,7 +62,7 @@ optimizeDotQC f qc = qc { decls = map go $ decls qc }
               circuitInputs = (Set.toList $ inputs qc) ++ params decl
               wrap g        = fromCliffordT . g . toCliffordT
           in
-            decl { body = wrap (f circuitQubits circuitQubits) $ body decl }
+            decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
 decompileDotQC :: DotQC -> DotQC
 decompileDotQC qc = qc { decls = map go $ decls qc }
@@ -252,9 +252,9 @@ parseArgs passes verify pureCircuit (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
         o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
 
 main :: IO ()
 main = getArgs >>= parseArgs [] False False
