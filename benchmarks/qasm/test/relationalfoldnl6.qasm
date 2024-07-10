@@ -1,4 +1,4 @@
-// vars = ["x", "y"]
+// v = ["x", "y", "z"]
 // testcase6 = WSeq 1 [WGate 2 $ T "y",
 //                     WWhile 4 $ WSeq 5 [WGate 6 $ T "x",
 //                                        WWhile 7 $ (WGate 8 $ X "y")],
@@ -6,14 +6,14 @@
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
+qubit b;
 
-t y;
+t b;
 while (true) {
-    t x;
+    t a;
     while (true) {
-        x y;
+        x b;
     }
 }
 tdg y;

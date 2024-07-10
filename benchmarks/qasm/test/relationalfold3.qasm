@@ -5,9 +5,8 @@
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
 
-t x;
-reset x;
-t x;
+t a;
+reset a;
+t a;

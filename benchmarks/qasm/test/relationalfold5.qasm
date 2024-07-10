@@ -5,11 +5,11 @@
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
+qubit b;
 
-t y;
+t b;
 while (true) {
-    h x;
+    h a;
 }
 tdg y;

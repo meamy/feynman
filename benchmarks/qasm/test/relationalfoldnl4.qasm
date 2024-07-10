@@ -1,4 +1,4 @@
-// vars = ["x", "y"]
+// v = ["x", "y", "z"]
 // testcase4 = WSeq 1 [WGate 2 $ CNOT "x" "y",
 //                     WGate 4 $ T "y",
 //                     WGate 6 $ CNOT "x" "y",
@@ -9,15 +9,15 @@
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
+qubit b;
 
-cx x, y;
-t y;
-cx x, y;
+cx a, b;
+t b;
+cx a, b;
 while (true) {
-    swap x, y;
+    swap a, b;
 }
-cx x, y;
-tdg y;
-cx x, y;
+cx a, b;
+tdg b;
+cx a, b;

@@ -1,15 +1,15 @@
-// vars = ["x", "y"]
+// v = ["x", "y", "z"]
 // testcase2 = WSeq 1 [WGate 2 $ T "x",
 //                     WIf 4 (WGate 5 $ CNOT "x" "y") (WSkip 6),
 //                     WGate 7 $ Tinv "x"]
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
+qubit b;
 
-t x;
+t a;
 if (true) {
-    cx x, y;
+    cx a, b;
 }
-tdg x;
+tdg a;

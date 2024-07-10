@@ -7,13 +7,13 @@
 
 include "stdgates.inc";
 
-qubit x;
-qubit y;
+qubit a;
+qubit b;
 
-t y;
-reset x;
+t b;
+reset a;
 while (true) {
-    t y;
-    t x;
+    t b;
+    t a;
 }
-tdg y;
+tdg b;
