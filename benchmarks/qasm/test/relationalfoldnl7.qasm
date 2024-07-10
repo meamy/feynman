@@ -15,5 +15,5 @@ h a;
 while (true) {
     t b;
 }
-h a
+h a;
 tdg a;
