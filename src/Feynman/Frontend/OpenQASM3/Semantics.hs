@@ -175,7 +175,17 @@ normalizeStmtContent node@(Node ConstDeclStmt [declType, ident, initExpr] _) = d
   initExpr <- normalizeRvalueExpr initExpr
   return [node {children = [declType, ident, initExpr]}]
 normalizeStmtContent node@(Node ContinueStmt [] _) = trivialStatement node
-normalizeStmtContent (Node DefStmt [ident, argDefs, returnType, stmts] _) = analyzeFail "TODO \"def\""
+normalizeStmtContent node@(Node DefStmt [ident, argDefs, returnType, stmts] _) = do
+  ident <- normalizeIdentifier ident
+  returnType <- maybeNormalize normalizeClassicalDeclType NilNode returnType
+  argDefs <- normalizeList normalizeArgumentDef argDefs
+  -- require stmts is a scope
+  return [node {children = [ident, argDefs, returnType, stmts]}]
+  where
+    normalizeArgumentDef node@(Node ArgumentDefinition [typeDecl, ident] _) = do
+      typeDecl <- normalizeDeclType typeDecl
+      ident <- normalizeIdentifier ident
+      return node {children = [typeDecl, ident]}
 normalizeStmtContent (Node DelayStmt (designator : gateOperands) _) =
   analyzePrepend "Ignoring \"delay\" statement" $ return []
 normalizeStmtContent (Node DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
@@ -184,28 +194,40 @@ normalizeStmtContent (Node EndStmt [] _) = (lift . return) []
 normalizeStmtContent node@(Node ExpressionStmt [expr] _) = do
   expr <- normalizeRvalueExpr expr
   return [node {children = [expr]}]
-normalizeStmtContent (Node ExternStmt [ident, paramTypes, returnType] _) = analyzeFail "TODO \"extern\""
+normalizeStmtContent (Node ExternStmt [ident, paramTypes, returnType] _) =
+  analyzePrepend "Ignoring \"extern\" def statement" $ return []
 normalizeStmtContent node@(Node ForStmt [declType, ident, range, loopStmt] _) = do
   declType <- normalizeClassicalDeclType declType
   ident <- normalizeIdentifier ident
   -- require either set, range, bit, or array expression
   -- require compatible type with declType
   range <- normalizeLoopRange range
-  loopStmt <- normalizeStmtContent loopStmt
+  loopStmt <- normalizeStmtToScope loopStmt
   -- ensure loopStmt normalizes to a single statement!
   return [node {children = [declType, ident, range] ++ loopStmt}]
-normalizeStmtContent (Node GateStmt [ident, params, args, stmts] _) = analyzeFail "TODO \"gate\""
-normalizeStmtContent (Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) = analyzeFail "TODO gate call"
+normalizeStmtContent node@(Node GateStmt [ident, params, qArgs, stmts] _) = do
+  ident <- normalizeIdentifier ident
+  params <- maybeNormalize (normalizeList normalizeIdentifier) NilNode params
+  qArgs <- normalizeList normalizeIdentifier qArgs
+  -- require stmts is a scope
+  return [node {children = [ident, params, qArgs, stmts]}]
+normalizeStmtContent node@(Node GateCallStmt [modifiers, target, maybeParams, maybeDuration, maybeQArgs] _) = do
+  unless (isNilNode modifiers) (analyzeFail "Gate modifiers not supported")
+  target <- normalizeIdentifier target
+  maybeParams <- maybeNormalize (normalizeList normalizeRvalueExpr) NilNode maybeParams
+  -- require duration is timespan
+  maybeQArgs <- maybeNormalize (normalizeList normalizeQubitExpr) NilNode maybeQArgs
+  return [node {children = [modifiers, target, maybeParams, maybeDuration, maybeQArgs]}]
 normalizeStmtContent node@(Node IfStmt [condExpr, thenStmt, maybeElseStmt] _) = do
   -- require bool or compatible type
   condExpr <- normalizeRvalueExpr condExpr
   -- ensure thenStmt normalizes to a single statement!
-  thenStmt <- normalizeStmtContent thenStmt
+  thenStmt <- normalizeStmtToScope thenStmt
   -- ensure maybeElseStmt normalizes to a single statement!
-  maybeElseStmt <- normalizeStmtContent maybeElseStmt
+  maybeElseStmt <- maybeNormalize normalizeStmtToScope [NilNode] maybeElseStmt
   return [node {children = condExpr : thenStmt ++ maybeElseStmt}]
 normalizeStmtContent (Node (IncludeStmt path _) [] _) = do
-  unless (path == "stdgates.inc") (analyzeFail "TODO \"include\"")
+  unless (path == "stdgates.inc" || path == "qelib1.inc") (analyzeFail "TODO \"include\"")
   return []
 normalizeStmtContent node@(Node InputIoDeclStmt [declType, ident] _) = do
   -- require classical type
@@ -226,18 +248,26 @@ normalizeStmtContent node@(Node MeasureArrowAssignmentStmt [msrExpr, maybeTgt] _
 normalizeStmtContent (Node CregOldStyleDeclStmt [ident, maybeSize] ctx) = do
   ident <- normalizeIdentifier ident
   -- require bitSize nil or literal number
-  bitSize <- if isNilNode maybeSize then return (literalNumberNode 1 ctx) else normalizeLiteralNumber maybeSize
+  bitSize <-
+    if isNilNode maybeSize
+      then return (withContext ctx $ integerLiteralNode 1)
+      else normalizeLiteralNumber maybeSize
   return [Node ClassicalDeclStmt [Node BitTypeSpec [bitSize] ctx, ident, NilNode] ctx]
 normalizeStmtContent (Node QregOldStyleDeclStmt [ident, maybeSize] ctx) = do
   ident <- normalizeIdentifier ident
   -- require bitSize nil or literal number
-  bitSize <- if isNilNode maybeSize then return (literalNumberNode 1 ctx) else normalizeLiteralNumber maybeSize
+  bitSize <-
+    if isNilNode maybeSize
+      then return (withContext ctx $ integerLiteralNode 1)
+      else normalizeLiteralNumber maybeSize
   return [Node ClassicalDeclStmt [Node QubitTypeSpec [bitSize] ctx, ident, NilNode] ctx]
 normalizeStmtContent node@(Node QuantumDeclStmt [qubitType, ident] _) = do
   -- qubitType <- normalizeQubitType qubitType
   ident <- normalizeIdentifier ident
   return [node {children = [qubitType, ident]}]
-normalizeStmtContent (Node ResetStmt [gateOp] _) = analyzeFail "\"reset\" statements are not supported"
+normalizeStmtContent node@(Node ResetStmt [qArgs] _) = do
+  qArgs <- normalizeQubitExpr qArgs
+  return [node {children = [qArgs]}]
 normalizeStmtContent node@(Node ReturnStmt [maybeExpr] _) = do
   maybeExpr <- normalizeExpr maybeExpr
   return [node {children = [maybeExpr]}]
@@ -245,9 +275,16 @@ normalizeStmtContent node@(Node WhileStmt [condExpr, loopStmt] _) = do
   -- require bool or compatible type
   condExpr <- normalizeRvalueExpr condExpr
   -- ensure loopStmt normalizes to a single statement!
-  loopStmt <- normalizeStmtContent loopStmt
+  loopStmt <- normalizeStmtToScope loopStmt
   return [node {children = condExpr : loopStmt}]
+normalizeStmtContent node@(Node Scope stmts _) = do
+  stmts <- mapM normalizeStatement stmts
+  return [node {children = concat stmts}]
 normalizeStmtContent node@(Node tag _ _) = error ("Ill-formed " ++ show tag ++ " node: " ++ pretty node)
+
+normalizeStmtToScope :: Node Tag c -> AnalysisResult c [SyntaxNode c]
+normalizeStmtToScope node@(Node Scope _ _) = normalizeStmtContent node
+normalizeStmtToScope node@(Node Statement _ ctx) = return [Node Scope [node] ctx]
 
 normalizeIdentifier :: SyntaxNode c -> AnalysisResult c (SyntaxNode c)
 normalizeIdentifier = lift . return
@@ -278,11 +315,22 @@ normalizeLoopRange = normalizeExpr
 normalizeLiteralNumber :: SyntaxNode c -> AnalysisResult c (SyntaxNode c)
 normalizeLiteralNumber = normalizeExpr
 
+normalizeDeclType :: SyntaxNode c -> AnalysisResult c (SyntaxNode c)
+normalizeDeclType node@(Node QubitTypeSpec _ _) = return node
+normalizeDeclType node = normalizeClassicalDeclType node
+
 normalizeClassicalDeclType :: SyntaxNode c -> AnalysisResult c (SyntaxNode c)
 normalizeClassicalDeclType expr = (lift . return) (removeParens expr)
 
-literalNumberNode :: Integer -> c -> Node Tag c
-literalNumberNode num = Node (IntegerLiteral num (DecimalIntegerLiteralToken $ show num)) []
+normalizeList :: (SyntaxNode c -> AnalysisResult c (SyntaxNode c)) -> SyntaxNode c -> AnalysisResult c (SyntaxNode c)
+normalizeList f NilNode = error "normalizeList on NilNode"
+normalizeList f list@(Node List children _) = do
+  children <- mapM f children
+  return list {children = children}
+
+maybeNormalize :: (SyntaxNode c -> AnalysisResult c v) -> v -> SyntaxNode c -> AnalysisResult c v
+maybeNormalize f alt NilNode = return alt
+maybeNormalize f alt node = f node
 
 isAssignable :: TypeSpec -> TypeSpec -> Bool
 isAssignable lvalueType rvalueType = True

@@ -295,6 +295,9 @@ statementContent :: { ParseNode {- StatementContent -} }
     -- there's a rule for GateCallStmt that doesn't include the zero-length
     -- gateModifier list, then it can carry on reading tokens for a while
     -- longer before it decides which rule to reduce.
+
+    -- TODO the designator, which we don't currently record, is for durations.
+
     | many1(gateModifier) GPHASE optList(LPAREN, list0(expression), RPAREN) list0(gateOperand) SEMICOLON
                                     { Ast.Node GateCallStmt
                                         [mkList $1 Ast.NilRef, mkIdentifier $2, $3, Ast.NilNode, mkList $4 (lsr $5)]

@@ -194,7 +194,8 @@ runQASM3 passes verify pureCircuit fname src = do
   let !result =
         ( do
             parseTree <- OpenQASM3Parser.parseString src
-            let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
+            normalizedParse <- OpenQASM3Semantics.normalize parseTree
+            let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ normalizedParse
             let wstmt = OpenQASM3Driver.buildModel normalized
             let vlst  = idsW wstmt
             let optList = genSubstList vlst vlst wstmt
