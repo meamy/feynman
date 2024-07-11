@@ -699,6 +699,17 @@ controlled sop@(Pathsum a b c d e f) = Pathsum a (b+1) (c+1) d e' f' where
   f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
   g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)
 
+-- attempt at making controlled work with hgate
+controlled' :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Pathsum g
+controlled' sop@(Pathsum a b c d e f) = Pathsum n (b+1) (c+1) n e' f' where
+  shift   = shiftI 1
+  x       = ofVar $ IVar 0
+  n       = max a d
+  e'      = (lift x)*(renameMonotonic shift e) + distribute (-(fromInteger . toInteger $ n)*half*half) (1 + x)
+            +  distribute half (lift $ (1+x) * (foldr (+) 0 . map (\i -> ofVar $ PVar i) $ [0..n-1]))
+  f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
+  g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)  
+
 -- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
 --   and the dimensions match.
 plusMaybe :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Maybe (Pathsum g)
