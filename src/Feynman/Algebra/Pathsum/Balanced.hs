@@ -1084,8 +1084,8 @@ simulate sop xs = go $ sop * ket (map constant xs)
             let phase     = fromRational . toRational $ getConstant p
                 base      = case k `mod` 2 of
                   0 -> fromInteger $ 1 `shiftL` (abs k)
-                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (abs (k-1)))
-                magnitude = base**(fromIntegral $ signum k)
+                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` ((abs k)-1))
+                magnitude = base**(fromIntegral $ signum (-k))
             in
               Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
           (Pathsum k 0 n i p xs) ->
@@ -1116,7 +1116,7 @@ isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
 isPure sop
   | inDeg sop /= outDeg sop = False
   | otherwise               = purity == identity 0 where
-      purity = trace $ sop .> sop
+      purity = grind $ trace $ sop .> sop
 
 {--------------------------
  Testing
