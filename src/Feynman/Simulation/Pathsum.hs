@@ -66,13 +66,29 @@ getBinding id = gets $ search id . binds
       Just bind -> bind
       Nothing -> search id bs
 
+psSize :: Env -> Int
+psSize (Env ps _ False) = outDeg ps
+psSize (Env ps _ True)  = outDeg ps `div` 2
+
 getPSSize :: State Env Int
-getPSSize = do
-  density <- isDensity
-  if density then
-    gets $ (`div` 2) . outDeg . pathsum
-  else
-    gets $ outDeg . pathsum
+getPSSize = gets psSize
+
+-- FUNCTIONS TO WORK WITH EMBED --
+
+{-
+-- takes as input pathsum of gate and indices to apply to
+applyMask :: [Int] -> Pathsum DMod2 -> State Env ()
+applyMask indices gate@(Pathsum a b c d e f)
+  | length indices == b = modify applyMask'
+  where
+    applyMask' env@(Env ps _ density)
+    | not density = env { pathsum = ps .> embed gate (size - b) f f }
+    | density     = env { pathsum = ps .> (channelize gate) (2 * (size - b)) g g }
+    where 
+      size = psSize env
+      f = (!!) indices
+      g = (!!) (indices ++ map (+psSize) indices)
+-}
 
 -- action returns offset of allocated register
 allocatePathsum :: Int -> State Env Int
@@ -142,6 +158,124 @@ simDeclare dec = case dec of
   GateDec id cparams qparams body -> addBind id (Gate cparams qparams body)
   UIntDec _ _ _                   -> return ()
 
+evalGate :: UExp -> State Env (Pathsum DMod2)
+evalGate uexp = case uexp of
+  CallGate "cx" _ _ -> return cxgate
+  CallGate "id" _ _ -> return $ identity 1
+  CallGate "x" _ _ -> return xgate
+  CallGate "y" _ _ -> return ygate
+  CallGate "z" _ _ -> return zgate
+  CallGate "h" _ _ -> return hgate
+  CallGate "s" _ _ -> return sgate
+  CallGate "sdg" _ _ -> return sdggate
+  CallGate "t" _ _ -> return tgate
+  CallGate "tdg" _ _ -> return tdggate
+  CallGate "rz" [exp] _ -> liftM (rzgate . fromDyadic . discretize . Continuous) $ simExp exp
+  CallGate "rx" [exp] [arg] -> 
+    evalGateList 
+      [ CallGate "h" [] [arg], 
+        CallGate "rz" [exp] [arg], 
+        CallGate "h" [] [arg] ]
+  CallGate "ry" [exp] [arg] -> 
+    evalGateList
+      [ CallGate "rz" [exp] [arg],
+        CallGate "h" [] [arg],
+        CallGate "rz" [exp] [arg],
+        CallGate "h" [] [arg] ]
+  CallGate "cz" _ _ -> return czgate
+  CallGate "cy" _ _ -> return $ controlled ygate
+  CallGate "ch" _ _ -> return chgate
+  CallGate "ccx" _ _ -> return ccxgate
+  CallGate "crz" [exp] args -> do
+    lambda <- simExp exp
+    let lambda' = fromDyadic . discretize . Continuous $ lambda
+    return $ rzNgate lambda' (length args)
+  CallGate "u3" [theta, phi, lambda] [arg] -> evalGate $ UGate theta phi lambda arg
+  CallGate "u2" [phi, lambda] [arg] ->
+    let halfPi = BOpExp PiExp DivOp $ IntExp 2 in
+      liftM (<>omegabar) . evalGate $ UGate halfPi phi lambda arg
+  CallGate "u1" [lambda] [arg] -> evalGate $ UGate (IntExp 0) (IntExp 0) lambda arg
+  CallGate "cu1" [lambda] [arg1, arg2] ->
+    liftM controlled . evalGate $ CallGate "u1" [lambda] [arg2]
+  CallGate "cu3" [theta, phi, lambda] [arg1, arg2] ->
+    liftM controlled . evalGate $ CallGate "u3" [theta, phi, lambda] [arg2]
+  CXGate _ _ -> return cxgate
+  UGate theta phi lambda arg ->
+    let thetaPlusPi = BOpExp theta PlusOp PiExp
+        phiPlusThreePi = BOpExp phi PlusOp $ 
+                         BOpExp PiExp TimesOp $ IntExp 3 in
+      liftM (<>minusi) . evalGateList $
+        [ CallGate "rz" [lambda] [arg],
+          CallGate "h" [] [arg],
+          CallGate "s" [] [arg],
+          CallGate "h" [] [arg],
+          CallGate "rz" [thetaPlusPi] [arg],
+          CallGate "h" [] [arg],
+          CallGate "s" [] [arg],
+          CallGate "h" [] [arg],
+          CallGate "rz" [phiPlusThreePi] [arg] ]
+
+evalGateList :: [UExp] -> State Env (Pathsum DMod2)
+evalGateList uexps = foldM (\g h -> return $ g .> h) (identity 1) =<< mapM evalGate uexps
+
+applyGate :: Pathsum DMod2 -> [Arg] -> State Env ()
+applyGate gate@(Pathsum _ b _ _ _ _) args
+  | length args == b = do
+      offsets <- mapM getOffset args
+      modify $ applyGate' offsets
+  where
+    applyGate' offsets env@(Env ps _ density)
+      | not density = env { pathsum = ps .> embed gate (outDeg ps - b) f f }
+      | density     = env { pathsum = ps .> embed (channelize gate) (outDeg ps - 2*b) g g }
+      where
+        f, g :: Int -> Int
+        f = (!!) offsets
+        g = (!!) (offsets ++ map (+psSize env) offsets)
+
+stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
+
+simGate :: UExp -> State Env ()
+simGate uexp = case uexp of
+  CallGate id exps args | not (id `elem` stdlib) -> do
+    ~(Gate cparams qparams body) <- getBinding id
+    args' <- expandArgs args
+    forM_ args' $ \arglist -> do
+      pushEnv cparams exps qparams arglist
+      mapM_ simGate body
+      popEnv
+  _ -> do
+    gatePS <- evalGate uexp
+    expandArgs args >>= mapM_ (applyGate gatePS)
+  where
+    args = case uexp of
+      CallGate    _ _ as  -> as
+      CXGate      a1 a2   -> [a1, a2]
+      UGate       _ _ _ a -> [a]
+      BarrierGate _       -> []
+
+    -- expand args (which could be a mixed list 
+    -- of registers and indexed registers)
+    -- into lists of only indexed registers
+    expandArgs :: [Arg] -> State Env [[Arg]]
+    expandArgs args = do
+      -- fold over args to see if any are registers
+      -- if so, what size
+      iters <- foldM ( \n arg -> case arg of
+          Var id -> do
+            x <- getBinding id
+            case x of
+              QReg size offset | size > n -> return size
+              _ -> return n
+          Offset _ _ -> return n ) 0 args
+      case iters of
+        0 -> return [args]
+        _ -> forM [0..iters-1] $ \n ->
+          forM args $ \arg ->
+            case arg of
+              Var id -> return $ Offset id n
+              Offset _ _ -> return arg
+
+{-
 simGate :: UExp -> State Env ()
 simGate uexp = case uexp of
   CallGate id exps args -> do
@@ -374,6 +508,7 @@ simGate uexp = case uexp of
             modify $ \env -> env { pathsum = applyCX offset1 offset2 . applyCX (offset1+n) (offset2+n) $ pathsum env }
           else
             modify $ \env -> env { pathsum = applyCX offset1 offset2 $ pathsum env }
+-}
 
 simReset :: Arg -> State Env ()
 simReset arg = case arg of
