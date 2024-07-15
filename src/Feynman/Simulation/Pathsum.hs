@@ -218,13 +218,15 @@ evalGate uexp = case uexp of
 evalGateList :: [UExp] -> State Env (Pathsum DMod2)
 evalGateList uexps = foldM (\g h -> return $ g .> h) (identity 1) =<< mapM evalGate uexps
 
-applyGate :: Pathsum DMod2 -> [Arg] -> State Env ()
-applyGate gate@(Pathsum _ b _ _ _ _) args
+applyGate :: [Arg] -> Pathsum DMod2 -> [Arg] -> State Env ()
+applyGate controls gate@(Pathsum _ b _ _ _ _) args
+  | not $ null controls = applyGate [] (controlledN (length controls) gate) (controls ++ args)
   | length args == b = do
       offsets <- mapM getOffset args
-      modify $ applyGate' offsets
+      controlOffsets <- mapM getOffset controls
+      modify $ applyGate' controlOffsets offsets
   where
-    applyGate' offsets env@(Env ps _ density)
+    applyGate' [] offsets env@(Env ps _ density)
       | not density = env { pathsum = ps .> embed gate (outDeg ps - b) f f }
       | density     = env { pathsum = ps .> embed (channelize gate) (outDeg ps - 2*b) g g }
       where
@@ -234,18 +236,18 @@ applyGate gate@(Pathsum _ b _ _ _ _) args
 
 stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
 
-simGate :: UExp -> State Env ()
-simGate uexp = case uexp of
+simGate :: [Arg] -> UExp -> State Env ()
+simGate controls uexp = case uexp of
   CallGate id exps args | not (id `elem` stdlib) -> do
     ~(Gate cparams qparams body) <- getBinding id
     args' <- expandArgs args
     forM_ args' $ \arglist -> do
       pushEnv cparams exps qparams arglist
-      mapM_ simGate body
+      mapM_ (simGate controls) body
       popEnv
   _ -> do
     gatePS <- evalGate uexp
-    expandArgs args >>= mapM_ (applyGate gatePS)
+    expandArgs args >>= mapM_ (applyGate controls gatePS)
   where
     args = case uexp of
       CallGate    _ _ as  -> as
@@ -510,28 +512,28 @@ simGate uexp = case uexp of
             modify $ \env -> env { pathsum = applyCX offset1 offset2 $ pathsum env }
 -}
 
-simReset :: Arg -> State Env ()
-simReset arg = case arg of
+simReset :: [Arg] -> Arg -> State Env ()
+simReset controls arg = case arg of
   Offset id index -> do
     pushEmptyEnv
     simDeclare $ VarDec tempid $ Qreg 1
-    simGate $ CXGate arg (Offset tempid 0)
-    simGate $ CXGate (Offset tempid 0) arg
+    simGate controls $ CXGate arg (Offset tempid 0)
+    simGate controls $ CXGate (Offset tempid 0) arg
     popEnv
   Var id -> do
     size <- liftM size $ getBinding id
     pushEmptyEnv
     simDeclare $ VarDec tempid $ Qreg size
-    simGate $ CXGate arg (Var tempid)
-    simGate $ CXGate (Var tempid) arg
+    simGate controls $ CXGate arg (Var tempid)
+    simGate controls $ CXGate (Var tempid) arg
     popEnv
   where
     tempid = case arg of
       Offset id _ -> id ++ "_temp"
       Var id      -> id ++ "_temp"
 
-simMeasure :: Arg -> Arg -> State Env ()
-simMeasure arg1 arg2 = densifyEnv >> case (arg1, arg2) of
+simMeasure :: [Arg] -> Arg -> Arg -> State Env ()
+simMeasure controls arg1 arg2 = densifyEnv >> case (arg1, arg2) of
   (Var id1, Var id2) -> do
     ~(QReg size _) <- getBinding id1
     forM_ [0..size-1] (\i -> simMeasure' (Offset id1 i) (Offset id2 i))
@@ -539,15 +541,25 @@ simMeasure arg1 arg2 = densifyEnv >> case (arg1, arg2) of
   where
     simMeasure' arg1 arg2 = do
       offset <- getOffset arg1
-      n <- getPSSize
-      modify $ \env -> env { pathsum =  applyMeasure offset (offset + n) $ pathsum env }
-      simGate $ CXGate arg1 arg2
+      controlOffsets <- mapM getOffset controls
+      modify $ applyMeasurement controlOffsets offset
+      simGate controls $ CXGate arg1 arg2
+
+    applyMeasurement controlOffsets offset env@(Env ps _ _) =
+      env { pathsum = ps .> embed (controlledN m measureGate) (2*n - 2 - m) f f }
+      where
+        m = length controlOffsets
+        n = psSize env
+        f i
+          | i < m = controlOffsets !! i
+          | i == m = offset
+          | i == m+1 = offset + psSize env
 
 simQExp :: QExp -> State Env ()
 simQExp qexp = case qexp of
-  GateExp exp -> simGate exp
-  ResetExp arg -> simReset arg
-  MeasureExp arg1 arg2 -> simMeasure arg1 arg2
+  GateExp exp -> simGate [] exp
+  ResetExp arg -> simReset [] arg
+  MeasureExp arg1 arg2 -> simMeasure [] arg1 arg2
 
 simStmt :: Stmt -> State Env ()
 simStmt stmt = case stmt of
@@ -561,18 +573,9 @@ simStmt stmt = case stmt of
 
 simControlled :: [Arg] -> QExp -> State Env ()
 simControlled controls qexp = case qexp of
-  GateExp exp -> simControlledGate controls exp
-  MeasureExp _ _ -> undefined
-  ResetExp _ -> undefined
-  
-simControlledGate :: [Arg] -> UExp -> State Env ()
-simControlledGate controls uexp = case uexp of
-  CXGate arg1 arg2 -> simGate $ CallGate "mct" [] (controls ++ [arg1, arg2])
-  CallGate "cx" [] [arg1, arg2] -> simGate $ CallGate "mct" [] (controls ++ [arg1, arg2])
-  CallGate "id" _ _ -> return ()
-  CallGate "x" [] [arg] -> simGate $ CallGate "mct" [] (controls ++ [arg])
-  CallGate "z" [] [arg] -> simGate $ CallGate "mcz" [] (controls ++ [arg])
-  CallGate "y" [] [arg] -> undefined --TODO--
+  GateExp exp -> simGate controls exp
+  MeasureExp arg1 arg2 -> simMeasure controls arg1 arg2
+  ResetExp arg -> simReset controls arg
 
 simQASM :: QASM -> Env
 simQASM (QASM _ stmts) =
