@@ -39,8 +39,10 @@ data Assertion =
   | AssertAnd Assertion Assertion
   | AssertOr Assertion Assertion
   | AssertNot Assertion
+  deriving (Eq, Show)
 
 data QState = Zero | One | Plus | Minus
+  deriving (Eq, Show)
 
 data Dec =
     VarDec  { id :: ID,

@@ -561,6 +561,13 @@ simQExp qexp = case qexp of
   ResetExp arg -> simReset [] arg
   MeasureExp arg1 arg2 -> simMeasure [] arg1 arg2
 
+checkAssertion :: Assertion -> State Env Bool
+checkAssertion assert = case assert of
+  AssertAnd a1 a2 -> (liftM2 (&&)) (checkAssertion a1) (checkAssertion a2)
+  AssertOr  a1 a2 -> (liftM2 (||)) (checkAssertion a1) (checkAssertion a2)
+  AssertNot a     -> (liftM not) (checkAssertion a)
+  AssertProj (Offset id i) state -> undefined
+
 simStmt :: Stmt -> State Env ()
 simStmt stmt = case stmt of
   IncStmt _ -> return ()
@@ -570,6 +577,11 @@ simStmt stmt = case stmt of
     ~(CReg size _) <- getBinding c
     let controls = map (\i -> Offset c i) . filter (testBit n) $ [0..size-1]
     simControlled controls qexp
+  AssertStmt assert -> do
+    b <- checkAssertion assert
+    if b then
+      return ()
+    else fail "assertion failed!"
 
 simControlled :: [Arg] -> QExp -> State Env ()
 simControlled controls qexp = case qexp of
