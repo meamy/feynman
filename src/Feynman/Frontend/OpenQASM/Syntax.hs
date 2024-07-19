@@ -31,7 +31,16 @@ data Stmt =
   | DecStmt Dec
   | QStmt QExp
   | IfStmt ID Int QExp
+  | AssertStmt Assertion
   deriving (Eq,Show)
+
+data Assertion =
+    AssertProj Arg QState
+  | AssertAnd Assertion Assertion
+  | AssertOr Assertion Assertion
+  | AssertNot Assertion
+
+data QState = Zero | One | Plus | Minus
 
 data Dec =
     VarDec  { id :: ID,
