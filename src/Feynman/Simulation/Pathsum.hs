@@ -569,13 +569,17 @@ checkAssertion assert = case assert of
   AssertProj arg@(Offset id i) state -> do
     offset <- getOffset arg
     gets $ assertState offset state
+  AssertProj arg@(Var id) state -> do
+    regsize <- liftM size $ getBinding id
+    liftM and . mapM checkAssertion . map (\a -> AssertProj a state) $ [ Offset id i | i <- [0..regsize-1] ]
+      
   where
     assertState offset state env@(Env ps _ density) = 
       let statePs = evalStatePs state
           projector = embed (densify statePs) (psSize env - 1) f f
           projector' = if density then channelize projector else projector
       in
-        ps == (grind $ ps .> projector')
+        grind ps == (grind $ ps .> projector')
       where
         f i = if i == 0 then offset else 0
 
@@ -592,14 +596,20 @@ simStmt stmt = case stmt of
   DecStmt dec -> simDeclare dec
   QStmt qexp -> simQExp qexp
   IfStmt c n qexp -> do
-    ~(CReg size _) <- getBinding c
-    let controls = map (\i -> Offset c i) . filter (testBit n) $ [0..size-1]
-    simControlled controls qexp
+    size <- liftM size $ getBinding c
+    let nc = map (\i -> Offset c i) . filter (not . testBit n) $ [0..size-1]
+    flipNegativeControls nc
+    simControlled [ Offset c i | i <- [0..size-1] ] qexp
+    flipNegativeControls nc
   AssertStmt assert -> do
     b <- checkAssertion assert
     if b then
       return ()
-    else error "assertion failed!"
+    else error "assertion failed!" --add more details to printout?
+
+  where
+    flipNegativeControls :: [Arg] -> State Env ()
+    flipNegativeControls = mapM_ (simStmt . QStmt . GateExp . \arg -> CallGate "x" [] [arg])
 
 simControlled :: [Arg] -> QExp -> State Env ()
 simControlled controls qexp = case qexp of
