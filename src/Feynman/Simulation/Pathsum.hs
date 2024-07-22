@@ -566,7 +566,25 @@ checkAssertion assert = case assert of
   AssertAnd a1 a2 -> (liftM2 (&&)) (checkAssertion a1) (checkAssertion a2)
   AssertOr  a1 a2 -> (liftM2 (||)) (checkAssertion a1) (checkAssertion a2)
   AssertNot a     -> (liftM not) (checkAssertion a)
-  AssertProj (Offset id i) state -> undefined
+  AssertProj arg@(Offset id i) state -> do
+    offset <- getOffset arg
+    gets $ assertState offset state
+  where
+    assertState offset state env@(Env ps _ density) = 
+      let statePs = evalStatePs state
+          projector = embed (densify statePs) (psSize env - 1) f f
+          projector' = if density then channelize projector else projector
+      in
+        ps == (grind $ ps .> projector')
+      where
+        f i = if i == 0 then offset else 0
+
+evalStatePs :: QState -> Pathsum DMod2
+evalStatePs q = case q of
+  Zero -> fresh
+  One -> fresh .> xgate
+  Plus -> fresh .> hgate
+  Minus -> fresh .> xgate .> hgate
 
 simStmt :: Stmt -> State Env ()
 simStmt stmt = case stmt of
@@ -581,7 +599,7 @@ simStmt stmt = case stmt of
     b <- checkAssertion assert
     if b then
       return ()
-    else fail "assertion failed!"
+    else error "assertion failed!"
 
 simControlled :: [Arg] -> QExp -> State Env ()
 simControlled controls qexp = case qexp of
