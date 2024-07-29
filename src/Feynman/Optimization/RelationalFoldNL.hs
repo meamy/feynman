@@ -163,10 +163,10 @@ elimVar x = modify $ \st -> st { pp = remVar x $ pp st }
 -- | Substitute a variable
 substVar :: Var -> SBool Var -> State Ctx ()
 substVar x bexp = modify go where
-  go st = st { --terms = Map.mapKeysWith c f $ terms st,
+  go st = st { terms = Map.mapKeysWith c f $ terms st,
                pp    = P.subst x bexp $ pp st,
                ket   = Map.map (P.subst x bexp) $ ket st }
-  --f = dropConstant . P.subst x bexp
+  f = dropConstant . P.subst x bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
 -- | Matches a instance of [HH] with maximum degree /cutoff/
@@ -207,7 +207,8 @@ computeIdeal = do
   i1 <- applyReductions (Just 1) -- linear reductions
   i2 <- applyReductions (Just 2) -- quadratic reductions
   ik <- applyReductions Nothing -- all other reductions
-  modify (\st -> st { ideal = foldl (\gb -> reduceBasis . addToBasis gb) (ideal st) $ i1 ++ i2 ++ ik })
+  --modify (\st -> st { ideal = foldl (\gb -> reduceBasis . addToBasis gb) (ideal st) $ i1 ++ i2 ++ ik })
+  return ()
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
   --return $ i1 ++ i2 ++ ik
 

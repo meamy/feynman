@@ -18,7 +18,8 @@ import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
-import Feynman.Optimization.RelationalFoldNL
+import Feynman.Optimization.RelationalFold as L
+import Feynman.Optimization.RelationalFoldNL as NL
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
@@ -201,18 +202,38 @@ showCounts :: Map String Int -> [String]
 showCounts = map f . Map.toList where
   f (gate, count) = gate ++ ": " ++ show count
 
+qasm3PassShort pass = case pass of
+  Triv        -> \a -> a
+  Inline      -> \a -> a
+  MCT         -> \a -> a
+  CT          -> \a -> a
+  Simplify    -> \a -> a
+  Phasefold   -> \a ->
+    let wstmt = Tr.buildModel a
+        vlst  = idsW wstmt
+        optls = L.genSubstList vlst vlst wstmt
+    in
+      Tr.applyPFOpt optls a
+  Statefold d -> \a ->
+    let wstmt = Tr.buildModel a
+        vlst  = idsW wstmt
+        optls = NL.genSubstList vlst vlst wstmt
+    in
+      Tr.applyPFOpt optls a
+  CNOTMin     -> \a -> a
+  TPar        -> \a -> a
+  Cliff       -> \a -> a
+  CZ          -> \a -> a
+
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
+  let pass = foldr (.) (\a -> a) $ map qasm3PassShort passes
   let !result =
         ( do
             parseTree <- OpenQASM3Parser.parseString src
             let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
-            let wstmt = Tr.buildModel normalized
-            let vlst  = idsW wstmt
-            let optList = genSubstList vlst vlst wstmt
-            --let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
-            let optimized = Tr.applyPFOpt optList normalized
+            let optimized = pass normalized
             --program <- OpenQASM3Driver.analyze parseTree
             --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
             --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes

@@ -159,8 +159,8 @@ initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
 fastForward :: AffineRelation -> State Ctx ()
 fastForward summary = do
   ctx <- get
-  Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
-  Trace.trace ("summary: \n" ++ show summary) $ return ()
+  --Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
+  --Trace.trace ("summary: \n" ++ show summary) $ return ()
   let (ids, vecs) = unzip . Map.toList $ ket ctx
   let vecs' = vals $ compose' (makeExplicit . ARD . fromList $ vecs) summary
   let ket' = Map.fromList $ zip ids vecs'
@@ -169,7 +169,7 @@ fastForward summary = do
   let ctx'  = ctx { dim   = dim',
                     ket   = ket',
                     terms = tms' }
-  Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
+  --Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
   put $ ctx'
 
 -- | Summarizes a conditional
@@ -192,7 +192,8 @@ loopSummary ctx' input = do
         go bv _   = bv /= 0
   modify (\ctx -> ctx { terms   = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle ztrms),
                         orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ tms) })
-  Trace.trace ("Zeros and terms:\n" ++ show ztrms ++ "\n" ++ show tms) $ return summary
+  --Trace.trace ("Zeros and terms:\n" ++ show ztrms ++ "\n" ++ show tms) $ return ()
+  return summary
   --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
 -- | Abstract transformers for while statements
@@ -235,7 +236,8 @@ genSubstList vars inputs stmt =
           Set.foldr update map locs
 
   in
-    Trace.trace ("Final state: \n" ++ show result) $ foldr go Map.empty phases
+    foldr go Map.empty phases
+    --Trace.trace ("Final state: \n" ++ show result) $
 
 -- | Apply substitution list
 applyOpt :: Map Loc Angle -> WStmt Loc -> WStmt Loc
