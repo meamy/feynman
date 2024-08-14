@@ -881,6 +881,17 @@ matchHHInternal sop = do
     PVar _ -> return (v, v', p')
     _      -> mzero
 
+-- | Solvable instance of the HH rule where \(f = 1 \oplus \prod_{x\in X} x\)
+matchProduct :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
+matchProduct sop = do
+  (v, p) <- matchHH sop
+  vars <- case toTermList (1 + p) of
+    [(_, m)] -> return . Set.toList . vars $ m
+    _        -> []
+  case all isP vars of
+    True  -> return (v, vars)
+    False -> mzero
+
 -- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
