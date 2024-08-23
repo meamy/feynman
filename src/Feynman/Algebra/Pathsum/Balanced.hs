@@ -1040,7 +1040,7 @@ simplify sop = case sop of
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
 --   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Pathsum g
-grind sop = Trace.trace ("Reducing... " ++ show sop) $ case sop of
+grind sop = case sop of
   Zero y         -> applyZero y sop
   Elim y         -> grind $ applyElim y sop
   Omega y p      -> grind $ applyOmega y p sop
@@ -1064,35 +1064,54 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
  Simulation
  --------------------------}
 
+-- | Gets the magnitude of the paths
+pathMagnitude :: RealFloat f => Pathsum g -> f
+pathMagnitude (Pathsum k _ _ _ _ _) = base**(fromIntegral $ signum (-k)) where
+  base = case k `mod` 2 of
+    0 -> fromInteger $ 1 `shiftL` (abs $ k `div` 2)
+    1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (((abs k)-1) `div` 2))
+
+-- | Gets the (global) phase of the paths
+pathPhase :: RealFloat f => Pathsum DMod2 -> Complex f
+pathPhase (Pathsum _ _ _ _ p _) =
+  let phase = unpack $ getConstant p in
+    case (numer phase, denomExp phase) of
+      (0, 0) -> 1 :+ 0
+      (1, 0) -> (-1) :+ 0
+      (1, 1) -> 0 :+ 1
+      (3, 1) -> 0 :+ (-1)
+      (1, 2) -> 1/sqrt(2) :+ 1/sqrt(2)
+      (3, 2) -> (-1)/sqrt(2) :+ 1/sqrt(2)
+      (5, 2) -> (-1)/sqrt(2) :+ (-1)/sqrt(2)
+      (7, 2) -> 1/sqrt(2) :+ (-1)/sqrt(2)
+      _      -> mkPolar 1 (pi * (fromRational . toRational $ phase))
+
 -- | Gets the cofactors of some path variable
 expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
-expand (Pathsum a b c d e f) v = (p0, p1) where
-  p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
-  p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
+expand (Pathsum a b c d e f) v@(PVar i) = (p0, p1) where
+  p0  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 0 e) (map (renameMonotonic varShift . subst v 0) f)
+  p1  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 1 e) (map (renameMonotonic varShift . subst v 1) f)
+  varShift (PVar j)
+    | j > i     = PVar $ j - 1
+    | otherwise = PVar $ j
 
 -- | Simulates a pathsum on a given input
-simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f, Show g) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
+simulate :: (RealFloat f, Show f) => Pathsum DMod2 -> [FF2] -> Map [FF2] (Complex f)
 simulate sop xs = go $ sop * ket (map constant xs)
   where go      = go' . grind
         go' ps  = case ps of
           (Pathsum k 0 _ 0 p xs) ->
-            let phase     = fromRational . toRational $ getConstant p
-                base      = case k `mod` 2 of
-                  0 -> fromInteger $ 1 `shiftL` (abs k)
-                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` ((abs k)-1))
-                magnitude = base**(fromIntegral $ signum (-k))
+            let phase     = pathPhase ps
+                magnitude = pathMagnitude ps
             in
-              Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
+              Map.singleton (map getConstant xs) ((magnitude :+ 0) * phase)
           (Pathsum k 0 n i p xs) ->
-            let v     = PVar $ i-1
-                left  = go (Pathsum k 0 n (i-1) (subst v zero p) (map (subst v zero) xs))
-                right = go (Pathsum k 0 n (i-1) (subst v one p) (map (subst v one) xs))
-            in
-              Map.unionWith (+) left right
+            let (p0, p1) = expand ps (PVar $ i-1) in
+              Map.unionWith (+) (go p0) (go p1)
           _                      -> error "Incompatible dimensions"
 
 -- | Evaluates a pathsum on a given input and output
-amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f, Show g) => [FF2] -> Pathsum g -> [FF2] -> Complex f
+amplitude :: (RealFloat f, Show f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
 
 -- | Set cover solver
@@ -1142,7 +1161,7 @@ ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) whe
   order (a,x)   = denomExp (unpack a) + degree x
 
   nonCliffTms v =
-    let f (a,x) = Set.member v (vars x) && denomExp (unpack a) + degree x >= 3 in
+    let f (a,x) = Set.member v (vars x) && order (a,x) >= 3 in
       length . filter f . toTermList
 
   greedySelect p =
@@ -1151,32 +1170,27 @@ ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) whe
 
   go      = go' . simplify
   go' sop = case sop of
-    (Pathsum 0 0 0 0 p []) ->
-      let phase = unpack $ getConstant p in
-        case (numer phase, denomExp phase) of
-          (0, 0) -> 1 :+ 0
-          (1, 0) -> (-1) :+ 0
-          (1, 1) -> 0 :+ 1
-          (3, 1) -> 0 :+ (-1)
-          _      -> mkPolar 1 (pi * (fromRational . toRational $ phase))
-     {- case denomExp (getConstant p)
-      let phase = case denomExp (getConstant p) of
-            0 -> fromRational . toRational $ getConstant p in
-        mkPolar 1 (pi * phase)-}
-    (Pathsum 0 0 0 n p []) ->
+    (Pathsum k 0 0 0 p []) ->
+      let phase     = pathPhase sop
+          magnitude = (pathMagnitude sop) :+ 0
+      in
+        magnitude * phase
+        --Trace.trace ("SOP: " ++ show sop ++ "\nValue: " ++ show magnitude ++ "\n\n") $ [(magnitude :+ 0) * phase]
+    (Pathsum k 0 0 n p []) ->
       let v       = greedySelect p
           (p0,p1) = expand sop v
-          q0      = go p0
-          q1      = go p1
+          --q0      = go p0
+          --q1      = go p1
       in
-        Trace.trace ("0: " ++ (show q0) ++ " | 1: " ++ (show q1)) $ q0 + q1
-        --(go p0) + (go p1)
-    (Pathsum k a b c d e) ->
-      let magnitude = case k `mod` 2 of
-            0 -> fromRational $ toRational $ dyadic 1 (k `div` 2)
-            1 -> sqrt(2.0) * (fromRational $ toRational $ dyadic 1 ((k+1) `div` 2))
+        (go p0) + (go p1)
+        {-
       in
-        (mkPolar magnitude 0) * (go' $ Pathsum 0 a b c d e)
+        Trace.trace ("SOP: " ++ show sop ++
+                     "\nExpanding on " ++ show v ++
+                     "\n0: " ++ show p0 ++ " --> " ++ show q0 ++
+                     "\n1: " ++ show p1 ++ " --> " ++ show q1 ++
+                     "\n\n") $ q0 ++ q1
+     -}
 
 -- | Performs a strong simulation using stabilizer decompositions
 stabsimulate :: (RealFloat f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
@@ -1195,9 +1209,7 @@ stabsimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) 
   go' sop = case sop of
     (Pathsum k 0 0 0 p []) ->
       let phase     = fromRational . toRational $ getConstant p
-          magnitude = case k `mod` 2 of
-            0 -> fromRational $ toRational $ dyadic 1 (k `div` 2)
-            1 -> sqrt(2.0) * (fromRational $ toRational $ dyadic 1 ((k+1) `div` 2))
+          magnitude = pathMagnitude sop
       in
         mkPolar magnitude (pi * phase)
     (Pathsum k 0 0 n p []) ->
@@ -1219,7 +1231,7 @@ isIdentity sop
              isIdentity p0 && isIdentity p1
 
 -- | Checks whether a state is the density matrix of a pure state by computing the purity
-isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
+isPure :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Bool
 isPure sop
   | inDeg sop /= outDeg sop = False
   | otherwise               = purity == identity 0 where

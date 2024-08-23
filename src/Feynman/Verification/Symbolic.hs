@@ -23,8 +23,6 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 
-import qualified Debug.Trace as Trace
-
 {------------------------------------
  Path sum actions
  ------------------------------------}
@@ -64,7 +62,7 @@ findOrAlloc x = do
 
 -- | Applicative-style
 applyPrimitive :: Primitive -> Pathsum DMod2 -> State Context (Pathsum DMod2)
-applyPrimitive gate sop = Trace.trace ("Absorbing gate " ++ show gate) $ case gate of
+applyPrimitive gate sop = case gate of
   H x               -> findOrAlloc x >>= \i -> return $ applyH i sop
   X x               -> findOrAlloc x >>= \i -> return $ applyX i sop
   Y x               -> findOrAlloc x >>= \i -> return $ applyY i sop
@@ -169,8 +167,7 @@ complexAction vars inputs circ = evalState st Map.empty where
 
 -- | Closed version of complexAction
 sopOfCircuit :: [ID] -> [ID] -> [Primitive] -> Pathsum DMod2
-sopOfCircuit vars inputs circ = Trace.trace ("Result: " ++ show sop) $ sop where
-  sop = evalState go Map.empty
+sopOfCircuit vars inputs circ = evalState go Map.empty where
   go = do
     sop <- allocs vars inputs
     applyCircuit (sop) circ

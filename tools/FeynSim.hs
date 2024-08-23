@@ -13,10 +13,10 @@ import Text.Parsec                (ParseError)
 import qualified Data.ByteString as B
 import qualified Data.Set as Set
 
-import Feynman.Core hiding (inputs, qubits, getArgs)
-import Feynman.Frontend.DotQC
+import Feynman.Core hiding (inputs, qubits, getArgs, simplify)
+import Feynman.Frontend.DotQC hiding (simplify)
 import Feynman.Algebra.Base (FF2,DMod2)
-import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>), ssimulate)
+import Feynman.Algebra.Pathsum.Balanced (Pathsum, simplify, grind, (.>), ssimulate, simulate)
 import qualified Feynman.Algebra.Pathsum.Balanced as B
 import Feynman.Verification.Symbolic
 
@@ -76,10 +76,17 @@ run options xs = case xs of
               qc   <- ExceptT $ return $ parseDotQC zsrc
               let xstr = parseBitstring x
               let ystr = parseBitstring y
-              lift $ putStrLn $ "Stabilizer simulation bound: " ++ show (B.stabsimBound ystr (getSOP qc) xstr)
-              lift $ putStrLn $ "Set cover bound: " ++ show (B.setcoverBound ystr (getSOP qc) xstr)
+              let sop = getSOP qc
+              lift $ putStrLn $ "Stabilizer simulation bound: " ++ show (B.stabsimBound ystr sop xstr)
+              lift $ putStrLn $ "Set cover bound: " ++ show (B.setcoverBound ystr sop xstr)
               --return ""
-              return . show $ ssimulate ystr (getSOP qc) xstr
+              return . show $ ssimulate ystr sop xstr
+  [x,z]   | extension z == "qc" -> do
+              zsrc <- lift $ B.readFile z
+              qc   <- ExceptT $ return $ parseDotQC zsrc
+              let xstr = parseBitstring x
+              --return ""
+              return . show $ simulate (getSOP qc) xstr
   _ -> do
     lift $ putStrLn "Invalid argument(s)"
     lift $ printHelp
