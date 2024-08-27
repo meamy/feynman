@@ -89,6 +89,9 @@ checkClifford sop =
   in
     all checkPauli $ map (\p -> sop .> p .> dagger sop) (xgen ++ zgen)
 
+computePathsum :: Int -> [Pauli] -> Pathsum DMod2
+computePathsum n = foldl (.>) (identity n) . map (pauliExp (dMod2 1 2))
+
 findClifford :: Int -> Int -> Maybe ([Pauli])
 findClifford n k =
   let toCheck        = allPauliExponentialStrings n k
@@ -127,6 +130,30 @@ parFindCliffordGen t n k = do
   mapM_ killThread threads
   return $ liftM (unpackInteger n k) result
   where computePathsum = foldl (.>) (identity n) . map (pauliExp (dMod2 1 2))
+
+-- Suspected relations
+r1 :: [Pauli]
+r1 = [(I2, [PauliI, PauliZ]),
+      (I2, [PauliZ, PauliX]),
+      (I2, [PauliI, PauliX]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliZ, PauliZ]), 
+      (I2, [PauliI, PauliX]),
+      (I2, [PauliZ, PauliX]),
+      (I2, [PauliZ, PauliZ])]
+
+{-
+r2 :: [Pauli]
+r2 = [(I0, [PauliI, PauliY]), 
+      (I0, [PauliY, PauliI]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliY, PauliX]),
+      (I0, [PauliZ, PauliI]),
+      (I0, [PauliZ, PauliX]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliX, PauliX]),
+      (I0, [PauliI, PauliX])]
+-}
 
 -- | Main script
 
