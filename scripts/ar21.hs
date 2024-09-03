@@ -211,7 +211,7 @@ and3 = fresh <> identity 3 .>
 -- 3 bit product destructor with T-count 3 or 4
 unand3 :: Pathsum DMod2
 unand3 = channelize (hgate <> identity 3) .>
-         embed measure 6 (*4) (*4) .>
+         embed measureGate 6 (*4) (*4) .>
          channelize (xgate <> identity 3) .>
          channelize ((controlled (simpleAction $ dagger $ cS "x" "y")) <> identity 1) .>
          channelize (xgate <> identity 3) .>
@@ -236,7 +236,7 @@ andk k = fresh <> identity k .>
 -- k bit product destructor with T-count 0 or 16(k-4)
 unandk :: Int -> Pathsum DMod2
 unandk k = channelize (hgate <> fresh <> identity k) .>
-           embed measure (2*(k+1)) (*(k+2)) (*(k+2)) .>
+           embed measureGate (2*(k+1)) (*(k+2)) (*(k+2)) .>
            channelize (controlled $ grind $ evalState (computeAction corr) ctx) .>
            embed epsilon (2*(k+1)) (*(k+2)) (*(k+2)) .> -- trace out the measured qubit
            channelize (unfresh <> identity k)
@@ -278,7 +278,7 @@ unandkaltu k = (hgate <> fresh <> identity k) .>
 -- k bit product destructor with T-count 8(k-4) or 8(k-4) + 4
 unandkalt :: Int -> Pathsum DMod2
 unandkalt k = channelize (hgate <> fresh <> identity k) .>
-           embed measure (2*(k+1)) (*(k+2)) (*(k+2)) .>
+           embed measureGate (2*(k+1)) (*(k+2)) (*(k+2)) .>
            channelize (controlled . grind $ evalState (computeAction $ cciX x y anc) ctx) .>
            channelize (grind $ identity 1 <> evalState (computeAction $ corr) ctx) .>
            channelize (controlled . grind $ evalState (computeAction . dagger $ cciX x y anc) ctx) .>
