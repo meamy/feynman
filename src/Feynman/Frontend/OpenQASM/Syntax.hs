@@ -1,6 +1,7 @@
 module Feynman.Frontend.OpenQASM.Syntax where
 
 import Feynman.Core hiding (Stmt)
+import Feynman.Circuits
 import Feynman.Frontend.DotQC (DotQC)
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -411,8 +412,8 @@ inline (QASM ver stmts) = QASM ver . snd . foldl f (Map.empty, []) $ stmts
           Nothing         -> [CallGate v e xs]
 
 -- Provides an optimization interface for the main IR
-applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> QASM -> QASM
-applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
+applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> Bool -> QASM -> QASM
+applyOpt opt pureCircuit (QASM ver stmts) = QASM ver $ optStmts stmts
   where optStmts stmts =
           let (hdr, body) = foldl' optStmt ([], []) stmts in
             reverse hdr ++ applyToStmts (reverse body)
@@ -431,7 +432,8 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToStmts stmts =
           let (gates, gateMap, qubitMap) = foldl' stmtToGate ([], Map.empty, Map.empty) stmts
               vars                       = ids gates
-              gates'                     = opt vars [] (reverse gates)
+              inputs                     = if pureCircuit then vars else []
+              gates'                     = opt vars inputs (reverse gates)
           in
             map (gateToStmt (gateMap, qubitMap)) gates'
 
@@ -439,7 +441,8 @@ applyOpt opt (QASM ver stmts) = QASM ver $ optStmts stmts
         applyToUExps inp uexps =
           let (gates, gateMap, qubitMap) = foldl' uexpToGate ([], Map.empty, Map.empty) uexps
               vars                       = ids gates
-              gates'                     = opt vars inp (reverse gates)
+              inputs                     = if pureCircuit then vars else inp
+              gates'                     = opt vars inputs (reverse gates)
           in
             map (gateToUExp (gateMap, qubitMap)) gates'
 

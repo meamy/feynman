@@ -361,15 +361,14 @@ parseParams = sepEndBy (many1 alphaNum) (many1 sep)
 parseDiscrete = do
   numerator <- option 1 nat
   string "pi"
-  string "/2^"
-  power <- int
+  power <- option 0 (string "/2^" >> int)
   return $ dyadicPhase $ dyadic numerator power
 
-parseContinuous = floating2 True >>= return . continuousPhase
+parseContinuous = floating2 False >>= return . continuousPhase
 
 parseAngle = do
   char '('
-  theta <- sign <*> (parseDiscrete <|> parseContinuous)
+  theta <- sign <*> (try parseDiscrete <|> parseContinuous)
   char ')'
   return theta
 

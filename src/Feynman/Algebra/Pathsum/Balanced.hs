@@ -454,9 +454,27 @@ chgate = Pathsum 1 2 2 1 p [x1, x2 + x1*x2 + x1*y]
  Paulis
  ----------------------------}
 
-data PauliGate = PauliI | PauliX | PauliZ | PauliXZ deriving (Eq, Ord, Show)
+data PauliGate = PauliI | PauliX | PauliZ | PauliY deriving (Eq, Ord, Show)
 data PauliPhase = I0 | I1 | I2 | I3 deriving (Eq, Ord, Show)
 type Pauli = (PauliPhase, [PauliGate])
+
+instance Semigroup PauliPhase where
+  a <> b =
+    let fromInt a = case a of
+          0 -> I0
+          1 -> I1
+          2 -> I2
+          3 -> I3
+        toInt a = case a of
+          I0 -> 0
+          I1 -> 1
+          I2 -> 2
+          I3 -> 3
+    in
+      fromInt ((toInt a + toInt b) `mod` 4)
+
+instance Monoid PauliPhase where
+  mempty = I0
 
 -- | Projects a pauli to the X part
 pauliProjX :: PauliGate -> PauliGate
@@ -464,7 +482,7 @@ pauliProjX pauli = case pauli of
   PauliI -> PauliI
   PauliX -> PauliX
   PauliZ -> PauliI
-  PauliXZ -> PauliX
+  PauliY -> PauliX
 
 -- | Projects a pauli to the Z part
 pauliProjZ :: PauliGate -> PauliGate
@@ -472,25 +490,35 @@ pauliProjZ pauli = case pauli of
   PauliI -> PauliI
   PauliX -> PauliI
   PauliZ -> PauliZ
-  PauliXZ -> PauliZ
+  PauliY -> PauliZ
 
--- | Maps a pauli gate to its X and Z strings
-unzipPauli :: [PauliGate] -> ([PauliGate], [PauliGate])
-unzipPauli pauli = (map pauliProjX pauli, map pauliProjZ pauli)
+-- | Projects a pauli to the Y part
+pauliProjY :: PauliGate -> PauliGate
+pauliProjY pauli = case pauli of
+  PauliI -> PauliI
+  PauliX -> PauliI
+  PauliZ -> PauliI
+  PauliY -> PauliY
+
+-- | Maps a pauli gate to it X, Y, and Z strings
+unzipPauli :: [PauliGate] -> ([PauliGate], [PauliGate], [PauliGate])
+unzipPauli pauli = (map pauliProjX pauli, map pauliProjY pauli, map pauliProjZ pauli)
 
 -- | Pauli exponential gate
 pauliExp :: (Eq g, Abelian g, Dyadic g) => g -> Pauli -> Pathsum g
 pauliExp theta (phase, pauli) = Pathsum (2*k) n n (2*k) pp outvals
-  where (x, z) = unzipPauli pauli
+  where (x, y, z) = unzipPauli pauli
         k = length $ filter (== PauliX) x
         n = length pauli
 
         xidx = fst . unzip . filter ((== PauliX) . snd) $ zip [0..] x
-        zidx = fst . unzip . filter ((/= PauliI) . snd) $ zip [0..] pauli
+        yidx = fst . unzip . filter ((== PauliY) . snd) $ zip [0..] y
+        zidx = fst . unzip . filter ((== PauliZ) . snd) $ zip [0..] z
 
         x2p     = zip xidx [0..]
         mapx1 (i,i') = ofVar (IVar i) * ofVar (PVar i')
         mapx2 (i,i') = ofVar (PVar i') * ofVar (PVar $ i' + k)
+        mapi i = ofVar (IVar i)
         mapz i  = case lookup i x2p of
           Nothing -> ofVar (IVar i)
           Just i' -> ofVar (PVar i')
@@ -498,15 +526,17 @@ pauliExp theta (phase, pauli) = Pathsum (2*k) n n (2*k) pp outvals
           Nothing -> ofVar (IVar i)
           Just i' -> ofVar (PVar $ i' + k)
 
-        pp = xBasisIn + zRotation + xBasisOut + globalPhase where
+        pp = xBasisIn + zRotation + xBasisOut + yRotIn + yRotOut where
           xBasisIn  = distribute 1 $ foldr (+) 0 . map mapx1 $ x2p
           xBasisOut = distribute 1 $ foldr (+) 0 . map mapx2 $ x2p
-          zRotation = distribute theta $ foldr (+) 0 . map mapz $ zidx
-          globalPhase = case phase of
-            I0 -> 0
-            I1 -> distribute half 1
-            I2 -> 1
-            I3 -> distribute (-half) 1
+          zRotation = distribute theta' $ foldr (+) 0 . map mapz $ zidx
+          yRotIn    = foldr (+) 0 . map ((distribute (-half)) . mapi) $ yidx
+          yRotOut   = foldr (+) 0 . map ((distribute half) . mapo) $ yidx
+          theta' = case phase of
+            I0 -> theta
+            I1 -> error "Error: Can't exponentiate complex phases"
+            I2 -> -theta
+            I3 -> error "Error: Can't exponentiate complex phases"
 
         outvals = map mapo [0..n-1]
 
@@ -611,15 +641,32 @@ applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
  ----------------------------}
 
 -- | Choi matrix of computational basis measurement
-measureChoi :: (Eq g, Abelian g) => Pathsum g
-measureChoi = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
+measureGate :: (Eq g, Abelian g) => Pathsum g
+measureGate = Pathsum 2 2 2 1 (lift $ y * (x0 + x1)) [x0, x1]
   where x0 = ofVar $ IVar 0
         x1 = ofVar $ IVar 1
         y  = ofVar $ PVar 0
 
--- | CPM operator of computational basis measurement
-measure :: (Eq g, Abelian g) => Pathsum g
-measure = unChoi measureChoi
+-- | Applicative version of the Choi matrix.
+--
+--   Requires the index of the corresponding input and output
+applyMeasure :: (Eq g, Abelian g, Dyadic g) => Int -> Int -> Pathsum g -> Pathsum g
+applyMeasure i j (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals where
+  pp' = pp + (lift $ y * (ovals!!i + ovals!!j))
+  y   = ofVar $ PVar p
+
+-- | Trace out a qubit in a vectorized density matrix.
+--
+--   Requires the index of the corresponding input and output.
+--
+--   Effectively "closes the loop" if the density matrix was generated
+--   by an eta on an operator. More generally represents a linear operator
+--          X \otimes Y -> Y
+--   corresponding to a measurement on X followed by dropping X
+traceOut :: (Eq g, Abelian g) => Int -> Int -> Pathsum g -> Pathsum g
+traceOut i j sop@(Pathsum s d o p pp ovals) = sop .> embed epsilon (o-2) mp (\_ -> 0) where
+  mp 0 = i
+  mp 1 = j
 
 {----------------------------
  Bind, unbind, and subst
@@ -1047,6 +1094,15 @@ rewriteVar sop = case sop of
   Var v p -> applyVar v p sop
   _       -> sop
 
+-- | Abstracts a monomial into a fresh path variable. The reverse of an HH
+abstractMono :: (Eq g, Abelian g) => [Var] -> Pathsum g -> Pathsum g
+abstractMono m (Pathsum a b c d e f) = Pathsum a' b c (d + 2) e' f' where
+  y = ofVar $ PVar d
+  z = ofVar $ PVar (d+1)
+  a' = a + 2
+  e' = substMonomial m z e + (distribute 1 $ y*(ofMonomial (monomial m) + z))
+  f' = map (substMonomial m z) f
+
 {--------------------------
  Reduction procedures
  --------------------------}
@@ -1084,35 +1140,40 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
  Simulation
  --------------------------}
 
+-- | Gets the magnitude of the paths
+pathMagnitude :: RealFloat f => Pathsum g -> f
+pathMagnitude (Pathsum k _ _ _ _ _) = base**(fromIntegral $ signum (-k)) where
+  base = case k `mod` 2 of
+    0 -> fromInteger $ 1 `shiftL` (abs $ k `div` 2)
+    1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (((abs k)-1) `div` 2))
+
 -- | Gets the cofactors of some path variable
 expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
-expand (Pathsum a b c d e f) v = (p0, p1) where
-  p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
-  p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
+expand (Pathsum a b c d e f) v@(PVar i) = (p0, p1) where
+  p0  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 0 e) (map (renameMonotonic varShift . subst v 0) f)
+  p1  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 1 e) (map (renameMonotonic varShift . subst v 1) f)
+  varShift (PVar j)
+    | j > i     = PVar $ j - 1
+    | otherwise = PVar $ j
 
 -- | Simulates a pathsum on a given input
-simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
+simulate :: (RealFloat f, Show f) => Pathsum DMod2 -> [FF2] -> Map [FF2] (Complex f)
 simulate sop xs = go $ sop * ket (map constant xs)
   where go      = go' . grind
         go' ps  = case ps of
           (Pathsum k 0 _ 0 p xs) ->
-            let phase     = fromRational . toRational $ getConstant p
-                base      = case k `mod` 2 of
-                  0 -> fromInteger $ 1 `shiftL` (abs k)
-                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (abs (k-1)))
-                magnitude = base**(fromIntegral $ signum k)
+            let phase     = pi * (fromRational . toRational $ getConstant p)
+                magnitude = pathMagnitude ps
             in
-              Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
+              Map.singleton (map getConstant xs) (mkPolar magnitude phase)
           (Pathsum k 0 n i p xs) ->
-            let v     = PVar $ i-1
-                left  = go (Pathsum k 0 n (i-1) (subst v zero p) (map (subst v zero) xs))
-                right = go (Pathsum k 0 n (i-1) (subst v one p) (map (subst v one) xs))
-            in
-              Map.unionWith (+) left right
+            let (p0, p1) = expand ps (PVar $ i-1) in
+              Map.unionWith (+) (go p0) (go p1)
           _                      -> error "Incompatible dimensions"
 
+
 -- | Evaluates a pathsum on a given input and output
-amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
+amplitude :: (RealFloat f, Show f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
 
 -- | Checks identity by checking inputs iteratively
@@ -1131,7 +1192,7 @@ isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
 isPure sop
   | inDeg sop /= outDeg sop = False
   | otherwise               = purity == identity 0 where
-      purity = trace $ sop .> sop
+      purity = grind $ trace $ sop .> sop
 
 {--------------------------
  Testing
@@ -1197,8 +1258,8 @@ teleportChannel :: Pathsum DMod2
 teleportChannel = channelize ((identity 1) <> bellstate) .>
                   channelize (cxgate <> (identity 1)) .>
                   channelize (hgate <> cxgate) .>
-                  embed measure 4 (* 3) (* 3) .>
-                  embed measure 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
+                  embed measureGate 4 (* 3) (* 3) .>
+                  embed measureGate 4 (\i -> i*3 + 1) (\j -> j*3 + 1) .>
                   channelize (swapgate <> hgate) .>
                   channelize ((identity 1) <> cxgate) .>
                   channelize (swapgate <> hgate) .>
@@ -1226,7 +1287,7 @@ aState = fresh .> hgate .> tgate
 teleportTChannel :: Pathsum DMod2
 teleportTChannel = channelize ((identity 1) <> aState) .>
                    channelize (cxgate) .>
-                   embed measure 2 (\i -> i*2 + 1) (\j -> j*2 + 1) .>
+                   embed measureGate 2 (\i -> i*2 + 1) (\j -> j*2 + 1) .>
                    channelize (controlled sgate) .>
                    embed epsilon 2 (\i -> i*2 + 1) (\j -> j*2 + 1) -- trace out the resource state
 
@@ -1235,3 +1296,120 @@ verifyTeleT :: () -> IO ()
 verifyTeleT _ = case (channelize tgate == grind (teleportTChannel)) of
   True -> putStrLn "Identity"
   False -> putStrLn "No identity"
+
+-- | Relation 13 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT13 :: Pathsum DMod2
+cliffordT13 = c .> c where
+  c = cxgate .>
+      xgate <> (tgate .> hgate .> tgate .> hgate .> tdggate) .>
+      cxgate .>
+      xgate <> (tgate .> hgate .> tdggate .> hgate .> tdggate)
+
+-- | Pipeline for applying rewrites in sequence
+(|>) :: a -> (a -> b) -> b
+a |> f = f a
+
+infixl 1 |>
+
+-- | A manual proof of 13
+cliffordT13_is_identity () = case isIdentity reducedSOP of
+  True -> putStrLn "Identity"
+  False -> putStrLn "Not identity"
+  where reducedSOP =
+          let c1      = vectorize cliffordT13
+              c2      = abstractMono [PVar 0, PVar 5] c1
+              (a,b,c) = head $ tail $ matchHHSolve c2
+              c3      = applyHHSolved a b c c2
+              c4      = rewriteElim c3
+              c5      = rewriteOmega c4
+              c6      = applyVar (PVar 0) (ofVar (PVar 0) + 1) c5
+              c7      = abstractMono [PVar 0, PVar 5] c6
+              (e,f,g) = head $ matchHHSolve c7
+              c8      = applyHHSolved e f g c7
+              c9      = rewriteElim c8
+              c10     = rewriteHH c9
+              c11     = rewriteElim c10
+              c12     = grind c11
+          in
+            grind $ (identity 2 <> c12) .> (epsilonN 2 <> identity 2)
+              
+-- | Relation 14 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
+cliffordT14 :: Pathsum DMod2
+cliffordT14 =
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  h2 .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  cxgate .>
+  sdg1 .>
+  t2 .>
+  h1 .>
+  h2 .>
+  tdg1 .>
+  s2 .>
+  tdg2 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  t2 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg1 .>
+  tdg2 .>
+  cxgate .>
+  t2 .>
+  h2 .>
+  tdg2 .>
+  h2 .>
+  tdg2 .>
+  x1 .>
+  cxgate .>
+  x1 .>
+  t2 .>
+  t1 .>
+  h2 .>
+  sdg1 .>
+  s2 .>
+  h1 .>
+  tdg1 .>
+  xcgate .>
+  t1 .>
+  h1 .>
+  tdg1 .>
+  h1 .>
+  tdg1 .>
+  x2 .>
+  xcgate .>
+  x2 .>
+  t1 .>
+  h1 .>
+  sdg2 .>
+  s1 .>
+  h2 .>
+  tdg2
+  where x1 = xgate <> identity 1
+        x2 = identity 1 <> xgate
+        h1 = hgate <> identity 1
+        h2 = identity 1 <> hgate
+        t1 = tgate <> identity 1
+        t2 = identity 1 <> tgate
+        s1 = sgate <> identity 1
+        s2 = identity 1 <> sgate
+        tdg1 = tdggate <> identity 1
+        tdg2 = identity 1 <> tdggate
+        sdg1 = sdggate <> identity 1
+        sdg2 = identity 1 <> sdggate
+        xcgate = swapgate .> cxgate .> swapgate

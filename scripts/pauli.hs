@@ -10,6 +10,7 @@ Portability : portable
 module Main where
 
 import Data.List                               (splitAt,find,unfoldr,nub)
+import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Semigroup                          ((<>))
 import Data.Bits
@@ -19,6 +20,7 @@ import Control.Concurrent
 
 import System.Environment
 
+import Feynman.Core hiding (dagger, getArgs)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced
 
@@ -48,7 +50,7 @@ parFind n f xs = do
   return result
   
 paulis :: [PauliGate]
-paulis = [PauliI, PauliX, PauliZ, PauliXZ]
+paulis = [PauliI, PauliX, PauliZ, PauliY]
 
 allNonzeroPaulis :: Int -> [Pauli]
 allNonzeroPaulis n = map (\p -> (I0, p)) . filter (/= (replicate n PauliI)) $ go n where
@@ -67,7 +69,7 @@ unpackInteger n k i = map go [0..k-1] where
     0 -> PauliI
     1 -> PauliX
     2 -> PauliZ
-    3 -> PauliXZ
+    3 -> PauliY
 
 checkPauli :: Pathsum DMod2 -> Bool
 checkPauli sop =
@@ -88,6 +90,9 @@ checkClifford sop =
       zgen = [applyZ i (identity n) | i <- [0..n-1]]
   in
     all checkPauli $ map (\p -> sop .> p .> dagger sop) (xgen ++ zgen)
+
+computePathsum :: Int -> [Pauli] -> Pathsum DMod2
+computePathsum n = foldl (.>) (identity n) . map (pauliExp (dMod2 1 2))
 
 findClifford :: Int -> Int -> Maybe ([Pauli])
 findClifford n k =
@@ -127,6 +132,90 @@ parFindCliffordGen t n k = do
   mapM_ killThread threads
   return $ liftM (unpackInteger n k) result
   where computePathsum = foldl (.>) (identity n) . map (pauliExp (dMod2 1 2))
+
+newtype PauliN = PauliN (PauliPhase, (Map ID PauliGate)) deriving (Eq, Show)
+
+instance Semigroup PauliN where
+  (PauliN (r, p)) <> (PauliN (s, q)) = PauliN result where
+
+    result = Map.mapAccum go (r <> s) $ Map.unionWith (addP) (Map.map inj p) (Map.map inj q)
+
+    go acc (r, p) = (acc <> r, p)
+
+    inj g = (I0, g)
+
+    addP (r, p) (s, q) = (r <> s <> t, p') where
+      (t, p') = case (p, q) of
+        (PauliI, p)      -> (I0, p)
+        (p, PauliI)      -> (I0, p)
+        (PauliX, PauliX) -> (I0, PauliI)
+        (PauliX, PauliZ) -> (I3, PauliY)
+        (PauliX, PauliY) -> (I1, PauliZ)
+        (PauliZ, PauliX) -> (I1, PauliY)
+        (PauliZ, PauliZ) -> (I0, PauliI)
+        (PauliZ, PauliY) -> (I3, PauliX)
+        (PauliY, PauliX) -> (I3, PauliZ)
+        (PauliY, PauliZ) -> (I1, PauliX)
+        (PauliY, PauliY) -> (I0, PauliI)
+
+instance Monoid PauliN where
+  mempty = PauliN (mempty, Map.empty)
+
+-- Pauli rotations from Clifford+T circuit
+{-
+toPauliExp :: [Primitive] -> ([], [Primitive])
+toPauliExp = foldl go ([], []) where
+
+  go (rp, cliff) g = case g of
+    T   x -> (rp ++ [commuteThrough (PauliN (I0, Map.fromList [x, PauliZ])) cliff], cliff)
+    Tdg x -> (rp ++ [commuteThrough (PauliN (I2, Map.fromList [x, PauliZ])) cliff], cliff)
+    _     -> cliff ++ [g]
+-}
+
+commuteClifford :: PauliN -> Primitive -> PauliN
+commuteClifford (PauliN (r,p)) cliff = case cliff of
+  X y -> case Map.lookup y p of
+    Just PauliZ -> PauliN (r <> I2, p)
+    Just PauliY -> PauliN (r <> I2, p)
+    _           -> PauliN (r,p)
+  Z y -> case Map.lookup y p of
+    Just PauliX -> PauliN (r <> I2, p)
+    Just PauliY -> PauliN (r <> I2, p)
+    _           -> PauliN (r,p)
+  Y y -> case Map.lookup y p of
+    Just PauliX -> PauliN (r <> I2, p)
+    Just PauliZ -> PauliN (r <> I2, p)
+    _           -> PauliN (r,p)
+  H y -> case Map.lookup y p of
+    Just PauliX -> PauliN (r,Map.insert y PauliZ p)
+    Just PauliZ -> PauliN (r,Map.insert y PauliX p)
+    Just PauliY -> PauliN (r <> I2, p)
+    _           -> PauliN (r,p)
+
+-- Suspected relations
+r1 :: [Pauli]
+r1 = [(I0, [PauliZ, PauliZ]), 
+      (I2, [PauliI, PauliX]),
+      (I2, [PauliZ, PauliX]),
+      (I2, [PauliZ, PauliZ]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliZ, PauliX]),
+      (I0, [PauliI, PauliX]),
+      (I2, [PauliI, PauliZ])]
+
+r2 :: [Pauli]
+r2 = [(I0, [PauliI, PauliY]), 
+      (I0, [PauliY, PauliI]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliY, PauliX]),
+      (I0, [PauliZ, PauliI]),
+      (I0, [PauliZ, PauliX]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliX, PauliX]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliZ, PauliI]),
+      (I0, [PauliZ, PauliX]),
+      (I0, [PauliX, PauliY])]
 
 -- | Main script
 

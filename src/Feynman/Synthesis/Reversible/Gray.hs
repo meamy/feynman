@@ -18,6 +18,7 @@ import Data.Ord (comparing)
 
 import Data.Maybe
 
+import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Writer.Lazy
 
