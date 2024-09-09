@@ -35,8 +35,6 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial (degree)
 import Feynman.Algebra.Polynomial.Multilinear
 
-import qualified Debug.Trace as Trace
-
 {-----------------------------------
  Variables
  -----------------------------------}
@@ -801,7 +799,6 @@ instance (Eq g, Num g) => Semigroup (Pathsum g) where
 
 instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []
-  mappend = tensor
 
 instance (Eq g, Abelian g) => Num (Pathsum g) where
   (+)                          = plus
@@ -1039,7 +1036,7 @@ simplify sop = case sop of
 -- | The rewrite system of M. Amy,
 --   / Towards Large-Scaled Functional Verification of Universal Quantum Circuits /, QPL 2018.
 --   Generally effective at evaluating (symbolic) values.
-grind :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Pathsum g
+grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
   Zero y         -> applyZero y sop
   Elim y         -> grind $ applyElim y sop
@@ -1089,8 +1086,12 @@ pathPhase (Pathsum _ _ _ _ p _) =
 -- | Gets the cofactors of some path variable
 expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
 expand (Pathsum a b c d e f) v@(PVar i) = (p0, p1) where
-  p0  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 0 e) (map (renameMonotonic varShift . subst v 0) f)
-  p1  = Pathsum a b c (d-1) (renameMonotonic varShift $ subst v 1 e) (map (renameMonotonic varShift . subst v 1) f)
+  e0  = renameMonotonic varShift $ subst v 0 e
+  e1  = renameMonotonic varShift $ subst v 1 e
+  f0  = map (renameMonotonic varShift . subst v 0) f
+  f1  = map (renameMonotonic varShift . subst v 1) f
+  p0  = Pathsum a b c (d-1) e0 f0
+  p1  = Pathsum a b c (d-1) e1 f1
   varShift (PVar j)
     | j > i     = PVar $ j - 1
     | otherwise = PVar $ j
@@ -1130,7 +1131,7 @@ setCover u sets = go [] u sets where
 
 -- | Gives a bound for the complexity using set-cover decomposition
 setcoverBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
-setcoverBound o sop i = Trace.trace (show sop') $ length $ setCover u sets where
+setcoverBound o sop i = length $ setCover u sets where
   sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
   
   order (a,x)   = denomExp (unpack a) + degree x
@@ -1145,7 +1146,7 @@ setcoverBound o sop i = Trace.trace (show sop') $ length $ setCover u sets where
 
 -- | Gives a bound for the complexity using stabilizer decompositions
 stabsimBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
-stabsimBound o sop i = Trace.trace (show sop') $ length tStates where
+stabsimBound o sop i = length tStates where
   sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
   
   poly = fourier $ phasePoly sop'
@@ -1175,52 +1176,14 @@ ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) whe
           magnitude = (pathMagnitude sop) :+ 0
       in
         magnitude * phase
-        --Trace.trace ("SOP: " ++ show sop ++ "\nValue: " ++ show magnitude ++ "\n\n") $ [(magnitude :+ 0) * phase]
     (Pathsum k 0 0 n p []) ->
       let v       = greedySelect p
           (p0,p1) = expand sop v
-          --q0      = go p0
-          --q1      = go p1
       in
         (go p0) + (go p1)
-        {-
-      in
-        Trace.trace ("SOP: " ++ show sop ++
-                     "\nExpanding on " ++ show v ++
-                     "\n0: " ++ show p0 ++ " --> " ++ show q0 ++
-                     "\n1: " ++ show p1 ++ " --> " ++ show q1 ++
-                     "\n\n") $ q0 ++ q1
-     -}
-
--- | Performs a strong simulation using stabilizer decompositions
-stabsimulate :: (RealFloat f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
-stabsimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) where
-  order (a,x)   = denomExp (unpack a) + degree x
-
-  nonCliffTms v =
-    let f (a,x) = Set.member v (vars x) && denomExp (unpack a) + degree x >= 3 in
-      length . filter f . toTermList
-
-  greedySelect p =
-    let xs = [(nonCliffTms v p, v) | v <- Set.toList (vars p)] in
-      snd . maximumBy (\a b -> compare (fst a) (fst b)) $ xs
-
-  go      = go' . simplify
-  go' sop = case sop of
-    (Pathsum k 0 0 0 p []) ->
-      let phase     = fromRational . toRational $ getConstant p
-          magnitude = pathMagnitude sop
-      in
-        mkPolar magnitude (pi * phase)
-    (Pathsum k 0 0 n p []) ->
-      let v       = greedySelect p
-          (p0,p1) = expand sop v
-      in
-        Trace.trace ("Expanding " ++ show v) $ (go p0) + (go p1)
-
 
 -- | Checks identity by checking inputs iteratively
-isIdentity :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Bool
+isIdentity :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
 isIdentity sop
   | isTrivial sop = True
   | otherwise     = case inDeg sop of
@@ -1231,7 +1194,7 @@ isIdentity sop
              isIdentity p0 && isIdentity p1
 
 -- | Checks whether a state is the density matrix of a pure state by computing the purity
-isPure :: (Eq g, Periodic g, Dyadic g, Show g, Real g) => Pathsum g -> Bool
+isPure :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
 isPure sop
   | inDeg sop /= outDeg sop = False
   | otherwise               = purity == identity 0 where
