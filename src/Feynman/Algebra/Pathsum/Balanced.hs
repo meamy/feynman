@@ -882,8 +882,8 @@ matchHHInternal sop = do
     _      -> mzero
 
 -- | Solvable instance of the HH rule where \(f = 1 \oplus \prod_{x\in X} x\)
-matchProduct :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
-matchProduct sop = do
+matchHHProduct :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
+matchHHProduct sop = do
   (v, p) <- matchHH sop
   vars <- case toTermList (1 + p) of
     [(_, m)] -> return . Set.toList . vars $ m
@@ -942,6 +942,10 @@ pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
 pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 
+-- | Pattern synonym for HH instances where the polynomial is a product
+pattern HHProduct :: (Eq g, Periodic g) => Var -> [Var] -> Pathsum g
+pattern HHProduct v vs <- (matchHHProduct -> (v, vs):_)
+
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
 pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
@@ -982,6 +986,17 @@ applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
           | j > i     = PVar $ j - 1
           | otherwise = PVar $ j
         varShift v = v
+
+-- | Apply an HH product rule. Does not check if the instance is valid
+applyHHProduct :: (Eq g, Abelian g) => Var -> [Var] -> Pathsum g -> Pathsum g
+applyHHProduct (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-1) e' f') (reverse $ sort vs)
+  where e' = renameMonotonic varShift . remVar (PVar i) $ e
+        f' = map (renameMonotonic varShift) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+        go ps = snd . expand ps
 
 -- | Apply an (\omega\) rule. Does not check if the instance is valid
 applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
