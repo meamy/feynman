@@ -22,7 +22,7 @@ import Data.Ratio
 import Data.Semigroup
 import Control.Monad (mzero, msum)
 import Data.Maybe (maybeToList)
-import Data.Complex (Complex, mkPolar)
+import Data.Complex (Complex(..), mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -854,7 +854,6 @@ instance (Eq g, Num g) => Semigroup (Pathsum g) where
 
 instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []
-  mappend = tensor
 
 instance (Eq g, Abelian g) => Num (Pathsum g) where
   (+)                          = plus
@@ -988,6 +987,10 @@ pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
 pattern HHKill v p <- (filter (all (not . isP) . vars . snd) . matchHH -> (v, p):_)
 
+-- | Pattern synonym for HH instances where the polynomial is empty
+pattern Zero :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Zero v <- (filter ((== 1) . snd) . matchHH -> (v, p):_)
+
 -- | Pattern synonym for Omega instances
 pattern Omega :: (Eq g, Periodic g, Dyadic g) => Var -> SBool Var -> Pathsum g
 pattern Omega v p <- (matchOmega -> (v, p):_)
@@ -1030,6 +1033,10 @@ applyOmega (PVar i) p (Pathsum a b c d e f) = Pathsum (a-1) b c (d-1) e' f'
           | j > i     = PVar $ j - 1
           | otherwise = PVar $ j
         varShift v = v
+
+-- | Apply a zero rule. Does not check if the instance is valid
+applyZero :: (Eq g, Abelian g) => Var -> Pathsum g -> Pathsum g
+applyZero v (Pathsum a b c d e f) = Pathsum 0 b c 1 (lift $ ofVar (PVar 0)) [0 | x <- f]
 
 -- | Apply a var rule. Does not check if the instance is valid
 applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
@@ -1075,6 +1082,7 @@ abstractMono m (Pathsum a b c d e f) = Pathsum a' b c (d + 2) e' f' where
 -- | Performs basic simplifications
 simplify :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 simplify sop = case sop of
+  Zero y         -> applyZero y sop
   Elim y         -> simplify $ applyElim y sop
   HHLinear y z p -> simplify $ applyHHSolved y z p sop
   Omega y p      -> simplify $ applyOmega y p sop
@@ -1085,8 +1093,10 @@ simplify sop = case sop of
 --   Generally effective at evaluating (symbolic) values.
 grind :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 grind sop = case sop of
+  Zero y         -> applyZero y sop
   Elim y         -> grind $ applyElim y sop
   Omega y p      -> grind $ applyOmega y p sop
+  HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
   _              -> sop
 
@@ -1095,6 +1105,7 @@ normalizeClifford :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g
 normalizeClifford sop = go $ sop .> hLayer .> hLayer where
   hLayer = foldr (<>) mempty $ replicate (outDeg sop) hgate
   go sop = case sop of
+    Zero y           -> applyZero y sop
     Elim y           -> go $ applyElim y sop
     HHInternal y z p -> go $ applyHHSolved y z p sop
     Omega y p        -> go $ applyOmega y p sop
@@ -1105,36 +1116,126 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
  Simulation
  --------------------------}
 
+-- | Gets the magnitude of the paths
+pathMagnitude :: RealFloat f => Pathsum g -> f
+pathMagnitude (Pathsum k _ _ _ _ _) = base**(fromIntegral $ signum (-k)) where
+  base = case k `mod` 2 of
+    0 -> fromInteger $ 1 `shiftL` (abs $ k `div` 2)
+    1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (((abs k)-1) `div` 2))
+
+-- | Gets the (global) phase of the paths
+pathPhase :: RealFloat f => Pathsum DMod2 -> Complex f
+pathPhase (Pathsum _ _ _ _ p _) =
+  let phase = unpack $ getConstant p in
+    case (numer phase, denomExp phase) of
+      (0, 0) -> 1 :+ 0
+      (1, 0) -> (-1) :+ 0
+      (1, 1) -> 0 :+ 1
+      (3, 1) -> 0 :+ (-1)
+      (1, 2) -> 1/sqrt(2) :+ 1/sqrt(2)
+      (3, 2) -> (-1)/sqrt(2) :+ 1/sqrt(2)
+      (5, 2) -> (-1)/sqrt(2) :+ (-1)/sqrt(2)
+      (7, 2) -> 1/sqrt(2) :+ (-1)/sqrt(2)
+      _      -> mkPolar 1 (pi * (fromRational . toRational $ phase))
+
 -- | Gets the cofactors of some path variable
 expand :: (Eq g, Abelian g) => Pathsum g -> Var -> (Pathsum g, Pathsum g)
-expand (Pathsum a b c d e f) v = (p0, p1) where
-  p0  = Pathsum a b c (d-1) (subst v 0 e) (map (subst v 0) f)
-  p1  = Pathsum a b c (d-1) (subst v 1 e) (map (subst v 1) f)
+expand (Pathsum a b c d e f) v@(PVar i) = (p0, p1) where
+  e0  = renameMonotonic varShift $ subst v 0 e
+  e1  = renameMonotonic varShift $ subst v 1 e
+  f0  = map (renameMonotonic varShift . subst v 0) f
+  f1  = map (renameMonotonic varShift . subst v 1) f
+  p0  = Pathsum a b c (d-1) e0 f0
+  p1  = Pathsum a b c (d-1) e1 f1
+  varShift (PVar j)
+    | j > i     = PVar $ j - 1
+    | otherwise = PVar $ j
 
 -- | Simulates a pathsum on a given input
-simulate :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => Pathsum g -> [FF2] -> Map [FF2] (Complex f)
+simulate :: (RealFloat f, Show f) => Pathsum DMod2 -> [FF2] -> Map [FF2] (Complex f)
 simulate sop xs = go $ sop * ket (map constant xs)
   where go      = go' . grind
         go' ps  = case ps of
           (Pathsum k 0 _ 0 p xs) ->
-            let phase     = fromRational . toRational $ getConstant p
-                base      = case k `mod` 2 of
-                  0 -> fromInteger $ 1 `shiftL` (abs k)
-                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` ((abs k)-1))
-                magnitude = base**(fromIntegral $ signum (-k))
+            let phase     = pathPhase ps
+                magnitude = pathMagnitude ps
             in
-              Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
+              Map.singleton (map getConstant xs) ((magnitude :+ 0) * phase)
           (Pathsum k 0 n i p xs) ->
-            let v     = PVar $ i-1
-                left  = go (Pathsum k 0 n (i-1) (subst v zero p) (map (subst v zero) xs))
-                right = go (Pathsum k 0 n (i-1) (subst v one p) (map (subst v one) xs))
-            in
-              Map.unionWith (+) left right
+            let (p0, p1) = expand ps (PVar $ i-1) in
+              Map.unionWith (+) (go p0) (go p1)
           _                      -> error "Incompatible dimensions"
 
 -- | Evaluates a pathsum on a given input and output
-amplitude :: (Eq g, Periodic g, Dyadic g, Real g, RealFloat f) => [FF2] -> Pathsum g -> [FF2] -> Complex f
+amplitude :: (RealFloat f, Show f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
 amplitude o sop i = (simulate (bra (map constant o) * sop) i)![]
+
+-- | Set cover solver
+setCover :: Ord a => [a] -> [[a]] -> [a]
+setCover u sets = go [] u sets where
+  histo sets a =
+    let indicator = map (\s -> if a `elem` s then 1 else 0) sets in
+      (foldl (+) 0 indicator, a)
+
+  go cover u []   = cover
+  go cover u sets =
+    let freqs = map (histo sets) u
+        maxV  = snd $ maximum freqs
+    in
+      go (maxV:cover) u (filter (not . (maxV `elem`)) sets)
+
+-- | Gives a bound for the complexity using set-cover decomposition
+setcoverBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
+setcoverBound o sop i = length $ setCover u sets where
+  sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
+  
+  order (a,x)   = denomExp (unpack a) + degree x
+
+  poly = phasePoly sop'
+
+  u = Set.toList $ vars poly
+
+  sets =
+    let f (a,x) = order (a,x) >= 3 in
+      map (\(a,x) -> Set.toList $ vars x) . filter f . toTermList $ poly
+
+-- | Gives a bound for the complexity using stabilizer decompositions
+stabsimBound :: [FF2] -> Pathsum DMod2 -> [FF2] -> Int
+stabsimBound o sop i = length tStates where
+  sop' = simplify $ ket (map constant i) .> sop .> bra (map constant o)
+  
+  poly = fourier $ phasePoly sop'
+
+  tStates =
+    let f (a,x) = denomExp (unpack a) >= 2 in
+      filter f $ toTermList poly
+  
+
+-- | Performs a strong simulation using set cover based methods
+ssimulate :: (RealFloat f, Show f) => [FF2] -> Pathsum DMod2 -> [FF2] -> Complex f
+ssimulate o sop i = go $ ket (map constant i) .> sop .> bra (map constant o) where
+  order (a,x)   = denomExp (unpack a) + degree x
+
+  nonCliffTms v =
+    let f (a,x) = Set.member v (vars x) && order (a,x) >= 3 in
+      length . filter f . toTermList
+
+  greedySelect p =
+    let xs = [(nonCliffTms v p, v) | v <- Set.toList (vars p)] in
+      snd . maximumBy (\a b -> compare (fst a) (fst b)) $ xs
+
+  go      = go' . simplify
+  go' sop = case sop of
+    (Pathsum k 0 0 0 p []) ->
+      let phase     = pathPhase sop
+          magnitude = (pathMagnitude sop) :+ 0
+      in
+        magnitude * phase
+    (Pathsum k 0 0 n p []) ->
+      let v       = greedySelect p
+          (p0,p1) = expand sop v
+      in
+        (go p0) + (go p1)
 
 -- | Checks identity by checking inputs iteratively
 isIdentity :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Bool
