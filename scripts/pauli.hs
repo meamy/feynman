@@ -21,8 +21,10 @@ import Control.Concurrent
 import System.Environment
 
 import Feynman.Core hiding (dagger, getArgs)
+import qualified Feynman.Core as Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced
+import Feynman.Verification.Symbolic
 
 -- | Utilities
 
@@ -162,46 +164,64 @@ instance Monoid PauliN where
   mempty = PauliN (mempty, Map.empty)
 
 -- Pauli rotations from Clifford+T circuit
-{-
-toPauliExp :: [Primitive] -> ([], [Primitive])
+toPauliExp :: [Primitive] -> ([PauliN], [Primitive])
 toPauliExp = foldl go ([], []) where
 
   go (rp, cliff) g = case g of
-    T   x -> (rp ++ [commuteThrough (PauliN (I0, Map.fromList [x, PauliZ])) cliff], cliff)
-    Tdg x -> (rp ++ [commuteThrough (PauliN (I2, Map.fromList [x, PauliZ])) cliff], cliff)
-    _     -> cliff ++ [g]
--}
+    T    x -> (rp ++ [commuteThrough (PauliN (I0, Map.fromList [(x, PauliZ)])) cliff], cliff)
+    Tinv x -> (rp ++ [commuteThrough (PauliN (I2, Map.fromList [(x, PauliZ)])) cliff], cliff)
+    _      -> (rp, g:cliff)
+
+  commuteThrough = foldl commuteClifford
 
 commuteClifford :: PauliN -> Primitive -> PauliN
-commuteClifford (PauliN (r,p)) cliff = case cliff of
-  X y -> case Map.lookup y p of
-    Just PauliZ -> PauliN (r <> I2, p)
-    Just PauliY -> PauliN (r <> I2, p)
-    _           -> PauliN (r,p)
-  Z y -> case Map.lookup y p of
-    Just PauliX -> PauliN (r <> I2, p)
-    Just PauliY -> PauliN (r <> I2, p)
-    _           -> PauliN (r,p)
-  Y y -> case Map.lookup y p of
-    Just PauliX -> PauliN (r <> I2, p)
-    Just PauliZ -> PauliN (r <> I2, p)
-    _           -> PauliN (r,p)
-  H y -> case Map.lookup y p of
-    Just PauliX -> PauliN (r,Map.insert y PauliZ p)
-    Just PauliZ -> PauliN (r,Map.insert y PauliX p)
-    Just PauliY -> PauliN (r <> I2, p)
-    _           -> PauliN (r,p)
+commuteClifford (PauliN (r,p)) cliff = foldr (<>) (PauliN (I0,Map.empty)) . map go $ Map.toList p where
+  go (x, p) = case cliff of
+    X y | x == y -> case p of
+            PauliZ -> PauliN (r <> I2, Map.fromList [(x, p)])
+            PauliY -> PauliN (r <> I2, Map.fromList [(x, p)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    Z y | x == y -> case p of
+            PauliX -> PauliN (r <> I2, Map.fromList [(x, p)])
+            PauliY -> PauliN (r <> I2, Map.fromList [(x, p)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    Y y | x == y -> case p of
+            PauliX -> PauliN (r <> I2, Map.fromList [(x, p)])
+            PauliZ -> PauliN (r <> I2, Map.fromList [(x, p)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    H y | x == y -> case p of
+            PauliX -> PauliN (r, Map.fromList [(x, PauliZ)])
+            PauliZ -> PauliN (r, Map.fromList [(x, PauliX)])
+            PauliY -> PauliN (r <> I2, Map.fromList [(x, p)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    S y | x == y -> case p of
+            PauliX -> PauliN (r, Map.fromList [(x, PauliY)])
+            PauliY -> PauliN (r <> I2, Map.fromList [(x, PauliX)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    Sinv y | x == y -> case p of
+            PauliX -> PauliN (r <> I2, Map.fromList [(x, PauliY)])
+            PauliY -> PauliN (r, Map.fromList [(x, PauliX)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    CNOT y z | x == y -> case p of
+            PauliX -> PauliN (r, Map.fromList [(x, PauliX), (y, PauliX)])
+            PauliY -> PauliN (r, Map.fromList [(x, PauliY), (y, PauliX)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    CNOT y z | x == z -> case p of
+            PauliZ -> PauliN (r, Map.fromList [(x, PauliZ), (y, PauliZ)])
+            PauliY -> PauliN (r, Map.fromList [(x, PauliZ), (y, PauliY)])
+            _      -> PauliN (r, Map.fromList [(x, p)])
+    _                 -> PauliN (r, Map.fromList [(x, p)])
 
 -- Suspected relations
 r1 :: [Pauli]
 r1 = [(I0, [PauliZ, PauliZ]), 
-      (I2, [PauliI, PauliX]),
-      (I2, [PauliZ, PauliX]),
-      (I2, [PauliZ, PauliZ]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliZ, PauliX]),
+      (I0, [PauliZ, PauliZ]),
       (I0, [PauliI, PauliZ]),
       (I0, [PauliZ, PauliX]),
       (I0, [PauliI, PauliX]),
-      (I2, [PauliI, PauliZ])]
+      (I0, [PauliI, PauliZ])]
 
 r2 :: [Pauli]
 r2 = [(I0, [PauliI, PauliY]), 
@@ -216,6 +236,67 @@ r2 = [(I0, [PauliI, PauliY]),
       (I0, [PauliZ, PauliI]),
       (I0, [PauliZ, PauliX]),
       (I0, [PauliX, PauliY])]
+
+r3 :: [Pauli]
+r3 = [(I0, [PauliZ, PauliZ]), 
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliZ, PauliZ]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliZ, PauliZ]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliZ, PauliZ]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliI, PauliX]),
+      (I0, [PauliI, PauliZ])]
+
+r4 :: [Pauli]
+r4 = [(I0, [PauliI, PauliY]), 
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliI, PauliZ]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliI, PauliY]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliX, PauliZ]),
+      (I0, [PauliZ, PauliI]),
+      (I0, [PauliX, PauliZ]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliI, PauliY]),
+      (I0, [PauliZ, PauliX])]
+
+r5 :: [Pauli]
+r5 = [(I0, [PauliI, PauliY]), 
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliI, PauliY]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliX, PauliI]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY]),
+      (I0, [PauliZ, PauliY]),
+      (I0, [PauliY, PauliY])]
+
+rel13 = xs ++ xs where
+  xs = [CNOT "x" "y", T "y", H "y", Tinv "y", X "x", CNOT "x" "y", X "x", T "y", H "y", Tinv "y"]
+
+rel14 = xs ++ xs where
+  xs = [CNOT "x" "y", T "y", H "y", T "y", H "y", Tinv "y", X "x", CNOT "x" "y", X "x", T "y", H "y", Tinv "y", H "y", Tinv "y"]
+
+rel15 = xs ++ ys ++ Core.dagger xs ++ Core.dagger ys where
+  xs = cH "x" "y" ++ [H "y", T "y"] ++ cH "x" "y"
+  ys = cH "y" "x" ++ [H "x", T "x"] ++ cH "y" "x"
+  cH x y = [S y, H y, T y, CNOT x y, Tinv y, H y, Sinv y]
 
 -- | Main script
 
