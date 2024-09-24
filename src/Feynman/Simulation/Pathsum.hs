@@ -126,6 +126,12 @@ pushEmptyEnv :: State Env ()
 pushEmptyEnv =
   modify $ \env -> env { binds = Map.empty : binds env }
 
+pushp :: [ID] -> State Env ()
+pushp qparams = do
+  let qbindings = map QVar [0..(length qparams - 1)]
+  let newbinds = Map.fromList $ List.zip qparams qbindings
+  modify $ \env -> env { binds = newbinds : binds env}
+
 pushEnv :: [ID] -> [Exp] -> [ID] -> [Arg] -> State Env ()
 pushEnv cparams exps qparams args = do
   cbindings <- liftM (map CVar) $ mapM simExp exps
@@ -156,8 +162,11 @@ simDeclare dec = case dec of
 
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
-  undefined
-
+  let init = identity (length qparams)
+  pushp qparams
+  summary <- foldM (\p uexp -> simGate False p [] uexp) init body
+  popEnv
+  return summary
 
 evalGate :: UExp -> State Env (Pathsum DMod2)
 evalGate uexp = case uexp of
@@ -216,7 +225,6 @@ evalGate uexp = case uexp of
           CallGate "h" [] [arg],
           CallGate "rz" [phiPlusThreePi] [arg] ]
 -- case for SumGate? --
-
 
 evalGateList :: [UExp] -> State Env (Pathsum DMod2)
 evalGateList uexps = foldM (\g h -> return $ g .> h) (identity 1) =<< mapM evalGate uexps
@@ -402,4 +410,3 @@ simControlled controls qexp = case qexp of
 simQASM :: QASM -> Env
 simQASM (QASM _ stmts) =
   execState (mapM_ simStmt stmts) initEnv
-
