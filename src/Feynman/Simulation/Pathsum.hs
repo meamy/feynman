@@ -45,13 +45,6 @@ densifyEnv = modify $ \env ->
   else
     env { pathsum = vectorize . densify $ pathsum env, density = True }
 
-readGateDef :: ID -> State Env Binding
-readGateDef id = gets $ search id . binds
-  where
-    search id (b:bs) = case Map.lookup id b of
-      Just gateDef -> gateDef
-      Nothing -> search id bs
-
 getBinding :: ID -> State Env Binding 
 getBinding id = gets $ search id . binds
   where
@@ -65,23 +58,6 @@ psSize (Env ps _ True)  = outDeg ps `div` 2
 
 getPSSize :: State Env Int
 getPSSize = gets psSize
-
--- FUNCTIONS TO WORK WITH EMBED --
-
-{-
--- takes as input pathsum of gate and indices to apply to
-applyMask :: [Int] -> Pathsum DMod2 -> State Env ()
-applyMask indices gate@(Pathsum a b c d e f)
-  | length indices == b = modify applyMask'
-  where
-    applyMask' env@(Env ps _ density)
-    | not density = env { pathsum = ps .> embed gate (size - b) f f }
-    | density     = env { pathsum = ps .> (channelize gate) (2 * (size - b)) g g }
-    where 
-      size = psSize env
-      f = (!!) indices
-      g = (!!) (indices ++ map (+psSize) indices)
--}
 
 -- action returns offset of allocated register
 allocatePathsum :: Int -> State Env Int
@@ -113,9 +89,7 @@ simExp e = case e of
   FloatExp f -> return f
   IntExp i -> return $ fromIntegral i
   PiExp -> return pi
-  VarExp id -> do 
-    ~(CVar value) <- getBinding id
-    return value
+  VarExp id -> liftM value $ getBinding id
   UOpExp op e' -> liftM (evalUOp op) $ simExp e'
   BOpExp e1 op e2 -> do
     e1' <- simExp e1
@@ -136,9 +110,8 @@ pushEnv :: [ID] -> [Exp] -> [ID] -> [Arg] -> State Env ()
 pushEnv cparams exps qparams args = do
   cbindings <- liftM (map CVar) $ mapM simExp exps
   qbindings <- liftM (map QVar) $ mapM getOffset args
-  env <- get
   let newbinds = Map.fromList $ List.zip cparams cbindings ++ List.zip qparams qbindings
-  put $ env {binds = newbinds : binds env}
+  modify $ \env -> env {binds = newbinds : binds env}
 
 popEnv :: State Env ()
 popEnv = do
