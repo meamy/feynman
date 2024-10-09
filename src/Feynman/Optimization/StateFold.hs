@@ -22,8 +22,6 @@ import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
-import Debug.Trace as Trace
-
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
    to help find extra T reductions. Allows identification of
@@ -212,8 +210,6 @@ runCircuit d circ = execState $ (mapM_ applyGate (zip circ [2..])) >> go where
      | d > 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions
          id <- applyReductions (Just d) -- reductions up to degree d
-         --Trace.trace ("Linear equations: " ++ show i1) $ return ()
-         --Trace.trace ("All equations: " ++ show id) $ return ()
          return ()
      | d < 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions
