@@ -6,7 +6,6 @@ import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
-import Debug.Trace (trace)
 import Numeric
 import Text.Read (readMaybe)
 
@@ -14,6 +13,11 @@ import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
 import Feynman.Frontend.OpenQASM3.Syntax
 import Feynman.Core hiding (subst, Decl)
 import Feynman.Synthesis.Phase
+
+-- For disabling tracing until these transformations
+-- can be integrating with a logging monad
+trace :: String -> a -> a
+trace _ a = a
 
 -- Adds unique id nuumbers to each node for identification
 decorateIDs :: Ast.Node Tag c -> Ast.Node Tag Int

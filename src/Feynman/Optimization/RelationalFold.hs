@@ -32,8 +32,6 @@ import Feynman.Algebra.Linear
 import Feynman.Synthesis.Phase
 import Feynman.Optimization.ARD
 
-import qualified Debug.Trace as Trace
-
 {-----------------------------------
  Utilities
  -----------------------------------}
@@ -137,10 +135,8 @@ applyGate (gate, loc) = case gate of
     let args = getArgs gate
     _ <- mapM getSt args
     ctx <- get
-    --Trace.trace (show ctx) $ return ()
     alloc $ length args
     ctx' <- get
-    --Trace.trace (show ctx') $ return ()
     dim' <- gets dim
     mapM_ (\(v,i) -> setSt v $ bitI dim' i) $ zip args [0..]
 
@@ -159,8 +155,6 @@ initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
 fastForward :: AffineRelation -> State Ctx ()
 fastForward summary = do
   ctx <- get
-  --Trace.trace ("Ctx: \n" ++ show ctx) $ return ()
-  --Trace.trace ("summary: \n" ++ show summary) $ return ()
   let (ids, vecs) = unzip . Map.toList $ ket ctx
   let vecs' = vals $ compose' (makeExplicit . ARD . fromList $ vecs) summary
   let ket' = Map.fromList $ zip ids vecs'
@@ -169,7 +163,6 @@ fastForward summary = do
   let ctx'  = ctx { dim   = dim',
                     ket   = ket',
                     terms = tms' }
-  --Trace.trace ("Ctx': \n" ++ show ctx') $ return ()
   put $ ctx'
 
 -- | Summarizes a conditional
@@ -192,9 +185,7 @@ loopSummary ctx' input = do
         go bv _   = bv /= 0
   modify (\ctx -> ctx { terms   = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle ztrms),
                         orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ tms) })
-  --Trace.trace ("Zeros and terms:\n" ++ show ztrms ++ "\n" ++ show tms) $ return ()
   return summary
-  --return $ starFF . makeExplicitFF . ARD . fromList . map (flip rotate (-1)) . Map.elems $ ket ctx'
 
 -- | Abstract transformers for while statements
 applyStmt :: WStmt Loc -> State (Ctx) ()
@@ -237,7 +228,6 @@ genSubstList vars inputs stmt =
 
   in
     foldr go Map.empty phases
-    --Trace.trace ("Final state: \n" ++ show result) $
 
 -- | Apply substitution list
 applyOpt :: Map Loc Angle -> WStmt Loc -> WStmt Loc
