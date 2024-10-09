@@ -3,7 +3,7 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
-import Feynman.Core (Primitive, ID, expandCNOT, idsW)
+import Feynman.Core (Primitive, ID, expandCNOT, expandCZ, idsW)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -63,6 +63,7 @@ data Pass = Triv
           | TPar
           | Cliff
           | CZ
+          | CX
           | Decompile
 
 data Options = Options { 
@@ -107,6 +108,7 @@ dotQCPass pass = case pass of
   TPar        -> optimizeDotQC tpar
   Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
+  CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
@@ -115,7 +117,7 @@ equivalenceCheckDotQC qc qc' =
       circ'   = DotQC.toCliffordT . DotQC.toGatelist $ qc'
       vars    = union (DotQC.qubits qc) (DotQC.qubits qc')
       ins     = Set.toList $ DotQC.inputs qc
-      result  = validate False vars ins circ circ'
+      result  = validate True vars ins circ circ'
   in
     case (DotQC.inputs qc == DotQC.inputs qc', result) of
       (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
@@ -170,6 +172,7 @@ qasmPass pureCircuit pass = case pass of
   TPar        -> QASM2.applyOpt tpar pureCircuit
   Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> QASM2.applyOpt (\_ _ -> expandCNOT) pureCircuit
+  CX          -> QASM2.applyOpt (\_ _ -> expandCZ) pureCircuit
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -263,7 +266,9 @@ printHelp = mapM_ putStrLn lines
           "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
           "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
-          "  -O4\t\tPhase folding + state folding + simplify + clifford resynthesis + CNOT min",
+          "  -apf\t\tAffine phase folding algorithm (equiv. to pyzx)",
+          "  -qpf\t\tQuadratic phase folding algorithm",
+          "  -ppf\t\tPolynomial phase folding algorithm",
           "",
           "Benchmarking",
           "  -benchmark <path>\tRun on all files in <folder> and output statistics",
@@ -309,6 +314,9 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs
   "-ara"         -> parseArgs doneSwitches options {passes = ara ++ passes options} xs
   "-pra"         -> parseArgs doneSwitches options {passes = (pra $ read (head xs)) ++ passes options} (tail xs)
+  "-apf"         -> parseArgs doneSwitches options {passes = apf ++ passes options} xs
+  "-qpf"         -> parseArgs doneSwitches options {passes = qpf ++ passes options} xs
+  "-ppf"         -> parseArgs doneSwitches options {passes = ppf ++ passes options} xs
   "-verify"      -> parseArgs doneSwitches options {verify = True} xs
   "-benchmark"   -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
   "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
@@ -321,9 +329,12 @@ parseArgs doneSwitches options (x:xs) = case x of
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
-  where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
-        o3 = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4 = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+  where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
+        o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        o4  = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         ara   = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
         pra d = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold d,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
@@ -331,7 +342,6 @@ parseArgs doneSwitches options (x:xs) = case x of
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
                               else readFile f >>= runQASM (passes options) (verify options) (pureCircuit options) f
         runFile f = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp
-
 
 main :: IO ()
 main = getArgs >>= parseArgs False defaultOptions

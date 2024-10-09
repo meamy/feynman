@@ -152,7 +152,7 @@ lexdegOrd m n = case grevlexOrd (Monomial mx) (Monomial nx) of
 
 -- | Default instance of order monomials
 instance Ord (Monomial String repr) where
-  compare = lexOrd
+  compare = grevlexOrd
 
 instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
