@@ -44,6 +44,7 @@ import Benchmarks (runBenchmarks,
                    benchmarksSmall,
                    benchmarksMedium,
                    benchmarksAll,
+                   benchmarksPOPL25,
                    benchmarkFolder,
                    formatFloatN)
 
@@ -80,7 +81,7 @@ optimizeDotQC f qc = qc { DotQC.decls = map go $ DotQC.decls qc }
               circuitInputs = (Set.toList $ DotQC.inputs qc) ++ DotQC.params decl
               wrap g        = DotQC.fromCliffordT . g . DotQC.toCliffordT
           in
-            decl { DotQC.body = wrap (f circuitQubits circuitQubits) $ DotQC.body decl }
+            decl { DotQC.body = wrap (f circuitQubits circuitInputs) $ DotQC.body decl }
 
 decompileDotQC :: DotQC.DotQC -> DotQC.DotQC
 decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
@@ -208,7 +209,7 @@ qasm3Pass pureCircuit pass = case pass of
   CT          -> id
   Simplify    -> id
   Phasefold   -> QASM3.applyWStmtOpt (L.genSubstList)
-  Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList)
+  Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
   CNOTMin     -> id
   TPar        -> id
   Cliff       -> id
@@ -259,7 +260,7 @@ printHelp = mapM_ putStrLn lines
           "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
           "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
-          "  -statefold d \tSlightly more powerful phase folding",
+          "  -statefold <d>\tPhase folding with state invariants up to degree <d> (or unbounded if d < 1)",
           "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
           "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
           "  -clifford\t\t Re-synthesize Clifford segments",
@@ -270,7 +271,9 @@ printHelp = mapM_ putStrLn lines
           "  -ppf\t\tPolynomial phase folding algorithm",
           "",
           "Benchmarking",
-          "  -benchmark <folder>\tRun on all files in <folder> and output statistics",
+          "  -benchmark <path>\tRun on all files in <folder> and output statistics",
+          "  -ara\t\t The affine optimization algorithm of (Amy & Lunderville, POPL 2025)",
+          "  -pra <d>\t\t The polynomial optimization algorithm (Amy & Lunderville, POPL 2025)",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
@@ -322,6 +325,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
   "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
   "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
+  "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
