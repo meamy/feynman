@@ -4,16 +4,20 @@
 module Main (main) where
 
 import Feynman.Core (Primitive, ID, expandCNOT, idsW)
+
 import qualified Feynman.Frontend.DotQC as DotQC
-import qualified Feynman.Frontend.OpenQASM.Lexer as OpenQASMLexer
-import qualified Feynman.Frontend.OpenQASM.Parser as OpenQASMParser
-import qualified Feynman.Frontend.OpenQASM.Syntax as OpenQASMSyntax
+
+import qualified Feynman.Frontend.OpenQASM.Syntax as QASM2
+import qualified Feynman.Frontend.OpenQASM.Lexer as QASM2Lexer
+import qualified Feynman.Frontend.OpenQASM.Parser as QASM2Parser
+
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
 import qualified Feynman.Frontend.OpenQASM3.Driver as OpenQASM3Driver
 import qualified Feynman.Frontend.OpenQASM3.Parser as OpenQASM3Parser
 import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Semantics
 import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
 import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as Tr
+
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
@@ -60,6 +64,12 @@ data Pass = Triv
           | Cliff
           | CZ
           | Decompile
+
+data Options = Options { 
+  passes :: [Pass],
+  verify :: Bool,
+  pureCircuit :: Bool,
+  useQASM3 :: Bool }
 
 {- DotQC -}
 
@@ -145,19 +155,19 @@ benchVerif False = Nothing
 
 {- QASM -}
 
-qasmPass :: Bool -> Pass -> (OpenQASMSyntax.QASM -> OpenQASMSyntax.QASM)
+qasmPass :: Bool -> Pass -> (QASM2.QASM -> QASM2.QASM)
 qasmPass pureCircuit pass = case pass of
   Triv        -> id
-  Inline      -> OpenQASMSyntax.inline
-  MCT         -> OpenQASMSyntax.inline
-  CT          -> OpenQASMSyntax.inline
+  Inline      -> QASM2.inline
+  MCT         -> QASM2.inline
+  CT          -> QASM2.inline
   Simplify    -> id
-  Phasefold   -> OpenQASMSyntax.applyOpt phaseFold pureCircuit
-  Statefold d -> OpenQASMSyntax.applyOpt (stateFold d) pureCircuit
-  CNOTMin     -> OpenQASMSyntax.applyOpt minCNOT pureCircuit
-  TPar        -> OpenQASMSyntax.applyOpt tpar pureCircuit
-  Cliff       -> OpenQASMSyntax.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
-  CZ          -> OpenQASMSyntax.applyOpt (\_ _ -> expandCNOT) pureCircuit
+  Phasefold   -> QASM2.applyOpt phaseFold pureCircuit
+  Statefold d -> QASM2.applyOpt (stateFold d) pureCircuit
+  CNOTMin     -> QASM2.applyOpt minCNOT pureCircuit
+  TPar        -> QASM2.applyOpt tpar pureCircuit
+  Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
+  CZ          -> QASM2.applyOpt (\_ _ -> expandCNOT) pureCircuit
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -169,16 +179,16 @@ runQASM passes verify pureCircuit fname src = do
       let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "// Feynman -- quantum circuit toolkit"
       putStrLn $ "// Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("//   " ++) $ OpenQASMSyntax.showStats qasm
+      mapM_ putStrLn . map ("//   " ++) $ QASM2.showStats qasm
       putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("//   " ++) $ OpenQASMSyntax.showStats qasm'
-      OpenQASMSyntax.emit qasm'
+      mapM_ putStrLn . map ("//   " ++) $ QASM2.showStats qasm'
+      QASM2.emit qasm'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
-          let qasm   = OpenQASMParser.parse . OpenQASMLexer.lexer $ src
-          symtab <- OpenQASMSyntax.check qasm
-          let qasm'  = OpenQASMSyntax.desugar symtab qasm -- For correct gate counts
+          let qasm   = QASM2Parser.parse . QASM2Lexer.lexer $ src
+          symtab <- QASM2.check qasm
+          let qasm'  = QASM2.desugar symtab qasm -- For correct gate counts
           qasm'' <- return $ foldr (qasmPass pureCircuit) qasm' passes
           return (qasm', qasm'')
 
@@ -229,36 +239,30 @@ runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
   let pass = foldr (.) (\a -> a) $ map qasm3PassShort passes
-  let !result =
-        ( do
-            parseTree <- OpenQASM3Parser.parseString src
-            let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
-            let optimized = pass normalized
-            --program <- OpenQASM3Driver.analyze parseTree
-            --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
-            --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
-            return (normalized, optimized)
-        )
+  let !result = do
+        parseTree <- OpenQASM3Parser.parseString src
+        let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
+        let optimized = pass normalized
+        --program <- OpenQASM3Driver.analyze parseTree
+        --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
+        --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
+        return (normalized, optimized)
   mapM_ putStrLn (Chatty.messages result)
   end <- getCPUTime
   let time = (fromIntegral $ end - start) / 10 ^ 9
   case result of
-    Chatty.Value _ (normalized, optimized) ->
-      ( do
-          putStrLn $ "// Feynman -- quantum circuit toolkit"
-          putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-          mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
-          putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-          mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
-          --putStrLn $ OpenQASM3Driver.emit optimized
-          putStrLn $ OpenQASM3Syntax.pretty optimized
-          return ()
-      )
-    Chatty.Failure _ err ->
-      ( do
-          putStrLn ("ERROR: " ++ err)
-          return ()
-      )
+    Chatty.Value _ (normalized, optimized) -> do
+      putStrLn $ "// Feynman -- quantum circuit toolkit"
+      putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
+      mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
+      putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+      mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
+      --putStrLn $ OpenQASM3Driver.emit optimized
+      putStrLn $ OpenQASM3Syntax.pretty optimized
+      return ()
+    Chatty.Failure _ err -> do
+      putStrLn ("ERROR: " ++ err)
+      return ()
 
 {- Main program -}
 
@@ -272,6 +276,8 @@ printHelp = mapM_ putStrLn lines
           "",
           "Options:",
           "  -purecircuit\tPerform qasm passes assuming the initial state (of qubits) is unknown",
+          "  -verify\tVerify equivalence of the output to the original circuit (only dotQC)",
+          "  -qasm3\tRun using the openQASM 3 frontend",
           "",
           "Transformation passes:",
           "  -inline\tInline all sub-circuits",
@@ -289,18 +295,16 @@ printHelp = mapM_ putStrLn lines
           "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
           "  -O4\t\tPhase folding + state folding + simplify + clifford resynthesis + CNOT min",
           "",
-          "Verification passes:",
-          "  -verify\tPerform verification algorithm of [A18] after all passes",
+          "Benchmarking",
+          "  -benchmark <folder>\tRun on all files in <folder> and output statistics",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
           "",
-          "WARNING: Using \"-verify\" with \"All\" may crash your computer without first setting",
-          "         user-level memory limits. Use with caution"
+          "Caution: Attempting to verify very large circuits can overload your system memory.",
+          "         Set user-level memory limits when doing so."
           ]
 
-
-data Options = Options {passes :: [Pass], verify :: Bool, pureCircuit :: Bool, useQASM3 :: Bool}
 
 defaultOptions = Options {passes = [], verify = False, pureCircuit = False, useQASM3 = False}
 
@@ -326,10 +330,10 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-O3"          -> parseArgs doneSwitches options {passes = o3 ++ passes options} xs
   "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs
   "-verify"      -> parseArgs doneSwitches options {verify = True} xs
-  "-benchmarks"  -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
+  "-benchmark"   -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
   "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
   "--"           -> parseArgs True options xs
-  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
+--  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
 --  "VerAlg"       -> runVerSuite
   "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
   "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
