@@ -8,15 +8,13 @@ import Feynman.Core (Primitive, ID, expandCNOT, idsW)
 import qualified Feynman.Frontend.DotQC as DotQC
 
 import qualified Feynman.Frontend.OpenQASM.Syntax as QASM2
-import qualified Feynman.Frontend.OpenQASM.Lexer as QASM2Lexer
+import qualified Feynman.Frontend.OpenQASM.Lexer  as QASM2Lexer
 import qualified Feynman.Frontend.OpenQASM.Parser as QASM2Parser
 
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
-import qualified Feynman.Frontend.OpenQASM3.Driver as OpenQASM3Driver
-import qualified Feynman.Frontend.OpenQASM3.Parser as OpenQASM3Parser
-import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Semantics
-import qualified Feynman.Frontend.OpenQASM3.Syntax as OpenQASM3Syntax
-import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as Tr
+import qualified Feynman.Frontend.OpenQASM3.Parser as QASM3Parser
+import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3Syntax
+import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as QASM3
 
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
@@ -54,6 +52,7 @@ import Benchmarks (runBenchmarks,
 
 data Pass = Triv
           | Inline
+          | Unroll
           | MCT
           | CT
           | Simplify
@@ -97,6 +96,7 @@ dotQCPass :: Pass -> (DotQC.DotQC -> DotQC.DotQC)
 dotQCPass pass = case pass of
   Triv        -> id
   Inline      -> DotQC.inlineDotQC
+  Unroll      -> id
   MCT         -> DotQC.expandToffolis
   CT          -> DotQC.expandAll
   Simplify    -> DotQC.simplifyDotQC
@@ -159,6 +159,7 @@ qasmPass :: Bool -> Pass -> (QASM2.QASM -> QASM2.QASM)
 qasmPass pureCircuit pass = case pass of
   Triv        -> id
   Inline      -> QASM2.inline
+  Unroll      -> id
   MCT         -> QASM2.inline
   CT          -> QASM2.inline
   Simplify    -> id
@@ -183,9 +184,7 @@ runQASM passes verify pureCircuit fname src = do
       putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
       mapM_ putStrLn . map ("//   " ++) $ QASM2.showStats qasm'
       QASM2.emit qasm'
-  where printErr (Left l)  = Left $ show l
-        printErr (Right r) = Right r
-        parseAndPass = do
+  where parseAndPass = do
           let qasm   = QASM2Parser.parse . QASM2Lexer.lexer $ src
           symtab <- QASM2.check qasm
           let qasm'  = QASM2.desugar symtab qasm -- For correct gate counts
@@ -194,75 +193,44 @@ runQASM passes verify pureCircuit fname src = do
 
 {- QASM3 -}
 
-qasm3Pass :: Bool -> Pass -> (OpenQASM3Semantics.Program -> Chatty.Chatty String String OpenQASM3Semantics.Program)
-qasm3Pass pureCircuit pass = case pass of
-  Triv        -> return
-  Inline      -> OpenQASM3Driver.inline
-  MCT         -> OpenQASM3Driver.inline
-  CT          -> OpenQASM3Driver.inline
-  Simplify    -> return
-  Phasefold   -> OpenQASM3Driver.applyOpt phaseFold pureCircuit
-  Statefold d -> OpenQASM3Driver.applyOpt (stateFold d) pureCircuit
-  CNOTMin     -> OpenQASM3Driver.applyOpt minCNOT pureCircuit
-  TPar        -> OpenQASM3Driver.applyOpt tpar pureCircuit
-  Cliff       -> OpenQASM3Driver.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
-  CZ          -> OpenQASM3Driver.applyOpt (\_ _ -> expandCNOT) pureCircuit
-
 showCounts :: Map String Int -> [String]
 showCounts = map f . Map.toList where
   f (gate, count) = gate ++ ": " ++ show count
 
-qasm3PassShort pass = case pass of
-  Triv        -> \a -> a
-  Inline      -> \a -> a
-  MCT         -> \a -> a
-  CT          -> \a -> a
-  Simplify    -> \a -> a
-  Phasefold   -> \a ->
-    let wstmt = Tr.buildModel a
-        vlst  = idsW wstmt
-        optls = L.genSubstList vlst vlst wstmt
-    in
-      Tr.applyPFOpt optls a
-  Statefold d -> \a ->
-    let wstmt = Tr.buildModel a
-        vlst  = idsW wstmt
-        optls = NL.genSubstList vlst vlst wstmt
-    in
-      Tr.applyPFOpt optls a
-  CNOTMin     -> \a -> a
-  TPar        -> \a -> a
-  Cliff       -> \a -> a
-  CZ          -> \a -> a
+qasm3Pass pureCircuit pass = case pass of
+  Triv        -> id
+  Inline      -> QASM3.inlineGateCalls
+  Unroll      -> QASM3.unrollLoops
+  MCT         -> id
+  CT          -> id
+  Simplify    -> id
+  Phasefold   -> QASM3.applyWStmtOpt (L.genSubstList)
+  Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList)
+  CNOTMin     -> id
+  TPar        -> id
+  Cliff       -> id
+  CZ          -> id
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
-  let pass = foldr (.) (\a -> a) $ map qasm3PassShort passes
-  let !result = do
-        parseTree <- OpenQASM3Parser.parseString src
-        let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ parseTree
-        let optimized = pass normalized
-        --program <- OpenQASM3Driver.analyze parseTree
-        --normalized <- OpenQASM3Driver.normalize program -- For correct gate counts
-        --optimized <- foldM (\pgm pass -> qasm3Pass pureCircuit pass pgm) program passes
-        return (normalized, optimized)
-  mapM_ putStrLn (Chatty.messages result)
-  end <- getCPUTime
-  let time = (fromIntegral $ end - start) / 10 ^ 9
-  case result of
-    Chatty.Value _ (normalized, optimized) -> do
+  end   <- parseAndPass `seq` getCPUTime
+  case parseAndPass of
+    Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
+    Chatty.Value _ (qasm, qasm') -> do
+      let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "// Feynman -- quantum circuit toolkit"
       putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-      mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
+      mapM_ putStrLn . map ("//   " ++) $ QASM3.showStats qasm
       putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
-      --putStrLn $ OpenQASM3Driver.emit optimized
-      putStrLn $ OpenQASM3Syntax.pretty optimized
+      mapM_ putStrLn . map ("//   " ++) $ QASM3.showStats qasm'
+      putStrLn $ QASM3Syntax.pretty qasm'
       return ()
-    Chatty.Failure _ err -> do
-      putStrLn ("ERROR: " ++ err)
-      return ()
+  where parseAndPass = do
+          qasm <- QASM3Parser.parseString  src
+          let qasm' = QASM3.decorateIDs qasm
+          qasm'' <- return $ foldr (qasm3Pass pureCircuit) qasm' passes
+          return (qasm, qasm'')
 
 {- Main program -}
 
@@ -281,6 +249,7 @@ printHelp = mapM_ putStrLn lines
           "",
           "Transformation passes:",
           "  -inline\tInline all sub-circuits",
+          "  -unroll\tUnroll loops (QASM3 specific)",
           "  -mctExpand\tExpand all MCT gates using |0>-initialized ancillas",
           "  -toCliffordT\tExpand all gates to Clifford+T gates",
           "",
@@ -306,7 +275,12 @@ printHelp = mapM_ putStrLn lines
           ]
 
 
-defaultOptions = Options {passes = [], verify = False, pureCircuit = False, useQASM3 = False}
+defaultOptions :: Options
+defaultOptions = Options {
+  passes = [],
+  verify = False,
+  pureCircuit = False,
+  useQASM3 = False }
 
 
 parseArgs :: Bool -> Options -> [String] -> IO ()
@@ -316,6 +290,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-h"           -> printHelp
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
+  "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs
   "-mctExpand"   -> parseArgs doneSwitches options {passes = MCT:passes options} xs
   "-toCliffordT" -> parseArgs doneSwitches options {passes = CT:passes options} xs
   "-simplify"    -> parseArgs doneSwitches options {passes = Simplify:passes options} xs
