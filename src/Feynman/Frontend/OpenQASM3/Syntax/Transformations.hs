@@ -297,6 +297,13 @@ applyPFOpt replacements node = go node where
     T _        -> "t"
     Tinv _     -> "tdg"
 
+-- Applies a While statement optimization to a qasm 3 program
+applyWStmtOpt :: ([ID] -> [ID] -> WStmt Loc -> Map Loc Angle) -> Ast.Node Tag Loc -> Ast.Node Tag Loc
+applyWStmtOpt opt node = applyPFOpt (opt vlst vlst wstmt) node' where
+  node' = decorateIDs node -- recompute to make sure IDs are unique
+  wstmt = buildModel node'
+  vlst  = idsW wstmt
+
 -- Counts gate calls
 countGateCalls :: Ast.Node Tag c -> Map String Int
 countGateCalls node = go Map.empty node where
@@ -305,3 +312,8 @@ countGateCalls node = go Map.empty node where
     let id = getIdent target in
       Map.insertWith (+) id 1 counts
   go counts (Ast.Node tag children c) = foldl go counts children
+
+-- Print out
+showStats :: Ast.Node Tag c -> [String]
+showStats = (map f . Map.toList) . countGateCalls where
+  f (gate, count) = gate ++ ": " ++ show count
