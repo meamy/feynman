@@ -304,16 +304,33 @@ applyWStmtOpt opt node = applyPFOpt (opt vlst vlst wstmt) node' where
   wstmt = buildModel node'
   vlst  = idsW wstmt
 
+-- Counts qubits
+countQubits :: Ast.Node Tag c -> Int
+countQubits node = length vlst where
+  vlst = idsW . buildModel . decorateIDs $ node
+
 -- Counts gate calls
 countGateCalls :: Ast.Node Tag c -> Map String Int
 countGateCalls node = go Map.empty node where
   go counts Ast.NilNode = counts
   go counts node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
-    let id = getIdent target in
-      Map.insertWith (+) id 1 counts
+    let id = getIdent target in case id of
+      "x"   -> Map.insertWith (+) "X" 1 counts
+      "y"   -> Map.insertWith (+) "Y" 1 counts
+      "z"   -> Map.insertWith (+) "Z" 1 counts
+      "h"   -> Map.insertWith (+) "H" 1 counts
+      "t"   -> Map.insertWith (+) "T" 1 counts
+      "tdg" -> Map.insertWith (+) "T" 1 counts
+      "s"   -> Map.insertWith (+) "S" 1 counts
+      "sdg" -> Map.insertWith (+) "S" 1 counts
+      "cx"  -> Map.insertWith (+) "cnot" 1 counts
+      "ccx" -> Map.unionWith (+) counts $ Map.fromList [("H", 2), ("cnot", 7), ("T", 7)]
+      _     -> Map.insertWith (+) id 1 counts
   go counts (Ast.Node tag children c) = foldl go counts children
 
--- Print out
+-- Print out stats
 showStats :: Ast.Node Tag c -> [String]
-showStats = (map f . Map.toList) . countGateCalls where
+showStats node = qubitCounts ++ gateCounts where
+  qubitCounts = ["Qubits: " ++ show (countQubits node)]
+  gateCounts = (map f . Map.toList) $ countGateCalls node
   f (gate, count) = gate ++ ": " ++ show count
