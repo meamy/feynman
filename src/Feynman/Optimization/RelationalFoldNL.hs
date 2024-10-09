@@ -201,12 +201,13 @@ reduceTerms = do
   put $ st { terms = Map.mapKeysWith comb (flip mvd $ ideal st) $ terms st }
 
 -- | Computes an ideal for the state
-computeIdeal :: State Ctx ()
-computeIdeal = do
-  i1 <- applyReductions (Just 1) -- linear reductions
-  i2 <- applyReductions (Just 2) -- quadratic reductions
-  ik <- applyReductions Nothing -- all other reductions
-  --modify (\st -> st { ideal = foldl (\gb -> reduceBasis . addToBasis gb) (ideal st) $ i1 ++ i2 ++ ik })
+computeIdeal :: Int -> State Ctx ()
+computeIdeal cutoff = do
+  i1 <- applyReductions (Just 1)      -- linear reductions
+  id <- case cutoff of
+    1         -> return []
+    x | x > 1 -> applyReductions (Just cutoff) -- reductions up to the degree cutoff
+    x | x < 1 -> applyReductions Nothing -- all other reductions
   return ()
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
   --return $ i1 ++ i2 ++ ik
@@ -255,12 +256,14 @@ initialState vars inputs = Ctx nVars 0 (Map.fromList ket) Map.empty 0 [] 0 [] wh
   ket = (zip inputs [ofVar (Init x) | x <- [0..]]) ++ (zip (vars\\inputs) $ repeat 0)
   
 -- | Apply the transformers for a list of gates and reduce the result
-runCircuit :: [Primitive] -> Ctx -> Ctx
-runCircuit circ = execState $ do
+runCircuit :: Int -> [Primitive] -> Ctx -> Ctx
+runCircuit cutoff circ = execState $ do
   mapM_ applyGate (zip circ [2..])
   i1 <- applyReductions (Just 1) -- linear reductions
-  i2 <- applyReductions (Just 2) -- quadratic reductions
-  ik <- applyReductions Nothing -- all other reductions
+  id <- case cutoff of
+    1         -> return []
+    x | x > 1 -> applyReductions (Just cutoff) -- reductions up to the degree cutoff
+    x | x < 1 -> applyReductions Nothing -- all other reductions
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
   return ()
 
@@ -377,42 +380,42 @@ loopSummary ctx' = do
   return (pp', summ) 
 
 -- | Abstract transformers for while statements
-applyStmt :: WStmt Loc -> State (Ctx) [String]
-applyStmt stmt = case stmt of
+applyStmt :: Int -> WStmt Loc -> State (Ctx) [String]
+applyStmt d stmt = case stmt of
   WSkip _      -> return []
   WGate l gate -> applyGate (gate, l) >> return []
-  WSeq _ xs    -> liftM concat $ mapM applyStmt xs
+  WSeq _ xs    -> liftM concat $ mapM (applyStmt d) xs
   WReset _ v   -> getSt v >>= \bv -> setSt v 0 >> return []
   WMeasure _ v -> getSt v >> return []
   WIf _ s1 s2  -> do
     ctx <- get
     let vars  = Map.keys $ ket ctx
-    let (a,ctx')  = runState (processBlock s1) $ initialState vars vars
-    let (b,ctx'') = runState (processBlock s2) $ initialState vars vars
+    let (a,ctx')  = runState (processBlock d s1) $ initialState vars vars
+    let (b,ctx'') = runState (processBlock d s2) $ initialState vars vars
     summary <- branchSummary ctx' ctx''
     fastForward summary
     return $ a ++ b
   WWhile l s   -> do
     ctx <- get
     let vars = Map.keys $ ket ctx
-    let (a,ctx') = runState (processBlock s) $ initialState vars vars
+    let (a,ctx') = runState (processBlock d s) $ initialState vars vars
     summary <- loopSummary ctx'
     fastForward summary
     return $ a ++ ["// Loop " ++ show l ++ " summary: " ++ show summary]
 
 -- | Analysis
-processBlock :: WStmt Loc -> State (Ctx) [String]
-processBlock stmt = do
-  summaries <- applyStmt stmt
-  computeIdeal
+processBlock :: Int -> WStmt Loc -> State (Ctx) [String]
+processBlock d stmt = do
+  summaries <- applyStmt d stmt
+  computeIdeal d
   reduceTerms
   return summaries
 
 -- | Generate substitution list
-genSubstList :: [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
-genSubstList vars inputs stmt =
+genSubstList :: Int -> [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
+genSubstList d vars inputs stmt =
 
-  let result = execState (processBlock stmt) $ initialState vars inputs
+  let result = execState (processBlock d stmt) $ initialState vars inputs
       phases = (Map.toList $ terms result) ++ [(1, t) | t <- orphans result]
       gphase = phase result
 
@@ -452,12 +455,12 @@ applyOpt opts stmt = go stmt where
     Rz _ x -> x
 
 -- | Optimization algorithm
-stateFoldpp :: [ID] -> [ID] -> WStmt Loc -> WStmt Loc
-stateFoldpp vars inputs stmt = applyOpt opts stmt where
-  opts = genSubstList vars inputs stmt
+stateFoldpp :: Int -> [ID] -> [ID] -> WStmt Loc -> WStmt Loc
+stateFoldpp d vars inputs stmt = applyOpt opts stmt where
+  opts = genSubstList d vars inputs stmt
 
 -- | Returns just the loop summaries
-summarizeLoops :: [ID] -> [ID] -> WStmt Loc -> [String]
-summarizeLoops vars inputs stmt = xs where
-  xs = evalState (processBlock stmt) $ initialState vars inputs
+summarizeLoops :: Int -> [ID] -> [ID] -> WStmt Loc -> [String]
+summarizeLoops d vars inputs stmt = xs where
+  xs = evalState (processBlock d stmt) $ initialState vars inputs
 
