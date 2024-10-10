@@ -66,7 +66,7 @@ data Pass = Triv
           | CT
           | Simplify
           | Phasefold
-          | PauliFold
+          | PauliFold Int
           | Statefold Int
           | CNOTMin
           | TPar
@@ -112,7 +112,7 @@ dotQCPass pass = case pass of
   CT          -> DotQC.expandAll
   Simplify    -> DotQC.simplifyDotQC
   Phasefold   -> optimizeDotQC phaseFold
-  PauliFold   -> optimizeDotQC (pauliFold 1)
+  PauliFold d -> optimizeDotQC (pauliFold d)
   Statefold d -> optimizeDotQC (stateFold d)
   CNOTMin     -> optimizeDotQC minCNOT
   TPar        -> optimizeDotQC tpar
@@ -178,7 +178,7 @@ qasmPass pureCircuit pass = case pass of
   Simplify    -> id
   Phasefold   -> QASM2.applyOpt phaseFold pureCircuit
   Statefold d -> QASM2.applyOpt (stateFold d) pureCircuit
-  PauliFold   -> QASM2.applyOpt (pauliFold 1) pureCircuit
+  PauliFold d -> QASM2.applyOpt (pauliFold d) pureCircuit
   CNOTMin     -> QASM2.applyOpt minCNOT pureCircuit
   TPar        -> QASM2.applyOpt tpar pureCircuit
   Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
@@ -221,8 +221,10 @@ qasm3Pass pureCircuit pass = case pass of
   CT          -> id
   Simplify    -> id
   Phasefold   -> QASM3.applyWStmtOpt (L.genSubstList)
+  Statefold 1 -> QASM3.applyWStmtOpt (L.genSubstList)
   Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
-  PauliFold   -> QASM3.applyWStmtOpt (NL.genSubstList 1)
+  PauliFold 1 -> QASM3.applyWStmtOpt (L.genSubstList)
+  PauliFold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
   CNOTMin     -> id
   TPar        -> id
   Cliff       -> id
@@ -247,9 +249,27 @@ runQASM3 passes verify pureCircuit fname src = do
       return ()
   where parseAndPass = do
           qasm <- QASM3Parser.parseString  src
-          let qasm' = QASM3.decorateIDs qasm
+          let qasm' = QASM3.unrollLoops . QASM3.inlineGateCalls . QASM3.decorateIDs $ qasm
           qasm'' <- return $ foldr (qasm3Pass pureCircuit) qasm' passes
-          return (qasm, qasm'')
+          return (qasm', qasm'')
+
+generateInvariants :: String -> IO ()
+generateInvariants fname = case drop (length fname - 5) fname == ".qasm" of
+  False -> putStrLn ("Must be a qasm file (" ++ fname ++ ")") >> printHelp
+  True  -> do
+    src <- readFile fname
+    case go src of
+      Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
+      Chatty.Value _ invs -> do
+        putStrLn $ "Loop invariants:"
+        mapM_ putStrLn . map ("\t" ++) $ invs
+        return ()
+  where go src = do
+          qasm <- QASM3Parser.parseString src
+          let qasm' = QASM3.decorateIDs . QASM3.unrollLoops . QASM3.inlineGateCalls $ qasm
+          let wstmt = QASM3.buildModel qasm'
+          let ids   = idsW wstmt
+          return $ NL.summarizeLoops 0 ids ids wstmt
 
 {- Main program -}
 
@@ -284,11 +304,14 @@ printHelp = mapM_ putStrLn lines
           "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
           "  -O4\t\tPhase folding + state folding + simplify + Clifford resynthesis + CNOT minimization",
           "",
-          "Benchmarking",
+          "Benchmarking:",
           "  -benchmark <path>\tRun on all files in <folder> and output statistics",
           "  -apf\t\tAffine phase folding (Amy & Lunderville, POPL 2025)",
           "  -qpf\t\tQuadratic phase folding (Amy & Lunderville, POPL 2025)",
           "  -ppf\t\tPolynomial phase folding (Amy & Lunderville, POPL 2025)",
+          "",
+          "Misc:",
+          "  -invgen <file>\tGenerates loop transition invariants and prints them",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
@@ -334,6 +357,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-verify"      -> parseArgs doneSwitches options {verify = True} xs
   "-benchmark"   -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
   "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
+  "-invgen"      -> generateInvariants (head xs)
   "--"           -> parseArgs True options xs
 --  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
 --  "VerAlg"       -> runVerSuite
@@ -345,10 +369,10 @@ parseArgs doneSwitches options (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
         o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4  = [CNOTMin,Cliff,PauliFold,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Simplify,PauliFold,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,PauliFold,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,PauliFold,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        o4  = [CNOTMin,Cliff,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,PauliFold 2,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,PauliFold 0,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
         runFile f | (drop (length f - 5) f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f

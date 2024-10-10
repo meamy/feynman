@@ -106,7 +106,7 @@ inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
   go node@(Ast.Node GateStmt [ident, params, args, stmts] c) = do
     stmts' <- go stmts
     modify (Map.insert (getIdent ident) $ Decl (getIdent ident) (map getIdent $ getList params) (map getIdent $ getList args) stmts')
-    return node
+    return Ast.NilNode
   go node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c)
     | getIdent target == "ccx" = do
         let [x,y,z] = getList gateArgs
@@ -280,16 +280,16 @@ applyPFOpt replacements node = go node where
   go Ast.NilNode = Ast.NilNode
   go node@(Ast.Node GateCallStmt children l) = case Map.lookup l replacements of
     Nothing    -> node
-    Just theta -> makeTheta theta (tail children) l
+    Just theta -> makeTheta theta children l
   go node@(Ast.Node tag children l) =
     let children' = map go children in
       Ast.Node tag children' l
 
-  makeTheta theta args l =
+  makeTheta theta (m:_:args) l =
     let prim = synthesizePhase "-" theta in
       case prim of
         [] -> Ast.NilNode
-        [x] -> Ast.Node GateCallStmt ((makeIdent $ nameOfGate x):args) l
+        [x] -> Ast.Node GateCallStmt (m:(makeIdent $ nameOfGate x):args) l
 
   makeIdent str = Ast.Node (Identifier str (IdentifierToken str)) [] 0
 
@@ -303,10 +303,11 @@ applyPFOpt replacements node = go node where
 
 -- Applies a While statement optimization to a qasm 3 program
 applyWStmtOpt :: ([ID] -> [ID] -> WStmt Loc -> Map Loc Angle) -> Ast.Node Tag Loc -> Ast.Node Tag Loc
-applyWStmtOpt opt node = applyPFOpt (opt vlst vlst wstmt) node' where
-  node' = decorateIDs node -- recompute to make sure IDs are unique
-  wstmt = buildModel node'
-  vlst  = idsW wstmt
+applyWStmtOpt opt node = result where
+  node'  = decorateIDs node -- recompute to make sure IDs are unique
+  wstmt  = simplifyWStmt' $ buildModel node'
+  vlst   = idsW wstmt
+  result = applyPFOpt (opt vlst vlst wstmt) node'
 
 -- Counts qubits
 countQubits :: Ast.Node Tag c -> Int
@@ -317,6 +318,7 @@ countQubits node = length vlst where
 countGateCalls :: Ast.Node Tag c -> Map String Int
 countGateCalls node = go Map.empty node where
   go counts Ast.NilNode = counts
+  go counts node@(Ast.Node GateStmt _ _) = counts
   go counts node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
     let id = getIdent target in case id of
       "x"   -> Map.insertWith (+) "X" 1 counts
