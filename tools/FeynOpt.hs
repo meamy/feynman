@@ -3,7 +3,15 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
-import Feynman.Core (Primitive, ID, expandCNOT, expandCZ, idsW)
+import Feynman.Core (Primitive,
+                     ID,
+                     simplifyPrimitive',
+                     expandCNOT,
+                     expandCNOT',
+                     annotate,
+                     unannotate,
+                     expandCZ,
+                     idsW)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -58,6 +66,7 @@ data Pass = Triv
           | CT
           | Simplify
           | Phasefold
+          | PauliFold
           | Statefold Int
           | CNOTMin
           | TPar
@@ -103,6 +112,7 @@ dotQCPass pass = case pass of
   CT          -> DotQC.expandAll
   Simplify    -> DotQC.simplifyDotQC
   Phasefold   -> optimizeDotQC phaseFold
+  PauliFold   -> optimizeDotQC (pauliFold 1)
   Statefold d -> optimizeDotQC (stateFold d)
   CNOTMin     -> optimizeDotQC minCNOT
   TPar        -> optimizeDotQC tpar
@@ -168,11 +178,13 @@ qasmPass pureCircuit pass = case pass of
   Simplify    -> id
   Phasefold   -> QASM2.applyOpt phaseFold pureCircuit
   Statefold d -> QASM2.applyOpt (stateFold d) pureCircuit
+  PauliFold   -> QASM2.applyOpt (pauliFold 1) pureCircuit
   CNOTMin     -> QASM2.applyOpt minCNOT pureCircuit
   TPar        -> QASM2.applyOpt tpar pureCircuit
   Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> QASM2.applyOpt (\_ _ -> expandCNOT) pureCircuit
   CX          -> QASM2.applyOpt (\_ _ -> expandCZ) pureCircuit
+  Decompile   -> id
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -210,10 +222,13 @@ qasm3Pass pureCircuit pass = case pass of
   Simplify    -> id
   Phasefold   -> QASM3.applyWStmtOpt (L.genSubstList)
   Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
+  PauliFold   -> QASM3.applyWStmtOpt (NL.genSubstList 1)
   CNOTMin     -> id
   TPar        -> id
   Cliff       -> id
   CZ          -> id
+  CX          -> id
+  Decompile   -> id
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
@@ -256,6 +271,7 @@ printHelp = mapM_ putStrLn lines
           "  -unroll\tUnroll loops (QASM3 specific)",
           "  -mctExpand\tExpand all MCT gates using |0>-initialized ancillas",
           "  -toCliffordT\tExpand all gates to Clifford+T gates",
+          "  -decompile\tDecompiles a Clifford+T circuit into multiply-controlled gates",
           "",
           "Optimization passes:",
           "  -simplify\tBasic gate-cancellation pass",
@@ -266,14 +282,13 @@ printHelp = mapM_ putStrLn lines
           "  -clifford\t\t Re-synthesize Clifford segments",
           "  -O2\t\t**Standard strategy** Phase folding + simplify",
           "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
-          "  -apf\t\tAffine phase folding algorithm (equiv. to pyzx)",
-          "  -qpf\t\tQuadratic phase folding algorithm",
-          "  -ppf\t\tPolynomial phase folding algorithm",
+          "  -O4\t\tPhase folding + state folding + simplify + Clifford resynthesis + CNOT minimization",
           "",
           "Benchmarking",
           "  -benchmark <path>\tRun on all files in <folder> and output statistics",
-          "  -ara\t\t The affine optimization algorithm of (Amy & Lunderville, POPL 2025)",
-          "  -pra <d>\t\t The polynomial optimization algorithm (Amy & Lunderville, POPL 2025)",
+          "  -apf\t\tAffine phase folding (Amy & Lunderville, POPL 2025)",
+          "  -qpf\t\tQuadratic phase folding (Amy & Lunderville, POPL 2025)",
+          "  -ppf\t\tPolynomial phase folding (Amy & Lunderville, POPL 2025)",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
@@ -328,12 +343,12 @@ parseArgs doneSwitches options (x:xs) = case x of
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
-  where o2 = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
-        o3 = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4 = [CNOTMin,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,Statefold 1,Cliff,Simplify,CZ,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+  where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
+        o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        o4  = [CNOTMin,Cliff,PauliFold,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,PauliFold,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,PauliFold,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,PauliFold,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
         runFile f | (drop (length f - 5) f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
