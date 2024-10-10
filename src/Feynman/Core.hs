@@ -85,6 +85,8 @@ data Primitive =
   | Uninterp ID [ID]
   deriving (Eq)
 
+type AnnotatedPrimitive = (Primitive, Loc)
+
 data Stmt =
     Gate Primitive
   | Seq [Stmt]
@@ -259,6 +261,46 @@ expandCZ = concatMap go where
   go x = case x of
     CZ c t      -> [H t, CNOT c t, H t]
     _           -> [x]
+
+-- Annotated passes
+
+annotate :: [Primitive] -> [AnnotatedPrimitive]
+annotate = (flip zip) [1..]
+
+annotateWith :: Loc -> [Primitive] -> [AnnotatedPrimitive]
+annotateWith l = (flip zip) (repeat l)
+
+unannotate :: [AnnotatedPrimitive] -> [Primitive]
+unannotate = fst . unzip
+  
+expandCNOT' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+expandCNOT' = concatMap go where
+  go (x,l) = case x of
+    CNOT c t      -> [(H t,l), (CZ c t,l), (H t,l)]
+    _             -> [(x,l)]
+
+simplifyPrimitive' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+simplifyPrimitive' = converge simplify where
+  simplify :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+  simplify circ =
+    let erasures = snd $ foldl' f (Map.empty, Set.empty) $ zip circ [2..]
+
+        allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
+
+        f (last, erasures) ((gate,_), uid) =
+          let args     = getArgs gate
+              last'    = foldr (\q -> Map.insert q (gate, uid)) last args
+              frontier = mapM (\q -> Map.lookup q last) args
+              checkDagger (gate', uid')
+                | gate' == daggerGate gate = Just (gate', uid')
+                | otherwise                = Nothing
+          in
+            case frontier >>= allSame >>= checkDagger of
+              Nothing            -> (last', erasures)
+              Just (gate', uid') ->
+                (foldr Map.delete last' args, Set.insert uid $ Set.insert uid' erasures)
+    in
+      fst . unzip . filter (\(_, uid) -> not $ Set.member uid erasures) . zip circ $ [2..]
 
 -- Builtin circuits
 
