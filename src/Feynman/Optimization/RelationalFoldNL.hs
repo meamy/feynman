@@ -34,7 +34,6 @@ import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
 
-import qualified Debug.Trace as Trace
 
 {-----------------------------------
  Utilities
@@ -163,10 +162,10 @@ elimVar x = modify $ \st -> st { pp = remVar x $ pp st }
 -- | Substitute a variable
 substVar :: Var -> SBool Var -> State Ctx ()
 substVar x bexp = modify go where
-  go st = st { --terms = Map.mapKeysWith c f $ terms st,
+  go st = st { terms = Map.mapKeysWith c f $ terms st,
                pp    = P.subst x bexp $ pp st,
                ket   = Map.map (P.subst x bexp) $ ket st }
-  --f = dropConstant . P.subst x bexp
+  f = dropConstant . P.subst x bexp
   c (s1, a1) (s2, a2) = (Set.union s1 s2, a1 + a2)
 
 -- | Matches a instance of [HH] with maximum degree /cutoff/
@@ -202,12 +201,14 @@ reduceTerms = do
   put $ st { terms = Map.mapKeysWith comb (flip mvd $ ideal st) $ terms st }
 
 -- | Computes an ideal for the state
-computeIdeal :: State Ctx ()
-computeIdeal = do
-  i1 <- applyReductions (Just 1) -- linear reductions
-  i2 <- applyReductions (Just 2) -- quadratic reductions
-  ik <- applyReductions Nothing -- all other reductions
-  modify (\st -> st { ideal = foldl (\gb -> reduceBasis . addToBasis gb) (ideal st) $ i1 ++ i2 ++ ik })
+computeIdeal :: Int -> State Ctx ()
+computeIdeal cutoff = do
+  i1 <- applyReductions (Just 1)      -- linear reductions
+  id <- case cutoff of
+    1         -> return []
+    x | x > 1 -> applyReductions (Just cutoff) -- reductions up to the degree cutoff
+    x | x < 1 -> applyReductions Nothing -- all other reductions
+  return ()
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
   --return $ i1 ++ i2 ++ ik
 
@@ -241,7 +242,12 @@ applyGate (gate, l) = case gate of
     bexp' <- getSt v
     setSt u bexp'
     setSt v bexp
-  _      -> error $ "Unsupported gate " ++ show gate
+  _        -> do
+    let args = getArgs gate
+    mapM_ getSt args
+    xs <- mapM (\_ -> allocTemp) [0..length args - 1]
+    mapM_ (\i -> addTerm (Continuous (sqrt 2)) l (ofVar i)) $ xs
+    mapM_ (\(v,i) -> setSt v (ofVar i)) $ zip args xs
 
 -- | The initial state
 initialState :: [ID] -> [ID] -> Ctx
@@ -250,16 +256,19 @@ initialState vars inputs = Ctx nVars 0 (Map.fromList ket) Map.empty 0 [] 0 [] wh
   ket = (zip inputs [ofVar (Init x) | x <- [0..]]) ++ (zip (vars\\inputs) $ repeat 0)
   
 -- | Apply the transformers for a list of gates and reduce the result
-runCircuit :: [Primitive] -> Ctx -> Ctx
-runCircuit circ = execState $ do
+runCircuit :: Int -> [Primitive] -> Ctx -> Ctx
+runCircuit cutoff circ = execState $ do
   mapM_ applyGate (zip circ [2..])
   i1 <- applyReductions (Just 1) -- linear reductions
-  i2 <- applyReductions (Just 2) -- quadratic reductions
-  ik <- applyReductions Nothing -- all other reductions
+  id <- case cutoff of
+    1         -> return []
+    x | x > 1 -> applyReductions (Just cutoff) -- reductions up to the degree cutoff
+    x | x < 1 -> applyReductions Nothing -- all other reductions
   --reduceAll $ rbuchberger $ i1 ++ i2 ++ ik
   return ()
 
 -- | The optimization restricted to circuits
+{-
 stateFold :: [ID] -> [ID] -> [Primitive] -> [Primitive]
 stateFold vars inputs circ =
   let result = runCircuit circ $ initialState vars inputs
@@ -287,6 +296,7 @@ stateFold vars inputs circ =
           Rz _ x -> x
   in
     (fst $ unzip $ circ') ++ (globalPhase (head vars) gphase)
+-}
 
 {-----------------------------------
  State folding of the quantum WHILE
@@ -325,32 +335,22 @@ star f = go f where
 fastForward :: (PseudoBoolean Var Angle, TransIdeal) -> State Ctx ()
 fastForward (poly, summary) = do
   ctx <- get
-  Trace.trace ("Ctx: \n" ++ show ctx ++ "\n") $ return ()
-  Trace.trace ("poly: \n" ++ show poly ++ "\n") $ return ()
-  Trace.trace ("summary: \n" ++ show summary ++ "\n") $ return ()
   let n = nVars ctx
   let t = nTemps ctx
   let (ids, st) = unzip . Map.toList $ ket ctx
   let trans = rbuchberger $ map (\(p,i) -> ofVar (Temp $ i+n+t)+p) $ zip st [0..]
-  Trace.trace ("trans shifted: \n" ++ show trans ++ "\n") $ return ()
   let evars = [Temp $ i+n+t | i <- [0..n-1]]
   let poly' = (rename (shiftInits $ Just (t+n)) . rename (shiftPrimes $ Just t)) $ poly
   let sum'  = map (rename (shiftInits $ Just (t+n)) . rename (shiftPrimes $ Just t)) summary
-  Trace.trace ("poly shifted: \n" ++ show poly' ++ "\n") $ return ()
-  Trace.trace ("summary shifted: \n" ++ show sum' ++ "\n") $ return ()
   let ideal = idealPlus trans sum'
-  Trace.trace ("transition ideal: \n" ++ show ideal  ++ "\n") $ return ()
   let pRed  = mvdInPP poly' ideal
-  Trace.trace ("poly reduced: \n" ++ show pRed ++ "\n") $ return ()
   let trans' = eliminateVars evars $ ideal
-  Trace.trace ("existentials removed: \n" ++ show trans' ++ "\n") $ return ()
   let ideal'= idealPlus ideal trans'
   let ket'  = Map.fromList $ zip ids (map (flip mvd trans') [ofVar (Temp $ i+t) | i <- [0..n-1]])
   let ctx'  = ctx { nTemps = t+n,
                     pp     = pp ctx + pRed,
                     ket    = ket',
                     ideal  = ideal'}
-  Trace.trace ("Ctx': \n" ++ show ctx' ++ "\n") $ return ()
   put $ ctx'
 
 -- | Summarizes a conditional
@@ -363,7 +363,8 @@ branchSummary ctx' ctx'' = do
   let p1 = scale (Continuous (sqrt 2)) $ mvdInPP (pp ctx') i1
   let i2 = rbuchberger $ map (\(p,i) -> ofVar (Prime i) + p) $ zip (Map.elems $ ket ctx'') [0..]
   let p2 = scale (Continuous (sqrt 2)) $ mvdInPP (pp ctx'') i2
-  return (p1+p2, join (eliminateAll i1) (eliminateAll i2))
+  let summ = join (eliminateAll i1) (eliminateAll i2)
+  return (p1+p2, summ)
 
 -- | Summarizes a loop
 --
@@ -375,39 +376,46 @@ loopSummary ctx' = do
   -- First compute an elimination basis to canonicalize pp over [X,X']
   let ideal = rbuchberger $ map (\(p,i) -> ofVar (Prime i) + p) $ zip (Map.elems $ ket ctx') [0..]
   let pp'   = scale (Continuous (sqrt 2)) $ mvdInPP (pp ctx') ideal
-  return (pp', star $ eliminateAll ideal) 
+  let summ  = star $ eliminateAll ideal
+  return (pp', summ) 
 
 -- | Abstract transformers for while statements
-applyStmt :: WStmt -> State (Ctx) ()
-applyStmt stmt = case stmt of
-  WSkip _      -> return ()
-  WGate l gate -> applyGate (gate, l)
-  WSeq _ s1 s2 -> applyStmt s1 >> applyStmt s2
-  WReset _ v   -> getSt v >>= \bv -> setSt v 0
-  WMeasure _ v -> getSt v >> return ()
+applyStmt :: Int -> WStmt Loc -> State (Ctx) [String]
+applyStmt d stmt = case stmt of
+  WSkip _      -> return []
+  WGate l gate -> applyGate (gate, l) >> return []
+  WSeq _ xs    -> liftM concat $ mapM (applyStmt d) xs
+  WReset _ v   -> getSt v >>= \bv -> setSt v 0 >> return []
+  WMeasure _ v -> getSt v >> return []
   WIf _ s1 s2  -> do
     ctx <- get
     let vars  = Map.keys $ ket ctx
-    let ctx'  = execState (processBlock s1) $ initialState vars vars
-    let ctx'' = execState (processBlock s2) $ initialState vars vars
+    let (a,ctx')  = runState (processBlock d s1) $ initialState vars vars
+    let (b,ctx'') = runState (processBlock d s2) $ initialState vars vars
     summary <- branchSummary ctx' ctx''
     fastForward summary
-  WWhile _ s   -> do
+    return $ a ++ b
+  WWhile l s   -> do
     ctx <- get
     let vars = Map.keys $ ket ctx
-    let ctx' = execState (processBlock s) $ initialState vars vars
+    let (a,ctx') = runState (processBlock d s) $ initialState vars vars
     summary <- loopSummary ctx'
     fastForward summary
+    return $ a ++ ["// Loop " ++ show l ++ " summary: " ++ show summary]
 
 -- | Analysis
-processBlock :: WStmt -> State (Ctx) ()
-processBlock stmt = applyStmt stmt >> computeIdeal >> reduceTerms
+processBlock :: Int -> WStmt Loc -> State (Ctx) [String]
+processBlock d stmt = do
+  summaries <- applyStmt d stmt
+  computeIdeal d
+  reduceTerms
+  return summaries
 
 -- | Generate substitution list
-genSubstList :: [ID] -> [ID] -> WStmt -> Map Loc Angle
-genSubstList vars inputs stmt =
+genSubstList :: Int -> [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
+genSubstList d vars inputs stmt =
 
-  let result = execState (processBlock stmt) $ initialState vars inputs
+  let result = execState (processBlock d stmt) $ initialState vars inputs
       phases = (Map.toList $ terms result) ++ [(1, t) | t <- orphans result]
       gphase = phase result
 
@@ -420,10 +428,10 @@ genSubstList vars inputs stmt =
           Set.foldr update map locs
 
   in
-    Trace.trace ("Final state: \n" ++ show result) $ foldr go Map.empty phases
+    foldr go Map.empty phases
 
 -- | Apply substitution list
-applyOpt :: Map Loc Angle -> WStmt -> WStmt
+applyOpt :: Map Loc Angle -> WStmt Loc -> WStmt Loc
 applyOpt opts stmt = go stmt where
   go stmt = case stmt of
     WSkip l      -> WSkip l
@@ -431,8 +439,8 @@ applyOpt opts stmt = go stmt where
       Nothing    -> WGate l gate
       Just angle ->
         let gatelist = synthesizePhase (getTarget gate) angle in
-          foldr (WSeq l) (WSkip l) $ map (WGate l) gatelist
-    WSeq l s1 s2 -> WSeq l (go s1) (go s2)
+          WSeq l $ map (WGate l) gatelist
+    WSeq l xs    -> WSeq l (map go xs)
     WReset l v   -> stmt
     WMeasure l v -> stmt
     WIf l s1 s2  -> WIf l (go s1) (go s2)
@@ -447,66 +455,12 @@ applyOpt opts stmt = go stmt where
     Rz _ x -> x
 
 -- | Optimization algorithm
-stateFoldpp :: [ID] -> [ID] -> WStmt -> WStmt
-stateFoldpp vars inputs stmt = applyOpt opts stmt where
-  opts = genSubstList vars inputs stmt
+stateFoldpp :: Int -> [ID] -> [ID] -> WStmt Loc -> WStmt Loc
+stateFoldpp d vars inputs stmt = applyOpt opts stmt where
+  opts = genSubstList d vars inputs stmt
 
--- Testing
-v = ["x", "y", "z"]
+-- | Returns just the loop summaries
+summarizeLoops :: Int -> [ID] -> [ID] -> WStmt Loc -> [String]
+summarizeLoops d vars inputs stmt = xs where
+  xs = evalState (processBlock d stmt) $ initialState vars inputs
 
-testcase1 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WWhile 4 $ WGate 5 $ CNOT "x" "y") $
-            WGate 6 $ Tinv "x"
-
-testcase2 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WIf 4 (WGate 5 $ CNOT "x" "y") (WSkip 6)) $
-            WGate 7 $ Tinv "x"
-
-testcase3 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WReset 4 "x") $
-            WGate 5 $ T "x"
-
-testcase4 = WSeq 1 (WGate 2 $ CNOT "x" "y") $
-            WSeq 3 (WGate 4 $ T "y") $
-            WSeq 5 (WGate 6 $ CNOT "x" "y") $
-            WSeq 7 (WWhile 8 $ WGate 9 $ Swap "x" "y") $
-            WSeq 10 (WGate 11 $ CNOT "x" "y") $
-            WSeq 12 (WGate 13 $ Tinv "y") $
-            WGate 14 $ CNOT "x" "y"
-
-testcase5 = WSeq 1 (WGate 2 $ T "y") $
-            WSeq 3 (WWhile 4 $ WGate 5 $ H "x") $
-            WGate 6 $ Tinv "y"
-
-testcase6 = WSeq 1 (WGate 2 $ T "y") $
-            WSeq 3 (WWhile 4 $
-                    WSeq 5 (WGate 6 $ T "x") $
-                    WWhile 7 $ (WGate 8 $ X "y")) $
-            WGate 9 $ Tinv "y"
-
-testcase7 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WGate 4 $ H "x") $
-            WSeq 5 (WWhile 6 $ WGate 7 $ T "y") $
-            WSeq 8 (WGate 9 $ H "x") $
-            WGate 10 $ Tinv "x"
-
-testcase8 = WSeq 1 (WGate 2 $ T "x") $
-            WSeq 3 (WGate 4 $ H "x") $
-            WSeq 5 (WWhile 6 $ WGate 7 $ T "x") $
-            WSeq 8 (WGate 9 $ H "x") $
-            WGate 10 $ Tinv "x"
-
-testcase9 = WSeq 1 (WGate 2 $ T "y") $
-            WSeq 3 (WWhile 4 $
-                       WSeq 5 (WGate 6 $ Swap "x" "y") $
-                       WGate 8 $ Swap "y" "z") $
-            WGate 10 $ Tinv "y"
-
-toStmt i xs = go i xs where
-  go i []     = WSkip i
-  go i (x:xs) = WSeq i (WGate (i+1) x) $ go (i+2) xs
-
-testcase10 = WSeq 1 (WReset 2 "z") $
-             WSeq 3 (toStmt 4 $ [X "x"] ++ ccx "x" "y" "z" ++ [T "z"] ++ ccx "x" "y" "z" ++ [X "x"]) $
-             WSeq 100 (WWhile 101 $ WGate 102 $ CNOT "x" "y") $
-             toStmt 103 $ [X "x"] ++ ccx "x" "y" "z" ++ [T "z"] ++ ccx "x" "y" "z" ++ [X "x"]
