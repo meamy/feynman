@@ -213,7 +213,6 @@ applyStmt stmt = case stmt of
 -- | Generate substitution list
 genSubstList :: [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
 genSubstList vars inputs stmt =
-
   let result = execState (applyStmt stmt) $ initialState vars inputs
       phases = (snd . unzip . Map.toList $ terms result) ++ orphans result
       gphase = phase result

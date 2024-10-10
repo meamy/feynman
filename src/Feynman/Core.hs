@@ -111,6 +111,7 @@ data WStmt a =
   | WMeasure a ID
   | WIf a (WStmt a) (WStmt a)
   | WWhile a (WStmt a)
+  deriving (Eq)
 
 {- Utilities -}
 foldCirc f b c = foldl (foldStmt f . body) b (decls c)
@@ -302,6 +303,29 @@ simplifyPrimitive' = converge simplify where
     in
       fst . unzip . filter (\(_, uid) -> not $ Set.member uid erasures) . zip circ $ [2..]
 
+-- WStmt passes
+simplifyWStmt' :: WStmt Loc -> WStmt Loc
+simplifyWStmt' = converge simplify where
+  simplify wstmt = case wstmt of
+    WSkip l      -> WSkip l
+    WGate l gate -> WGate l gate
+    WSeq l xs    -> case go [] xs of
+      []  -> WSkip l
+      xs' -> WSeq l xs'
+    WReset l v   -> WReset l v
+    WMeasure l v -> WMeasure l v
+    WIf l s1 s2  -> WIf l (simplify s1) (simplify s2)
+    WWhile l s   -> WWhile l (simplify s)
+
+  go gates []     = toGates gates
+  go gates (x:xs) = case x of
+    WSkip _      -> go gates xs
+    WGate l gate -> go (gates ++ [(gate,l)]) xs
+    WSeq l xs'   -> go gates (xs' ++ xs)
+    _            -> toGates gates ++ [simplify x] ++ go [] xs
+
+  toGates = map (\(g,l) -> WGate l g) . simplifyPrimitive'
+
 -- Builtin circuits
 
 cs :: ID -> ID -> [Primitive]
@@ -359,15 +383,14 @@ instance Show Circuit where
 
 instance Show (WStmt a) where
   show stmt = intercalate "\n" $ go stmt where
-    go :: (WStmt a) -> [String]
-    go (WSkip _)      = ["SKIP"]
-    go (WGate _ gate) = [show gate]
-    go (WSeq _ xs)    = concatMap go xs
-    go (WReset _ v)   = ["RESET " ++ v]
-    go (WMeasure _ v) = ["* <- MEASURE " ++ v]
-    go (WIf _ s1 s2)  = ["IF * THEN:"] ++ (map ('\t':) $ go s1)
+    go (WSkip a)      = ["SKIP"]
+    go (WGate a gate) = [show gate]
+    go (WSeq a xs)    = concatMap go xs
+    go (WReset a v)   = ["RESET " ++ v]
+    go (WMeasure a v) = ["* <- MEASURE " ++ v]
+    go (WIf a s1 s2)  = ["IF * THEN:"] ++ (map ('\t':) $ go s1)
                         ++ ["ELSE:"] ++ (map ('\t':) $ go s2)
-    go (WWhile _ s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
+    go (WWhile a s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
 
 showLst = intercalate " "
 
