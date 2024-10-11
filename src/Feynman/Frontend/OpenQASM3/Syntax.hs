@@ -4,6 +4,8 @@ module Feynman.Frontend.OpenQASM3.Syntax
   ( ParseNode,
     Token (..),
     Tag (..),
+    isEmptyStatement,
+    pruneEmptyStatements,
     pretty,
     normalizeParens,
     tokenIdentifierName,
@@ -16,6 +18,19 @@ module Feynman.Frontend.OpenQASM3.Syntax
     tokenVersionMajMin,
     tokenStringVal,
     tokenStr,
+    withContext,
+    node,
+    programNode,
+    stmtNode,
+    withAnnotations,
+    binOpNode,
+    unOpNode,
+    identifierNode,
+    integerLiteralNode,
+    floatLiteralNode,
+    imaginaryLiteralNode,
+    booleanLiteralNode,
+    bitstringLiteralNode,
   )
 where
 
@@ -23,11 +38,11 @@ import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Debug.Trace (trace)
-import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
+import Feynman.Frontend.OpenQASM3.Ast
 import Numeric
 import Text.Read (readMaybe)
 
-type ParseNode = Ast.Node Tag Ast.SourceRef
+type ParseNode = Node Tag SourceRef
 
 data Token
   = EofToken
@@ -177,8 +192,8 @@ data Tag
   | BreakStmt -- []
   | CalStmt {calBlockTok :: Token} -- []
   | DefcalgrammarStmt {calgrammarName :: String, calgrammarTok :: Token} -- []
-  | ClassicalDeclStmt -- [ScalarTypeSpec | ArrayTypeSpec, Identifier, DeclarationExpr?]
-  | ConstDeclStmt -- [ScalarTypeSpec, Identifier, DeclarationExpr]
+  | ClassicalDeclStmt -- [ScalarTypeSpec | ArrayTypeSpec, Identifier, InitializerExpr?]
+  | ConstDeclStmt -- [ScalarTypeSpec, Identifier, InitializerExpr]
   | ContinueStmt -- []
   | DefStmt -- [Identifier, List<ArgumentDefinition>, ScalarTypeSpec?, Scope]
   | DefcalStmt -- [DefcalTarget, List<(Expression | ArgumentDefinition)>?, List<HardwareQubit | Identifier>, ScalarTypeSpec?, CalBlock]
@@ -189,7 +204,7 @@ data Tag
   | ForStmt -- [ScalarTypeSpec, Identifier, (Expression | Range | Set), (Statement | Scope)]
   | GateStmt -- [Identifier, List<Identifier>?, List<Identifier>, Scope]
   | GateCallStmt -- [modifiers::List<GateModifier>, target::Identifier, params::List<Expression>?, designator::Expression?, args::List<(HardwareQubit | IndexedIdentifier)>?]
-  | IfStmt -- [condition::Expression, thenBlock::(Statement | Scope), elseBlock::(Statement | Scope)?
+  | IfStmt -- [condition::Expression, then::(Statement | Scope), else::(Statement | Scope)?
   | IncludeStmt {includePath :: String, includeTok :: Token} -- []
   | InputIoDeclStmt -- [(ScalarTypeSpec | ArrayTypeSpec), Identifier]
   | OutputIoDeclStmt -- [(ScalarTypeSpec | ArrayTypeSpec), Identifier]
@@ -255,34 +270,50 @@ data Tag
   | List -- [element..]
   deriving (Eq, Read, Show)
 
+isEmptyStatement :: Node Tag c -> Bool
+isEmptyStatement NilNode = True
+isEmptyStatement (Node Statement (NilNode : _) _) = True
+isEmptyStatement _ = False
+
+pruneEmptyStatements :: Node Tag c -> Node Tag c
+pruneEmptyStatements NilNode = NilNode
+pruneEmptyStatements pgm@(Node (Program {}) statements _) =
+  pgm {children = filter (not . isEmptyStatement) (map pruneEmptyStatements statements)}
+pruneEmptyStatements scope@(Node Scope statements _) =
+  scope {children = filter (not . isEmptyStatement) (map pruneEmptyStatements statements)}
+pruneEmptyStatements node@(Node _ children _) = node {children = map pruneEmptyStatements children}
+
 -- Convert the syntax tree back into a string form that can be parsed into an
 -- equivalent tree
-pretty :: Ast.Node Tag c -> String
-pretty Ast.NilNode = ""
-pretty (Ast.Node (Program _ _ EofToken) stmts _) =
-  concatMap ((++ "\n") . pretty) stmts
-pretty (Ast.Node (Program _ _ tok) stmts _) =
+pretty :: Node Tag c -> String
+pretty (Node (Program _ _ EofToken) stmts _) =
+  let prunedStmts = filter (not . isEmptyStatement) stmts
+   in concatMap ((++ "\n") . pretty) prunedStmts
+pretty (Node (Program _ _ tok) stmts _) =
   "OPENQASM " ++ tokenStr tok ++ ";\n\n" ++ concatMap ((++ "\n") . pretty) stmts
-pretty (Ast.Node (Pragma ctnt _) [] _) = "pragma " ++ ctnt
-pretty (Ast.Node Statement (stmt : annots) _) = concatMap ((++ "\n") . pretty) annots ++ pretty stmt
-pretty (Ast.Node (Annotation name ctnt _) [] _) = '@' : name ++ " " ++ ctnt
-pretty (Ast.Node Scope [] _) = "{ }"
-pretty (Ast.Node Scope [stmt] _) = "{ " ++ pretty stmt ++ " }"
-pretty (Ast.Node Scope stmts _) = "{\n" ++ indent (concatMap ((++ "\n") . pretty) stmts) ++ "}"
-pretty (Ast.Node AliasDeclStmt (ident : exprs) _) =
+pretty (Node (Pragma ctnt _) [] _) = "pragma " ++ ctnt
+pretty (Node Statement (stmt : annots) _) = concatMap ((++ "\n") . pretty) annots ++ pretty stmt
+pretty (Node (Annotation name ctnt _) [] _) = '@' : name ++ " " ++ ctnt
+pretty (Node Scope stmts _) =
+  let prunedStmts = filter (not . isEmptyStatement) stmts
+   in case prunedStmts of
+        [] -> "{ }"
+        [stmt] -> "{ " ++ pretty stmt ++ " }"
+        _ -> "{\n" ++ indent (concatMap ((++ "\n") . pretty) prunedStmts) ++ "}"
+pretty (Node AliasDeclStmt (ident : exprs) _) =
   "let " ++ pretty ident ++ " = " ++ intercalate " ++ " (map pretty exprs) ++ ";"
-pretty (Ast.Node (AssignmentStmt op) [target, expr] _) = pretty target ++ " " ++ tokenStr op ++ " " ++ pretty expr ++ ";"
-pretty (Ast.Node BarrierStmt gateOperands _) = "barrier " ++ prettyListElements gateOperands ++ ";"
-pretty (Ast.Node BoxStmt [time, scope] _) = "box" ++ prettyMaybeDsgn time ++ " " ++ pretty scope
-pretty (Ast.Node BreakStmt [] _) = "break;"
-pretty (Ast.Node (CalStmt calBlock) [] _) = tokenStr calBlock
-pretty (Ast.Node (DefcalgrammarStmt _ cgname) [] _) = "defcalgrammar " ++ tokenStr cgname ++ ";"
-pretty (Ast.Node ClassicalDeclStmt [anyType, ident, maybeExpr] _) =
+pretty (Node (AssignmentStmt op) [target, expr] _) = pretty target ++ " " ++ tokenStr op ++ " " ++ pretty expr ++ ";"
+pretty (Node BarrierStmt gateOperands _) = "barrier " ++ prettyListElements gateOperands ++ ";"
+pretty (Node BoxStmt [time, scope] _) = "box" ++ prettyMaybeDsgn time ++ " " ++ pretty scope
+pretty (Node BreakStmt [] _) = "break;"
+pretty (Node (CalStmt calBlock) [] _) = tokenStr calBlock
+pretty (Node (DefcalgrammarStmt _ cgname) [] _) = "defcalgrammar " ++ tokenStr cgname ++ ";"
+pretty (Node ClassicalDeclStmt [anyType, ident, maybeExpr] _) =
   pretty anyType ++ " " ++ pretty ident ++ prettyMaybe " = " maybeExpr "" ++ ";"
-pretty (Ast.Node ConstDeclStmt [sclrType, ident, maybeExpr] _) =
+pretty (Node ConstDeclStmt [sclrType, ident, maybeExpr] _) =
   "const " ++ pretty sclrType ++ " " ++ pretty ident ++ prettyMaybe " = " maybeExpr "" ++ ";"
-pretty (Ast.Node ContinueStmt [] _) = "continue;"
-pretty (Ast.Node DefStmt [ident, argDefs, returnType, scope] _) =
+pretty (Node ContinueStmt [] _) = "continue;"
+pretty (Node DefStmt [ident, argDefs, returnType, scope] _) =
   "def "
     ++ pretty ident
     ++ "("
@@ -291,153 +322,153 @@ pretty (Ast.Node DefStmt [ident, argDefs, returnType, scope] _) =
     ++ prettyReturnType returnType
     ++ " "
     ++ pretty scope
-pretty (Ast.Node DelayStmt (designator : gateOperands) _) = "delay[" ++ pretty designator ++ "] " ++ prettyListElements gateOperands ++ ";"
-pretty (Ast.Node DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
+pretty (Node DelayStmt (designator : gateOperands) _) = "delay[" ++ pretty designator ++ "] " ++ prettyListElements gateOperands ++ ";"
+pretty (Node DefcalStmt [defcalTarget, defcalArgs, defcalOps, returnType, calBlock] _) =
   "defcal "
     ++ pretty defcalTarget
-    ++ (if Ast.isNilNode defcalArgs then " " else "(" ++ prettyList defcalArgs ++ ") ")
+    ++ (if isNilNode defcalArgs then " " else "(" ++ prettyList defcalArgs ++ ") ")
     ++ prettyList defcalOps
     ++ prettyReturnType returnType
     ++ " "
     ++ pretty calBlock
-pretty (Ast.Node EndStmt [] _) = "end;"
-pretty (Ast.Node ExpressionStmt [expr] _) = pretty expr ++ ";"
-pretty (Ast.Node ExternStmt [ident, paramTypes, returnType] _) =
+pretty (Node EndStmt [] _) = "end;"
+pretty (Node ExpressionStmt [expr] _) = pretty expr ++ ";"
+pretty (Node ExternStmt [ident, paramTypes, returnType] _) =
   -- paramTypes are scalar, arrayRef, or CREG
   "extern " ++ pretty ident ++ "(" ++ prettyList paramTypes ++ ")" ++ prettyReturnType returnType ++ ";"
-pretty (Ast.Node ForStmt [anyType, ident, loopExpr@(Ast.Node RangeInitExpr _ _), loopStmt] _) =
+pretty (Node ForStmt [anyType, ident, loopExpr@(Node RangeInitExpr _ _), loopStmt] _) =
   "for " ++ pretty anyType ++ " " ++ pretty ident ++ " in [" ++ pretty loopExpr ++ "] " ++ pretty loopStmt
-pretty (Ast.Node ForStmt [anyType, ident, loopExpr, loopStmt] _) =
+pretty (Node ForStmt [anyType, ident, loopExpr, loopStmt] _) =
   "for " ++ pretty anyType ++ " " ++ pretty ident ++ " in " ++ pretty loopExpr ++ " " ++ pretty loopStmt
-pretty (Ast.Node GateStmt [ident, params, args, stmts] _) =
+pretty (Node GateStmt [ident, params, args, stmts] _) =
   "gate "
     ++ pretty ident
-    ++ (if Ast.isNilNode params then "" else "(" ++ prettyList params ++ ")")
-    ++ (if Ast.isNilNode args then "" else ' ' : prettyList args)
+    ++ (if isNilNode params then "" else "(" ++ prettyList params ++ ")")
+    ++ (if isNilNode args then "" else ' ' : prettyList args)
     ++ " "
     ++ pretty stmts
-pretty (Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) =
+pretty (Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] _) =
   ( case modifiers of
-      Ast.NilNode -> ""
-      Ast.Node {Ast.children = cs} -> concatMap ((++ " ") . pretty) cs
+      NilNode -> ""
+      Node {children = cs} -> concatMap ((++ " ") . pretty) cs
   )
     ++ pretty target
     ++ prettyMaybeList "(" params ")"
     ++ prettyMaybe "[" maybeTime "]"
     ++ prettyMaybeList " " gateArgs ""
     ++ ";"
-pretty (Ast.Node IfStmt [condExpr, thenBlock, maybeElseBlock] _) =
+pretty (Node IfStmt [condExpr, thenBlock, maybeElseBlock] _) =
   "if (" ++ pretty condExpr ++ ") " ++ pretty thenBlock ++ prettyMaybe " else " maybeElseBlock ""
-pretty (Ast.Node (IncludeStmt _ tok) [] _) = "include " ++ tokenStr tok ++ ";"
-pretty (Ast.Node InputIoDeclStmt [anyType, ident] _) = "input " ++ pretty anyType ++ " " ++ pretty ident ++ ";"
-pretty (Ast.Node OutputIoDeclStmt [anyType, ident] _) = "output " ++ pretty anyType ++ " " ++ pretty ident ++ ";"
-pretty (Ast.Node MeasureArrowAssignmentStmt [msrExpr, maybeTgt] _) =
+pretty (Node (IncludeStmt _ tok) [] _) = "include " ++ tokenStr tok ++ ";"
+pretty (Node InputIoDeclStmt [anyType, ident] _) = "input " ++ pretty anyType ++ " " ++ pretty ident ++ ";"
+pretty (Node OutputIoDeclStmt [anyType, ident] _) = "output " ++ pretty anyType ++ " " ++ pretty ident ++ ";"
+pretty (Node MeasureArrowAssignmentStmt [msrExpr, maybeTgt] _) =
   pretty msrExpr ++ prettyMaybe " -> " maybeTgt "" ++ ";"
-pretty (Ast.Node CregOldStyleDeclStmt [ident, maybeSize] _) = "creg " ++ pretty ident ++ prettyMaybeDsgn maybeSize ++ ";"
-pretty (Ast.Node QregOldStyleDeclStmt [ident, maybeSize] _) = "qreg " ++ pretty ident ++ prettyMaybeDsgn maybeSize ++ ";"
-pretty (Ast.Node QuantumDeclStmt [qubitType, ident] _) = pretty qubitType ++ " " ++ pretty ident ++ ";"
-pretty (Ast.Node ResetStmt [gateOp] _) = "reset " ++ pretty gateOp ++ ";"
-pretty (Ast.Node ReturnStmt [maybeExpr] _) = "return" ++ prettyMaybe " " maybeExpr "" ++ ";"
-pretty (Ast.Node WhileStmt [condExpr, loopBlock] _) = "while (" ++ pretty condExpr ++ ") " ++ pretty loopBlock
-pretty (Ast.Node ParenExpr [expr] _) = "(" ++ pretty expr ++ ")"
-pretty (Ast.Node IndexExpr [expr, index] _) = pretty expr ++ "[" ++ prettyIndex index ++ "]"
-pretty (Ast.Node (UnaryOperatorExpr op) [expr] _) = tokenStr op ++ pretty expr
-pretty (Ast.Node (BinaryOperatorExpr op) [left, right] _) =
+pretty (Node CregOldStyleDeclStmt [ident, maybeSize] _) = "creg " ++ pretty ident ++ prettyMaybeDsgn maybeSize ++ ";"
+pretty (Node QregOldStyleDeclStmt [ident, maybeSize] _) = "qreg " ++ pretty ident ++ prettyMaybeDsgn maybeSize ++ ";"
+pretty (Node QuantumDeclStmt [qubitType, ident] _) = pretty qubitType ++ " " ++ pretty ident ++ ";"
+pretty (Node ResetStmt [gateOp] _) = "reset " ++ pretty gateOp ++ ";"
+pretty (Node ReturnStmt [maybeExpr] _) = "return" ++ prettyMaybe " " maybeExpr "" ++ ";"
+pretty (Node WhileStmt [condExpr, loopBlock] _) = "while (" ++ pretty condExpr ++ ") " ++ pretty loopBlock
+pretty (Node ParenExpr [expr] _) = "(" ++ pretty expr ++ ")"
+pretty (Node IndexExpr [expr, index] _) = pretty expr ++ "[" ++ prettyIndex index ++ "]"
+pretty (Node (UnaryOperatorExpr op) [expr] _) = tokenStr op ++ pretty expr
+pretty (Node (BinaryOperatorExpr op) [left, right] _) =
   pretty left ++ " " ++ tokenStr op ++ " " ++ pretty right
-pretty (Ast.Node CastExpr [anyType, expr] _) = pretty anyType ++ "(" ++ pretty expr ++ ")"
-pretty (Ast.Node DurationOfExpr [scope] _) = "durationof( " ++ pretty scope ++ " )"
-pretty (Ast.Node CallExpr [ident, params] _) = pretty ident ++ "(" ++ prettyList params ++ ")"
-pretty (Ast.Node (Identifier _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (IntegerLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (FloatLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (ImaginaryLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (BooleanLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (BitstringLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (TimingLiteral _ tok) [] _) = tokenStr tok
-pretty (Ast.Node (HardwareQubit _ tok) [] _) = tokenStr tok
-pretty (Ast.Node ArrayInitExpr elems _) = "{" ++ prettyListElements elems ++ "}"
-pretty (Ast.Node SetInitExpr elems _) = "{" ++ prettyListElements elems ++ "}"
-pretty (Ast.Node RangeInitExpr [begin, step, end] _) =
+pretty (Node CastExpr [anyType, expr] _) = pretty anyType ++ "(" ++ pretty expr ++ ")"
+pretty (Node DurationOfExpr [scope] _) = "durationof( " ++ pretty scope ++ " )"
+pretty (Node CallExpr [ident, params] _) = pretty ident ++ "(" ++ prettyList params ++ ")"
+pretty (Node (Identifier _ tok) [] _) = tokenStr tok
+pretty (Node (IntegerLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (FloatLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (ImaginaryLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (BooleanLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (BitstringLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (TimingLiteral _ tok) [] _) = tokenStr tok
+pretty (Node (HardwareQubit _ tok) [] _) = tokenStr tok
+pretty (Node ArrayInitExpr elems _) = "{" ++ prettyListElements elems ++ "}"
+pretty (Node SetInitExpr elems _) = "{" ++ prettyListElements elems ++ "}"
+pretty (Node RangeInitExpr [begin, step, end] _) =
   prettyMaybe "" begin "" ++ ":" ++ prettyMaybe "" step ":" ++ prettyMaybe "" end ""
-pretty (Ast.Node DimExpr [size] _) = "#dim=" ++ pretty size
-pretty (Ast.Node MeasureExpr [gateOp] _) = "measure " ++ pretty gateOp
-pretty (Ast.Node IndexedIdentifier [ident, index] _) = pretty ident ++ "[" ++ prettyIndex index ++ "]"
-pretty (Ast.Node InvGateModifier [] _) = "inv @"
-pretty (Ast.Node PowGateModifier [expr] _) = "pow(" ++ pretty expr ++ ") @"
-pretty (Ast.Node CtrlGateModifier [maybeExpr] _) = "ctrl " ++ prettyMaybe "(" maybeExpr ") " ++ "@"
-pretty (Ast.Node NegCtrlGateModifier [maybeExpr] _) = "negctrl " ++ prettyMaybe "(" maybeExpr ") " ++ "@"
-pretty (Ast.Node BitTypeSpec [maybeSize] _) = "bit" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node CregTypeSpec [maybeSize] _) = "creg" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node QregTypeSpec [maybeSize] _) = "qreg" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node IntTypeSpec [maybeSize] _) = "int" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node UintTypeSpec [maybeSize] _) = "uint" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node FloatTypeSpec [maybeSize] _) = "float" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node AngleTypeSpec [maybeSize] _) = "angle" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node BoolTypeSpec [] _) = "bool"
-pretty (Ast.Node DurationTypeSpec [] _) = "duration"
-pretty (Ast.Node StretchTypeSpec [] _) = "stretch"
-pretty (Ast.Node ComplexTypeSpec [maybeSclr] _) = "complex" ++ prettyMaybeDsgn maybeSclr
-pretty (Ast.Node QubitTypeSpec [maybeSize] _) = "qubit" ++ prettyMaybeDsgn maybeSize
-pretty (Ast.Node ArrayTypeSpec (sclrType : exprs) _) =
+pretty (Node DimExpr [size] _) = "#dim=" ++ pretty size
+pretty (Node MeasureExpr [gateOp] _) = "measure " ++ pretty gateOp
+pretty (Node IndexedIdentifier [ident, index] _) = pretty ident ++ "[" ++ prettyIndex index ++ "]"
+pretty (Node InvGateModifier [] _) = "inv @"
+pretty (Node PowGateModifier [expr] _) = "pow(" ++ pretty expr ++ ") @"
+pretty (Node CtrlGateModifier [maybeExpr] _) = "ctrl " ++ prettyMaybe "(" maybeExpr ") " ++ "@"
+pretty (Node NegCtrlGateModifier [maybeExpr] _) = "negctrl " ++ prettyMaybe "(" maybeExpr ") " ++ "@"
+pretty (Node BitTypeSpec [maybeSize] _) = "bit" ++ prettyMaybeDsgn maybeSize
+pretty (Node CregTypeSpec [maybeSize] _) = "creg" ++ prettyMaybeDsgn maybeSize
+pretty (Node QregTypeSpec [maybeSize] _) = "qreg" ++ prettyMaybeDsgn maybeSize
+pretty (Node IntTypeSpec [maybeSize] _) = "int" ++ prettyMaybeDsgn maybeSize
+pretty (Node UintTypeSpec [maybeSize] _) = "uint" ++ prettyMaybeDsgn maybeSize
+pretty (Node FloatTypeSpec [maybeSize] _) = "float" ++ prettyMaybeDsgn maybeSize
+pretty (Node AngleTypeSpec [maybeSize] _) = "angle" ++ prettyMaybeDsgn maybeSize
+pretty (Node BoolTypeSpec [] _) = "bool"
+pretty (Node DurationTypeSpec [] _) = "duration"
+pretty (Node StretchTypeSpec [] _) = "stretch"
+pretty (Node ComplexTypeSpec [maybeSclr] _) = "complex" ++ prettyMaybeDsgn maybeSclr
+pretty (Node QubitTypeSpec [maybeSize] _) = "qubit" ++ prettyMaybeDsgn maybeSize
+pretty (Node ArrayTypeSpec (sclrType : exprs) _) =
   "array[" ++ pretty sclrType ++ ", " ++ prettyListElements exprs ++ "]"
-pretty (Ast.Node ReadonlyArrayRefTypeSpec [sclrType, exprs@(Ast.Node List _ _)] _) =
+pretty (Node ReadonlyArrayRefTypeSpec [sclrType, exprs@(Node List _ _)] _) =
   "readonly array[" ++ pretty sclrType ++ ", " ++ prettyList exprs ++ "]"
-pretty (Ast.Node MutableArrayRefTypeSpec [sclrType, exprs@(Ast.Node List _ _)] _) =
+pretty (Node MutableArrayRefTypeSpec [sclrType, exprs@(Node List _ _)] _) =
   "mutable array[" ++ pretty sclrType ++ ", " ++ prettyList exprs ++ "]"
-pretty (Ast.Node ReadonlyArrayRefTypeSpec [sclrType, dimExpr@(Ast.Node DimExpr _ _)] _) =
+pretty (Node ReadonlyArrayRefTypeSpec [sclrType, dimExpr@(Node DimExpr _ _)] _) =
   "readonly array[" ++ pretty sclrType ++ ", " ++ pretty dimExpr ++ "]"
-pretty (Ast.Node MutableArrayRefTypeSpec [sclrType, dimExpr@(Ast.Node DimExpr _ _)] _) =
+pretty (Node MutableArrayRefTypeSpec [sclrType, dimExpr@(Node DimExpr _ _)] _) =
   "mutable array[" ++ pretty sclrType ++ ", " ++ pretty dimExpr ++ "]"
-pretty (Ast.Node (DefcalTarget tgt _) [] _) = tgt -- "measure", "reset", "delay", or some other identifier
+pretty (Node (DefcalTarget tgt _) [] _) = tgt -- "measure", "reset", "delay", or some other identifier
 -- does not handle CREG, QREG args (postfix size designator)
-pretty (Ast.Node ArgumentDefinition [anyType, ident] _) = pretty anyType ++ " " ++ pretty ident
+pretty (Node ArgumentDefinition [anyType, ident] _) = pretty anyType ++ " " ++ pretty ident
 {- Error cases -}
 -- Should have been handled above -- usually implies some change to how the surrounding renders
-pretty Ast.NilNode = trace "Unhandled NilNode for pretty" undefined
+pretty NilNode = error "Unhandled NilNode for pretty"
 -- Should have been handled above -- we can't know which separator to use
-pretty (Ast.Node List elems _) = trace ("Unhandled List node for pretty with children: " ++ show (map pretty elems)) undefined
+pretty (Node List elems _) = error ("Unhandled List node for pretty with children: " ++ show (map pretty elems))
 -- Fallback
-pretty (Ast.Node tag elems _) = trace ("Missing pattern for pretty: Ast.Node " ++ show tag ++ " " ++ show (map pretty elems)) undefined
+pretty (Node tag elems _) = error ("Missing pattern for pretty: Node " ++ show tag ++ " " ++ show (map pretty elems))
 
 -- The syntax tree is as close to canonicalized as the tree easily gets
-normalizeParens :: Ast.Node Tag c ->  Ast.Node Tag c
-normalizeParens Ast.NilNode = Ast.NilNode
+normalizeParens :: Node Tag c -> Node Tag c
+normalizeParens NilNode = NilNode
 -- Strip extra parens
-normalizeParens (Ast.Node ParenExpr [expr] _) = normalizeParens expr
-normalizeParens (Ast.Node ParenExpr children _) = undefined
+normalizeParens (Node ParenExpr [expr] _) = normalizeParens expr
+normalizeParens (Node ParenExpr children _) = undefined
 -- Parenthesize nontrivial expressions associated with index operators
-normalizeParens (Ast.Node IndexExpr [expr, list] ctx) =
-  Ast.Node IndexExpr [parenthesizeNonTrivialExpr $ normalizeParens expr, normalizeParens list] ctx
-normalizeParens (Ast.Node IndexExpr children _) = undefined
+normalizeParens (Node IndexExpr [expr, list] ctx) =
+  Node IndexExpr [parenthesizeNonTrivialExpr $ normalizeParens expr, normalizeParens list] ctx
+normalizeParens (Node IndexExpr children _) = undefined
 -- Parenthesize nontrivial expressions associated with other unary operators
-normalizeParens (Ast.Node unop@(UnaryOperatorExpr _) [expr] ctx) =
-  Ast.Node unop [parenthesizeNonTrivialExpr $ normalizeParens expr] ctx
-normalizeParens (Ast.Node (UnaryOperatorExpr _) children _) = undefined
+normalizeParens (Node unop@(UnaryOperatorExpr _) [expr] ctx) =
+  Node unop [parenthesizeNonTrivialExpr $ normalizeParens expr] ctx
+normalizeParens (Node (UnaryOperatorExpr _) children _) = undefined
 -- Parenthesize nontrivial expressions associated with binary operators
-normalizeParens (Ast.Node binop@(BinaryOperatorExpr _) [exprA, exprB] ctx) =
-  Ast.Node binop [parenthesizeNonTrivialExpr $ normalizeParens exprA, parenthesizeNonTrivialExpr $ normalizeParens exprB] ctx
-normalizeParens (Ast.Node (BinaryOperatorExpr _) children _) = undefined
+normalizeParens (Node binop@(BinaryOperatorExpr _) [exprA, exprB] ctx) =
+  Node binop [parenthesizeNonTrivialExpr $ normalizeParens exprA, parenthesizeNonTrivialExpr $ normalizeParens exprB] ctx
+normalizeParens (Node (BinaryOperatorExpr _) children _) = undefined
 -- Pass everything else through untouched
-normalizeParens (Ast.Node tag children ctx) = Ast.Node tag (map normalizeParens children) ctx
+normalizeParens (Node tag children ctx) = Node tag (map normalizeParens children) ctx
 
-parenthesizeNonTrivialExpr :: Ast.Node Tag c -> Ast.Node Tag c
+parenthesizeNonTrivialExpr :: Node Tag c -> Node Tag c
 parenthesizeNonTrivialExpr expr =
-  if isTrivialExpr expr then expr else Ast.Node ParenExpr [expr] (Ast.context expr)
+  if isTrivialExpr expr then expr else Node ParenExpr [expr] (context expr)
   where
-    isTrivialExpr (Ast.Node ParenExpr _ _) = True
-    isTrivialExpr (Ast.Node CastExpr _ _) = True
-    isTrivialExpr (Ast.Node DurationOfExpr _ _) = True
-    isTrivialExpr (Ast.Node CallExpr _ _) = True
-    isTrivialExpr (Ast.Node (Identifier _ _) [] _) = True
-    isTrivialExpr (Ast.Node (IntegerLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (FloatLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (ImaginaryLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (BooleanLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (BitstringLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (TimingLiteral _ _) [] _) = True
-    isTrivialExpr (Ast.Node (HardwareQubit _ _) [] _) = True
-    isTrivialExpr (Ast.Node ArrayInitExpr _ _) = True
-    isTrivialExpr (Ast.Node SetInitExpr _ _) = True
+    isTrivialExpr (Node ParenExpr _ _) = True
+    isTrivialExpr (Node CastExpr _ _) = True
+    isTrivialExpr (Node DurationOfExpr _ _) = True
+    isTrivialExpr (Node CallExpr _ _) = True
+    isTrivialExpr (Node (Identifier _ _) [] _) = True
+    isTrivialExpr (Node (IntegerLiteral _ _) [] _) = True
+    isTrivialExpr (Node (FloatLiteral _ _) [] _) = True
+    isTrivialExpr (Node (ImaginaryLiteral _ _) [] _) = True
+    isTrivialExpr (Node (BooleanLiteral _ _) [] _) = True
+    isTrivialExpr (Node (BitstringLiteral _ _) [] _) = True
+    isTrivialExpr (Node (TimingLiteral _ _) [] _) = True
+    isTrivialExpr (Node (HardwareQubit _ _) [] _) = True
+    isTrivialExpr (Node ArrayInitExpr _ _) = True
+    isTrivialExpr (Node SetInitExpr _ _) = True
     isTrivialExpr _ = False
 
 -- Utility functions
@@ -450,7 +481,7 @@ tokenIdentifierName (AnnotationKeywordToken str) = str
 tokenIntegerVal :: Token -> Integer
 tokenIntegerVal tok =
   case tok of
-    BinaryIntegerLiteralToken str -> error "Unimplemented" --readLiteral readBin $ stripPrefix 'b' str
+    BinaryIntegerLiteralToken str -> error "Unimplemented" -- readLiteral readBin $ stripPrefix 'b' str
     OctalIntegerLiteralToken str -> readLiteral readOct $ stripPrefix 'o' str
     DecimalIntegerLiteralToken str -> readLiteral readDec str
     HexIntegerLiteralToken str -> readLiteral readHex $ stripPrefix 'x' str
@@ -628,30 +659,87 @@ prettyTiming (TimeUs t) = show t ++ "us"
 prettyTiming (TimeMs t) = show t ++ "ms"
 prettyTiming (TimeS t) = show t ++ "s"
 
-prettyIndex :: Ast.Node Tag c -> String
-prettyIndex idx = if Ast.tag idx == List then prettyList idx else pretty idx
+prettyIndex :: Node Tag c -> String
+prettyIndex idx = if tag idx == List then prettyList idx else pretty idx
 
-prettyList :: Ast.Node Tag c -> String
-prettyList Ast.NilNode = ""
-prettyList (Ast.Node List elems _) = prettyListElements elems
+prettyList :: Node Tag c -> String
+prettyList NilNode = ""
+prettyList (Node List elems _) = prettyListElements elems
 
-prettyMaybeDsgn :: Ast.Node Tag c -> String
+prettyMaybeDsgn :: Node Tag c -> String
 prettyMaybeDsgn expr = prettyMaybe "[" expr "]"
 
-prettyMaybeList :: String -> Ast.Node Tag c -> String -> String
-prettyMaybeList _ Ast.NilNode _ = ""
-prettyMaybeList pre (Ast.Node List elems _) post = pre ++ prettyListElements elems ++ post
+prettyMaybeList :: String -> Node Tag c -> String -> String
+prettyMaybeList _ NilNode _ = ""
+prettyMaybeList pre (Node List elems _) post = pre ++ prettyListElements elems ++ post
 
-prettyMaybe :: String -> Ast.Node Tag c -> String -> String
-prettyMaybe _ Ast.NilNode _ = ""
+prettyMaybe :: String -> Node Tag c -> String -> String
+prettyMaybe _ NilNode _ = ""
 prettyMaybe pre expr post = pre ++ pretty expr ++ post
 
-prettyListElements :: [Ast.Node Tag c] -> String
+prettyListElements :: [Node Tag c] -> String
 prettyListElements elems = intercalate ", " (map pretty elems)
 
-prettyReturnType :: Ast.Node Tag c -> String
-prettyReturnType Ast.NilNode = ""
+prettyReturnType :: Node Tag c -> String
+prettyReturnType NilNode = ""
 prettyReturnType returnType = " -> " ++ pretty returnType
 
 indent :: String -> String
 indent block = concatMap (\s -> "  " ++ s ++ "\n") $ lines block
+
+withContext :: c -> Node t () -> Node t c
+withContext _ NilNode = NilNode
+withContext ctx (Node t children _) = Node t (map (withContext ctx) children) ctx
+
+node :: t -> [Node t ()] -> Node t ()
+node tag children = Node {tag = tag, children = children, context = ()}
+
+programNode :: Maybe Int -> Maybe Int -> [Node Tag ()] -> Node Tag ()
+programNode (Just maj) (Just min) =
+  node (Program maj (Just min) (VersionSpecifierToken (show maj ++ "." ++ show min)))
+programNode (Just maj) Nothing = node (Program maj Nothing (VersionSpecifierToken $ show maj))
+programNode Nothing Nothing = node (Program 3 Nothing EofToken)
+
+stmtNode :: Tag -> [Node Tag ()] -> Node Tag ()
+stmtNode tag children = node Statement [node tag children]
+
+withAnnotations :: Node Tag () -> [Node Tag ()] -> Node Tag ()
+withAnnotations (Node {tag = Statement, children = [stmtNode]}) annotations =
+  node Statement $ stmtNode : annotations
+
+binOpNode :: Token -> Node Tag () -> Node Tag () -> Node Tag ()
+binOpNode op left right = node (BinaryOperatorExpr op) [left, right]
+
+unOpNode :: Token -> Node Tag () -> Node Tag ()
+unOpNode op inner = node (UnaryOperatorExpr op) [inner]
+
+identifierNode :: String -> Node Tag ()
+identifierNode name = node (Identifier {identifierName = name, identifierTok = IdentifierToken name}) []
+
+integerLiteralNode :: Integer -> Node Tag ()
+-- TODO there are edge cases where "show num" probably fails -- negative numbers? oversize?
+integerLiteralNode val =
+  node (IntegerLiteral {integerVal = val, integerTok = DecimalIntegerLiteralToken (show val)}) []
+
+floatLiteralNode :: Double -> Node Tag ()
+-- TODO "show num" probably compatible enough but this should be checked
+floatLiteralNode val =
+  node (FloatLiteral {floatVal = val, floatTok = FloatLiteralToken (show val)}) []
+
+imaginaryLiteralNode :: Double -> Node Tag ()
+imaginaryLiteralNode val =
+  node (ImaginaryLiteral {imaginaryVal = val, imaginaryTok = ImaginaryLiteralToken (show val ++ "im")}) []
+
+booleanLiteralNode :: Bool -> Node Tag ()
+booleanLiteralNode val =
+  node (BooleanLiteral {booleanVal = val, booleanTok = BooleanLiteralToken (if val then "true" else "false")}) []
+
+bitstringLiteralNode :: [Bool] -> Node Tag ()
+bitstringLiteralNode val =
+  node
+    ( BitstringLiteral
+        { bitstringVal = val,
+          bitstringTok = BitstringLiteralToken $ '"' : map (\b -> if b then '1' else '0') val ++ "\""
+        }
+    )
+    []
