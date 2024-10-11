@@ -55,6 +55,7 @@ import Benchmarks (runBenchmarks,
                    benchmarksPOPL25,
                    benchmarkFolder,
                    formatFloatN)
+import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Syntax
 
 
 {- Toolkit passes -}
@@ -235,6 +236,37 @@ qasm3Pass pureCircuit pass = case pass of
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
+  -- let !result =
+  --       ( do
+  --           parseTree <- OpenQASM3Parser.parseString src
+  --           normalizedParse <- OpenQASM3Semantics.normalize parseTree
+  --           let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ normalizedParse
+  --           let wstmt = OpenQASM3Driver.buildModel normalized
+  --           let vlst  = idsW wstmt
+  --           let optList = genSubstList vlst vlst wstmt
+  --           --let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
+  --           let optimized = OpenQASM3Driver.applyPFOpt optList normalized
+  --           return (normalized, optimized)
+  --       )
+  -- mapM_ putStrLn (Chatty.messages result)
+  -- end <- getCPUTime
+  -- let time = (fromIntegral $ end - start) / 10 ^ 9
+  -- case result of
+  --   Chatty.Value _ (normalized, optimized) ->
+  --     ( do
+  --         putStrLn $ "// Feynman -- quantum circuit toolkit"
+  --         putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
+  --         mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
+  --         putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
+  --         mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
+  --         putStrLn $ OpenQASM3Syntax.pretty optimized
+  --         return ()
+  --     )
+  --   Chatty.Failure _ err ->
+  --     ( do
+  --         putStrLn ("ERROR: " ++ err)
+  --         return ()
+  --     )
   end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
     Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err

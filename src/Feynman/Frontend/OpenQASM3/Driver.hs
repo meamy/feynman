@@ -1,19 +1,240 @@
 module Feynman.Frontend.OpenQASM3.Driver where
 
-import qualified Control.Monad.State as State
+import Control.Monad.State.Lazy
 import Data.Int (Int64)
 -- import qualified Data.Map.Strict as Map
-import Data.Map ((!))
+import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
-import Feynman.Core
-import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
+import Debug.Trace (trace)
+import Feynman.Algebra.Base
+import Feynman.Core hiding (Decl, subst)
+import Feynman.Frontend.OpenQASM3.Ast
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
-import qualified Feynman.Frontend.OpenQASM3.Semantics as Semantics
-import qualified Feynman.Frontend.OpenQASM3.Syntax as Syntax
+import Feynman.Frontend.OpenQASM3.Semantics
+import Feynman.Frontend.OpenQASM3.Syntax
+import Feynman.Synthesis.Phase
 
 -- type Ctx = Map.Map String SyntaxNode
+
+type Result c = Chatty.Chatty String String c
+
+getIdent :: Node Tag c -> String
+getIdent (Node (Identifier name _) _ _) = name
+getIdent _ = error "Not an identifier..."
+
+getList :: Node Tag c -> [Node Tag c]
+getList NilNode = []
+getList (Node List stmts _) = stmts
+getList _ = error "Not a list..."
+
+asIntegerMaybe :: Node Tag c -> Maybe Integer
+asIntegerMaybe node = case squashInts node of
+  Node (IntegerLiteral i _) _ _ -> Just i
+  _ -> Nothing
+
+asInteger :: Node Tag c -> Integer
+asInteger node = case asIntegerMaybe node of
+  Nothing -> trace ("Couldn't resolve integer") 0
+  Just i -> i
+
+squashInts :: Node Tag c -> Node Tag c
+squashInts NilNode = NilNode
+squashInts (Node tag exprs c) =
+  let exprs' = map squashInts exprs
+   in case (tag, exprs') of
+        (ParenExpr, [Node (IntegerLiteral i _) _ _]) -> Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c
+        (UnaryOperatorExpr MinusToken, [Node (IntegerLiteral i _) _ _]) -> Node (IntegerLiteral (-i) (DecimalIntegerLiteralToken $ show (-i))) [] c
+        (BinaryOperatorExpr PlusToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i + j) (DecimalIntegerLiteralToken (show $ i + j))) [] c
+        (BinaryOperatorExpr MinusToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i - j) (DecimalIntegerLiteralToken (show $ i - j))) [] c
+        (BinaryOperatorExpr AsteriskToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i * j) (DecimalIntegerLiteralToken (show $ i * j))) [] c
+        _ -> Node tag exprs' c
+
+exprAsQlist :: Node Tag c -> [Node Tag c]
+exprAsQlist node = case node of
+  NilNode -> []
+  (Node (Identifier name _) _ _) -> [node]
+  (Node IndexedIdentifier [ident, expr] c) ->
+    let idxs = resolveExpr expr
+     in case idxs of
+          [] -> []
+          xs -> map (\i -> Node IndexedIdentifier [ident, Node List [Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c] c] c) xs
+  _ -> trace ("Couldn't resolve identifier list") []
+  where
+    resolveExpr NilNode = []
+    resolveExpr (Node List children c) = concatMap resolveExpr children
+    resolveExpr (Node (IntegerLiteral i _) _ _) = [i]
+    resolveExpr (Node RangeInitExpr [b, s, e] _) =
+      let bInt = asInteger b
+          sInt = fromMaybe 1 $ asIntegerMaybe s
+          eInt = asInteger e
+       in [bInt, (bInt + sInt) .. eInt]
+    resolveExpr _ = trace ("Couldn't resolve identifier range") $ []
+
+-- Builds a model of the program as a non-deterministic WHILE program
+buildModel :: Node Tag Loc -> WStmt Loc
+buildModel node = evalState (go node) ()
+  where
+    go :: Node Tag Loc -> State () (WStmt Loc)
+    go NilNode = return $ WSkip (-1)
+    go (Node tag children c) = case tag of
+      Program _ _ _ -> mapM go children >>= return . WSeq c
+      Statement -> go (children !! 0)
+      Scope -> mapM go children >>= return . WSeq c
+      -- <StatementContent>
+      -- [Identifier, Expression..]
+      AliasDeclStmt -> trace "Unimplemented (alias stmt)" $ return $ WSkip c
+      -- [IndexedIdentifier, (Expression | MeasureExpr)]
+      AssignmentStmt _ -> return $ WSkip c
+      -- [(HardwareQubit | IndexedIdentifier)..]
+      BarrierStmt -> trace "Unimplemented (barrier stmt)" $ return $ WSkip c
+      BoxStmt -> go (children !! 1)
+      -- []
+      BreakStmt -> trace "Unimplemented (break stmt)" $ return $ WSkip c
+      -- [ScalarTypeSpec, Identifier, DeclarationExpr]
+      ConstDeclStmt -> trace "Unimplemented (const decl)" $ return $ WSkip c
+      -- []
+      ContinueStmt -> trace "Unimplemented (continue)" $ return $ WSkip c
+      -- [Identifier, List<ArgumentDefinition>, ScalarTypeSpec?, Scope]
+      DefStmt -> trace "Unimplemented (def stmt)" $ return $ WSkip c
+      -- []
+      EndStmt -> trace "Unimplemented (end stmt)" $ return $ WSkip c
+      -- [expr]
+      ExpressionStmt -> mapM go children >>= return . WSeq c
+      -- [Identifier, List<ScalarTypeSpec>, returnTypeSpec::ScalarTypeSpec?]
+      ExternStmt -> trace "Unimplemented (extern stmt)" $ return $ WSkip c
+      -- [ScalarTypeSpec, Identifier, (Expression | Range | Set), (Statement | Scope)]
+      ForStmt -> trace "Unimplemented (for stmt)" $ return $ WSkip c
+      -- [Identifier, List<Identifier>?, List<Identifier>, Scope]
+      GateStmt -> trace "Unimplemented (gate dec stmt)" $ return $ WSkip c
+      -- [modifiers::List<GateModifier>, target::Identifier, params::List<Expression>?, designator::Expression?, args::List<(HardwareQubit | IndexedIdentifier)>?]
+      GateCallStmt -> return $ case (getIdent $ children !! 1) of
+        "x" -> let [x] = map pretty . getList $ children !! 4 in WGate c (X x)
+        "y" -> let [x] = map pretty . getList $ children !! 4 in WGate c (Y x)
+        "z" -> let [x] = map pretty . getList $ children !! 4 in WGate c (Z x)
+        "h" -> let [x] = map pretty . getList $ children !! 4 in WGate c (H x)
+        "s" -> let [x] = map pretty . getList $ children !! 4 in WGate c (S x)
+        "sdg" -> let [x] = map pretty . getList $ children !! 4 in WGate c (Sinv x)
+        "t" -> let [x] = map pretty . getList $ children !! 4 in WGate c (T x)
+        "tdg" -> let [x] = map pretty . getList $ children !! 4 in WGate c (Tinv x)
+        "cx" -> let [x, y] = map pretty . getList $ children !! 4 in WGate c (CNOT x y)
+        "cz" -> let [x, y] = map pretty . getList $ children !! 4 in WGate c (CZ x y)
+        "swap" -> let [x, y] = map pretty . getList $ children !! 4 in WGate c (Swap x y)
+        gate -> let xs = map pretty . getList $ children !! 4 in WGate c (Uninterp gate xs)
+      -- [condition::Expression, thenBlock::(Statement | Scope), elseBlock::(Statement | Scope)?
+      IfStmt -> do
+        thenBlock <- go (children !! 1)
+        elseBlock <- go (children !! 2)
+        return $ WIf c thenBlock elseBlock
+      -- [(HardwareQubit | IndexedIdentifier), IndexedIdentifier?]
+      MeasureArrowAssignmentStmt -> go (children !! 0) -- let x = pretty (children!!0) in return $ WMeasure c x
+      -- [Identifier, designator::Expression?]
+      QregOldStyleDeclStmt -> trace "Unimplemented (qreg stmt)" $ return $ WSkip c
+      -- [QubitTypeSpec, Identifier]
+      QuantumDeclStmt -> trace "Unimplemented (qdec stmt)" $ return $ WSkip c
+      -- [(HardwareQubit | IndexedIdentifier)]
+      ResetStmt -> let x = pretty (children !! 0) in return $ WReset c x
+      -- [(Expression | MeasureExpr)?]
+      ReturnStmt -> trace "Unimplemented (return stmt)" $ return $ WSkip c
+      -- [Expression, (Statement | Scope)]
+      WhileStmt -> do
+        block <- go (children !! 1)
+        return $ WWhile c block
+      -- <Expression>
+      -- [Expression]
+      ParenExpr -> go (children !! 0)
+      -- [Expression, (List<RangeInitExpr | Expression> | SetInitExpr)]
+      IndexExpr -> go (children !! 0)
+      -- [Expression]
+      UnaryOperatorExpr _ -> go (children !! 0)
+      -- [left::Expression, right::Expression]
+      BinaryOperatorExpr _ -> mapM go children >>= return . WSeq c
+      -- [(ScalarTypeSpec | ArrayTypeSpec), Expression]
+      CastExpr -> go (children !! 1)
+      -- [Scope]
+      DurationOfExpr -> go (children !! 0)
+      -- [Identifier, List<ExpressionNode>]
+      CallExpr -> trace "Unimplemented (call expr)" $ return $ WSkip c
+      --   Array only allowed in array initializers
+      -- [elements::Expression..]
+      ArrayInitExpr -> go (children !! 0)
+      --   Set, Range only allowed in (some) indexing expressions
+      -- [elements::Expression..]
+      SetInitExpr -> go (children !! 0)
+      -- [begin::Expression?, step::Expression?, end::Expression?]
+      RangeInitExpr -> mapM go children >>= return . WSeq c
+      --   Dim only allowed in (some) array arg definitions
+      -- [expr]
+      MeasureExpr -> do
+        let qlist = exprAsQlist (children !! 0)
+        return $ WSeq c $ map (WMeasure c . pretty) $ qlist
+      -- [element..]
+      List -> mapM go children >>= return . WSeq c
+      _ -> return $ WSkip c
+
+-- Applies a substitution list generated by phase folding
+applyPFOpt :: Map Loc Angle -> Node Tag Loc -> Node Tag Loc
+applyPFOpt replacements node = pruneEmptyStatements (go node)
+  where
+    go NilNode = NilNode
+    go node@(Node GateCallStmt [NilNode, ident, args, NilNode, operands] l) = case Map.lookup l replacements of
+      Nothing -> node
+      Just theta -> makeTheta theta operands l
+    go node@(Node GateCallStmt _ _) = error "GateCallStmt we can't process"
+    go node@(Node tag children l) =
+      let children' = map go children
+       in Node tag children' l
+    makeTheta theta operands l =
+      let prim = synthesizePhase "-" theta
+       in case prim of
+            [] -> NilNode
+            [x] ->
+              let nameNode = withContext (-1) (identifierNode (nameOfGate x))
+                  params = map (withContext (-1)) (paramsOfGate x)
+                  paramsNode = if null params then NilNode else Node List params (-1)
+               in Node
+                    GateCallStmt
+                    [NilNode, nameNode, paramsNode, NilNode, operands]
+                    l
+
+    nameOfGate gate =
+      case gate of
+        Rz _ _ -> "rz"
+        Z _ -> "z"
+        S _ -> "s"
+        Sinv _ -> "sdg"
+        T _ -> "t"
+        Tinv _ -> "tdg"
+
+    paramsOfGate (Rz theta _) = [exprFromAngle theta]
+    paramsOfGate _ = []
+
+exprFromAngle :: Angle -> SyntaxNode ()
+exprFromAngle (Discrete dy)
+  | a == 0 = integerLiteralNode 0
+  | a == 1 = identifierNode "pi"
+  | otherwise =
+      binOpNode
+        AsteriskToken
+        (identifierNode "pi")
+        $ binOpNode
+          SlashToken
+          (integerLiteralNode a)
+          (binOpNode DoubleAsteriskToken (integerLiteralNode 2) (integerLiteralNode $ fromIntegral n))
+  where
+    (Dy a n) = unpack dy
+exprFromAngle (Continuous a) = floatLiteralNode a
+
+-- Counts gate calls
+countGateCalls :: Node Tag c -> Map String Int
+countGateCalls node = go Map.empty node
+  where
+    go counts NilNode = counts
+    go counts node@(Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
+      let id = getIdent target
+       in Map.insertWith (+) id 1 counts
+    go counts (Node tag children c) = foldl go counts children
 
 {-
 -- transcribed from the OpenQASM 3.0 standard gate library and qelib1.inc
@@ -26,8 +247,8 @@ gate cry(θ) a, b { ctrl @ ry(θ) a, b; }
 gate swap a, b { cx a, b; cx b, a; cx a, b; }
 gate cswap a, b, c { ctrl @ swap a, b, c; }
 gate cp(λ) a, b { ctrl @ p(λ) a, b; }
-gate phase(λ) q { U(0, 0, λ) q; }
-gate cphase(λ) a, b { ctrl @ phase(λ) a, b; }
+gate phase(λ) q { U(0, 0, λ) q; } -- same as u1
+gate cphase(λ) a, b { ctrl @ phase(λ) a, b; } -- controlled u1
 
 -- and because it's a QASM2 builtin,
 gate CX a, b { ctrl @ U(π, 0, π) a, b; }
@@ -184,75 +405,3 @@ gate u3(theta,phi,lambda) q { U(theta,phi,lambda) q; }
 -- in both QASM2 and QASM3, U(...) a la u3(...) is a builtin
 
 -}
-
--- qelib1 :: Ctx
--- qelib1 = Map.fromList
---   [ ("u3", Circ 3 1),
---     ("u2", Circ 2 1),
---     ("u1", Circ 1 1),
---     ("cx", Circ 0 2),
---     ("id", Circ 0 1),
---     ("x", Circ 0 1),
---     ("y", Circ 0 1),
---     ("z", Circ 0 1),
---     ("h", Circ 0 1),
---     ("s", Circ 0 1),
---     ("sdg", Circ 0 1),
---     ("t", Circ 0 1),
---     ("tdg", Circ 0 1),
---     ("rx", Circ 1 1),
---     ("ry", Circ 1 1),
---     ("rz", Circ 1 1),
---     ("cz", Circ 0 2),
---     ("cy", Circ 0 2),
---     ("ch", Circ 0 2),
---     ("ccx", Circ 0 3),
---     ("crz", Circ 1 2),
---     ("cu1", Circ 1 2),
---     ("cu3", Circ 3 2) ]
-
-type Result c = Chatty.Chatty String String c
-
-analyze :: Ast.Node Syntax.Tag c -> Result Semantics.Program
-analyze node = do
-  (program, analysis) <- Semantics.analyze node
-  return program
-
-normalize :: Semantics.Program -> Result Semantics.Program
-normalize = return
-
--- Inlines all local definitions & non-primitive operations
--- Note: non-strictness can hopefully allow for some efficient
---       fusion with operations on inlined code
-inline :: Semantics.Program -> Result Semantics.Program
-inline = return
-
--- Provides an optimization interface for the main IR
-applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> Bool -> Semantics.Program -> Result Semantics.Program
-applyOpt opt pureCircuit = return
-
-{- Statistics -}
-
--- Assumes inlined code
-gateCounts :: Semantics.Program -> Map.Map ID Int
-gateCounts _ = Map.empty
-
--- gateCounts (QASM ver stmts) =
-
-bitCounts :: Semantics.Program -> (Int, Int)
-bitCounts _ = (0, 0)
-
--- bitCounts (QASM ver stmts) = foldl bcStmt (0, 0) stmts
-
--- depth :: QASM -> Int
--- gateDepth :: [ID] -> QASM -> Int
-
-showStats :: Semantics.Program -> [String]
-showStats _ = ["Stats not available for QASM3"]
-
--- showStats qasm =
---          ["cbits: " ++ show cbits, "qubits: " ++ show qbits] ++
---          map (\ (gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts qasm'
-
-emit :: Semantics.Program -> String
-emit _ = "Not implemented\n"

@@ -4,6 +4,8 @@ module Feynman.Frontend.OpenQASM3.Chatty
     fromFailure,
     fromValue,
     Feynman.Frontend.OpenQASM3.Chatty.fail,
+    prepend,
+    append,
     succeeded,
     failed,
     -- messages,
@@ -79,6 +81,13 @@ fromValue val _ = val
 
 fail :: e -> Chatty w e v
 fail = Failure []
+
+-- Just a little bit yucky
+prepend :: w -> Chatty w e v -> Chatty w e v
+prepend msg chatty = chatty {messages = msg : messages chatty}
+
+append :: Chatty w e v -> w -> Chatty w e v
+append chatty msg = chatty {messages = msg : messages chatty}
 
 succeeded :: Chatty w e v -> Bool
 succeeded (Value _ _) = True
