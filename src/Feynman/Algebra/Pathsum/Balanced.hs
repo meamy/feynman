@@ -802,6 +802,7 @@ instance (Eq g, Num g) => Semigroup (Pathsum g) where
 
 instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []
+  mappend = (<>)
 
 instance (Eq g, Abelian g) => Num (Pathsum g) where
   (+)                          = plus
