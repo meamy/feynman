@@ -198,7 +198,7 @@ withTiming f = do
   let t = (fromIntegral $ end - start) / 10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
 
-runBenchmarks pass verify xs =
+qcRunBenchmarks pass verify xs =
   let runBench s = do
         src   <- B.readFile $ s ++ ".qc"
         start <- getCPUTime

@@ -1,4 +1,4 @@
-{-# LANGUAGE Rank2Types #-}
+{-# LANGUAGE Rank2Types, DeriveGeneric #-}
 module Feynman.Core where
 
 import Data.List
@@ -8,6 +8,9 @@ import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
 
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
+
 import Feynman.Algebra.Base
 
 
@@ -16,7 +19,9 @@ type Loc = Int
 
 {- Phase angles -}
 -- Phase angles either have the form pi*(a/2^b) reduced mod 2, or theta
-data Angle = Discrete DMod2 | Continuous Double deriving (Eq, Ord)
+data Angle = Discrete DMod2 | Continuous Double deriving (Eq, Ord, Generic)
+
+instance NFData Angle
 
 apply :: (forall a. Num a => a -> a) -> Angle -> Angle
 apply f (Discrete a)   = Discrete $ f a

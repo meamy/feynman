@@ -24,6 +24,8 @@ import qualified Feynman.Frontend.OpenQASM3.Parser as QASM3Parser
 import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3Syntax
 import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as QASM3
 
+import Feynman.Frontend.Frontend
+
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
@@ -34,12 +36,15 @@ import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
 import System.Environment (getArgs)
+import System.FilePath    (takeBaseName, takeExtension, takeDirectory)
 import System.CPUTime     (getCPUTime)
 
 import Data.List
 import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
+
+import Control.DeepSeq (NFData, deepseq)
 
 import Control.Monad
 
@@ -48,7 +53,7 @@ import qualified Data.ByteString as B
 
 import Debug.Trace as Trace
 
-import Benchmarks (runBenchmarks,
+import Benchmarks (qcRunBenchmarks,
                    benchmarksSmall,
                    benchmarksMedium,
                    benchmarksAll,
@@ -60,23 +65,7 @@ import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Syntax
 
 {- Toolkit passes -}
 
-data Pass = Triv
-          | Inline
-          | Unroll
-          | MCT
-          | CT
-          | Simplify
-          | Phasefold
-          | PauliFold Int
-          | Statefold Int
-          | CNOTMin
-          | TPar
-          | Cliff
-          | CZ
-          | CX
-          | Decompile
-
-data Options = Options { 
+data Options = Options {
   passes :: [Pass],
   verify :: Bool,
   pureCircuit :: Bool,
@@ -104,67 +93,90 @@ decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
           in
             decl { DotQC.body = resynthesize $ DotQC.body decl }
 
-dotQCPass :: Pass -> (DotQC.DotQC -> DotQC.DotQC)
-dotQCPass pass = case pass of
-  Triv        -> id
-  Inline      -> DotQC.inlineDotQC
-  Unroll      -> id
-  MCT         -> DotQC.expandToffolis
-  CT          -> DotQC.expandAll
-  Simplify    -> DotQC.simplifyDotQC
-  Phasefold   -> optimizeDotQC phaseFold
-  PauliFold d -> optimizeDotQC (pauliFold d)
-  Statefold d -> optimizeDotQC (stateFold d)
-  CNOTMin     -> optimizeDotQC minCNOT
-  TPar        -> optimizeDotQC tpar
-  Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
-  CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
-  CX          -> optimizeDotQC (\_ _ -> expandCZ)
-  Decompile   -> decompileDotQC
+printErr (Left l)  = Left $ show l
+printErr (Right r) = Right r
 
-equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
-equivalenceCheckDotQC qc qc' =
-  let circ    = DotQC.toCliffordT . DotQC.toGatelist $ qc
-      circ'   = DotQC.toCliffordT . DotQC.toGatelist $ qc'
-      vars    = union (DotQC.qubits qc) (DotQC.qubits qc')
-      ins     = Set.toList $ DotQC.inputs qc
-      result  = validate True vars ins circ circ'
-  in
-    case (DotQC.inputs qc == DotQC.inputs qc', result) of
-      (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
-      (_, NotIdentity ce)   -> Left $ "Circuits not equivalent (" ++ ce ++ ")"
-      (_, Inconclusive sop) -> Left $ "Failed to verify: \n  " ++ show sop
-      _                     -> Right qc'
+instance ProgramRepresentation DotQC.DotQC where
+  readAndParse path = do
+    src <- B.readFile path
+    return $ printErr $ DotQC.parseDotQC src
 
-runDotQC :: [Pass] -> Bool -> String -> ByteString -> IO ()
-runDotQC passes verify fname src = do
-  start <- getCPUTime
-  end   <- parseAndPass `seq` getCPUTime
-  case parseAndPass of
-    Left err        -> putStrLn $ "ERROR: " ++ err
-    Right (qc, qc') -> do
+  expectValid _ = Right ()
+
+  applyPass pass = case pass of
+    Triv        -> id
+    Inline      -> DotQC.inlineDotQC
+    Unroll      -> id
+    MCT         -> DotQC.expandToffolis
+    CT          -> DotQC.expandAll
+    Simplify    -> DotQC.simplifyDotQC
+    Phasefold   -> optimizeDotQC phaseFold
+    PauliFold d -> optimizeDotQC (pauliFold d)
+    Statefold d -> optimizeDotQC (stateFold d)
+    CNOTMin     -> optimizeDotQC minCNOT
+    TPar        -> optimizeDotQC tpar
+    Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
+    CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
+    CX          -> optimizeDotQC (\_ _ -> expandCZ)
+    Decompile   -> decompileDotQC
+
+  prettyPrint = show
+  computeStats = DotQC.computeStats
+
+  prettyPrintWithBenchmarkInfo name time stats stats' qc =
+    foldr (++) "" (
+        [ "# Feynman -- quantum circuit toolkit\n",
+          "# Original (", name, "):\n"
+        ] ++ (map (\s -> "#   " ++ s ++ "\n") (statsLines stats)) ++ [
+          "# Result (", formatFloatN time 3, "ms):\n"
+        ] ++ (map (\s -> "#   " ++ s ++ "\n") (statsLines stats')) ++ [
+          prettyPrint qc
+        ]
+      )
+
+  equivalenceCheck qc qc' =
+    let circ    = DotQC.toCliffordT . DotQC.toGatelist $ qc
+        circ'   = DotQC.toCliffordT . DotQC.toGatelist $ qc'
+        vars    = union (DotQC.qubits qc) (DotQC.qubits qc')
+        ins     = Set.toList $ DotQC.inputs qc
+        result  = validate True vars ins circ circ'
+    in
+      case (DotQC.inputs qc == DotQC.inputs qc', result) of
+        (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
+        (_, NotIdentity ce)   -> Left $ "Circuits not equivalent (" ++ ce ++ ")"
+        (_, Inconclusive sop) -> Left $ "Failed to verify: \n  " ++ show sop
+        _                     -> Right qc'
+
+runPasses :: forall a. (ProgramRepresentation a, NFData a) => [a -> a] -> Bool -> String -> IO ()
+runPasses passes verify path = do
+  parseResult <- readAndParse path
+  case parseResult of
+    Left  err   -> putStrLn $ "ERROR: " ++ err
+    Right qprog -> do
+      start <- qprog `deepseq` getCPUTime
+      let qprog' = foldr ($) qprog passes
+      end   <- qprog' `deepseq` getCPUTime
+      when verify . void $ (
+        case equivalenceCheck qprog qprog' of
+          Left  err   -> putStrLn $ "ERROR: " ++ err
+          Right qprog -> return ()
+        )
       let time = (fromIntegral $ end - start) / 10^9
-      putStrLn $ "# Feynman -- quantum circuit toolkit"
-      putStrLn $ "# Original (" ++ fname ++ "):"
-      mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc
-      putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
-      putStrLn $ show qc'
-  where printErr (Left l)  = Left $ show l
-        printErr (Right r) = Right r
-        parseAndPass = do
-          qc  <- printErr $ DotQC.parseDotQC src
-          qc' <- return $ foldr dotQCPass qc passes
-          seq (DotQC.depth $ DotQC.toGatelist qc') (return ()) -- Nasty solution to strictifying
-          when verify . void $ equivalenceCheckDotQC qc qc'
-          return (qc, qc')
+      let stats = computeStats qprog
+      let stats' = computeStats qprog'
+      let name = takeBaseName path
+      putStr (prettyPrintWithBenchmarkInfo name time stats stats' qprog')
+
+dotQCPasses :: [Pass] -> [DotQC.DotQC -> DotQC.DotQC]
+dotQCPasses = map applyPass
+
 
 {- Deprecated transformations for benchmark suites -}
 benchPass :: [Pass] -> (DotQC.DotQC -> Either String DotQC.DotQC)
-benchPass passes = \qc -> Right $ foldr dotQCPass qc passes
+benchPass passes = \qc -> Right $ foldr applyPass qc passes
 
 benchVerif :: Bool -> Maybe (DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC)
-benchVerif True  = Just equivalenceCheckDotQC
+benchVerif True  = Just equivalenceCheck
 benchVerif False = Nothing
 
 {- QASM -}
@@ -386,16 +398,16 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-qpf"         -> parseArgs doneSwitches options {passes = qpf ++ passes options} xs
   "-ppf"         -> parseArgs doneSwitches options {passes = ppf ++ passes options} xs
   "-verify"      -> parseArgs doneSwitches options {verify = True} xs
-  "-benchmark"   -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
+  "-benchmark"   -> benchmarkFolder (head xs) >>= qcRunBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
   "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
   "-invgen"      -> generateInvariants (head xs)
   "--"           -> parseArgs True options xs
---  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
+--  "VerBench"     -> qcRunBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
 --  "VerAlg"       -> runVerSuite
-  "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
-  "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
-  "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
-  "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
+  "Small"        -> qcRunBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
+  "Med"          -> qcRunBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
+  "All"          -> qcRunBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
+  "POPL25"       -> qcRunBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
@@ -404,8 +416,8 @@ parseArgs doneSwitches options (x:xs) = case x of
         apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
         qpf = [Simplify,PauliFold 2,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
         ppf = [Simplify,PauliFold 0,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
-        runFile f | (drop (length f - 5) f) == ".qasm" =
+        runFile f | (takeExtension f) == ".qc"   = runPasses (dotQCPasses $ passes options) (verify options) f
+        runFile f | (takeExtension f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
                               else readFile f >>= runQASM (passes options) (verify options) (pureCircuit options) f
         runFile f = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp

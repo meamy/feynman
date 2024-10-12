@@ -41,6 +41,8 @@ import GHC.Integer.Logarithms
 import GHC.Types
 import GHC.TypeLits
 
+import Control.DeepSeq (NFData(..))
+
 import qualified Feynman.Util.Unicode as Unicode
 
 {-------------------------------
@@ -172,6 +174,9 @@ injectMod (Zmod x) = toInteger x
 -- | Dyadic rationals
 data DyadicRational = Dy !Integer {-# UNPACK #-} !Int deriving (Eq)
 
+instance NFData DyadicRational where
+  rnf _ = ()
+
 instance Show DyadicRational where
   show (Dy a 0) = show a
   show (Dy a n) = show a ++ "/2" ++ (Unicode.supscript $ toInteger n)
@@ -245,6 +250,9 @@ toDyadic x = dyadic a n
 
 -- | Dyadic fractions between 0 and 2
 newtype DMod2 = D2 { unpack :: DyadicRational } deriving (Eq, Ord)
+
+instance NFData DMod2 where
+  rnf _ = ()
 
 instance Show DMod2 where
   show (D2 a) = show a

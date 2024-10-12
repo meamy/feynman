@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 module Feynman.Frontend.DotQC where
 
 import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
@@ -19,22 +20,33 @@ import Text.Parsec.Char hiding (space)
 import Text.Parsec.Number
 import Control.Monad
 
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
+
+import qualified Feynman.Frontend.Frontend as FE
+
 type Nat = Word
 
 {- Data structures -}
 
 data Gate =
     Gate ID Nat [ID]
-  | ParamGate ID Nat Angle [ID] deriving (Eq)
+  | ParamGate ID Nat Angle [ID] deriving (Eq, Generic)
 
 data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: [Gate] }
+            deriving (Generic)
  
 data DotQC = DotQC { qubits  :: [ID],
                      inputs  :: Set ID,
                      outputs :: Set ID,
                      decls   :: [Decl] }
+             deriving (Generic)
+
+instance NFData Gate
+instance NFData Decl
+instance NFData DotQC
 
 {- Printing -}
 
@@ -321,25 +333,22 @@ gateDepth gates = maximum . Map.elems . foldl f Map.empty
 tDepth :: [Gate] -> Int
 tDepth = gateDepth ["T", "T*"]
 
-showStats :: DotQC -> [String]
-showStats circ =
+computeStats :: DotQC -> FE.ProgramStats
+computeStats circ =
   let gatelist   = toGatelist circ
-      counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
-      qubitCount = ["Qubits: " ++ (show . length . qubits $ circ)]
-      totaldepth = ["Depth: " ++ (show . depth $ gatelist)]
-      tdepth     = ["T depth: " ++ (show $ gateDepth ["T", "T*"] gatelist)]
+      counts     = gateCounts gatelist
+      qubitCount = length . qubits $ circ
+      totaldepth = depth gatelist
+      tdepth     = tDepth gatelist
   in
-    qubitCount ++ counts ++ totaldepth ++ tdepth
+    FE.ProgramStats counts qubitCount totaldepth tdepth
+
+
+showStats :: DotQC -> [String]
+showStats = FE.statsLines . computeStats
 
 showCliffordTStats :: DotQC -> [String]
-showCliffordTStats circ =
-  let gatelist   = fromCliffordT . toCliffordT . toGatelist $ circ
-      counts     = map (\(gate, count) -> gate ++ ": " ++ show count) . Map.toList $ gateCounts gatelist
-      qubitCount = ["Qubits: " ++ (show . length . qubits $ circ)]
-      totaldepth = ["Depth: " ++ (show . depth $ gatelist)]
-      tdepth     = ["T depth: " ++ (show $ tDepth gatelist)]
-  in
-    qubitCount ++ counts ++ totaldepth ++ tdepth
+showCliffordTStats = showStats
 
 {- Parser -}
 
