@@ -40,14 +40,12 @@ import Control.Monad
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
-addToDirectory s f = let (d, n) = splitFileName f in (d++s) </> n
-
 {- Benchmark circuits -}
-benchmarksPath = "benchmarks/"
+qcBenchmarksPath = "benchmarks/qc/"
 qasm3benchmarksPath = "benchmarks/qasm3/"
 
 -- Benchmarks of up to 10 qubits
-benchmarksSmall = map (benchmarksPath ++) [
+benchmarksSmall = map (qcBenchmarksPath ++) [
   "barenco_tof_3",
   "barenco_tof_4",
   "barenco_tof_5",
@@ -63,7 +61,7 @@ benchmarksSmall = map (benchmarksPath ++) [
   ]
 
 -- Benchmarks which don't crash the verifier
-benchmarksMedium = benchmarksSmall ++ map (benchmarksPath ++) [
+benchmarksMedium = benchmarksSmall ++ map (qcBenchmarksPath ++) [
   "adder_8",
   "barenco_tof_10",
   "csla_mux_3",
@@ -91,7 +89,7 @@ benchmarksMedium = benchmarksSmall ++ map (benchmarksPath ++) [
   ]
 
 -- Includes even the most ludicrous benchmarks
-benchmarksAll = benchmarksMedium ++ map (benchmarksPath ++) [
+benchmarksAll = benchmarksMedium ++ map (qcBenchmarksPath ++) [
   "cycle_17_3",
   "gf2^64_mult",
   --"gf2^128_mult",
@@ -102,7 +100,7 @@ benchmarksAll = benchmarksMedium ++ map (benchmarksPath ++) [
   "mod_adder_1048576"
   ]
 
-benchmarksPOPL25 = map (benchmarksPath ++) [
+benchmarksPOPL25 = map (qcBenchmarksPath ++) [
   "grover_5",
   "mod5_4",
   "vbe_adder_3",
@@ -231,7 +229,11 @@ runBenchmarks pass verify xs =
               gateRed   <- mapM printStat (Map.toList $ counts)
               depthRed  <- printStat ("Depth", depths)
               tdepthRed <- printStat ("Tdepth", tdepths)
-              writeFile (addToDirectory "opt/" $ s ++ "_opt.qc") (show c')
+              let (dir, name) = splitFileName s
+                  outputDir = dir </> "opt"
+                  outputPath = outputDir </> (name ++ "_opt.qc")
+              createDirectoryIfMissing False outputDir
+              writeFile outputPath (show c')
               return . Just $ Map.unionsWith (+) (gateRed ++ [depthRed, tdepthRed])
   in do
     results <- liftM catMaybes $ mapM runBench xs
@@ -254,6 +256,8 @@ runBenchmarks pass verify xs =
             else return $ Map.fromList [(stat, diff)]
         printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
 
+
+qcBenchmarkRunner src pass = (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c')
 
 {- Benchmarking for [AAM17] -}
 
