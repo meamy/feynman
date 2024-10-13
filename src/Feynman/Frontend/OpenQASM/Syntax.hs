@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-} 
 module Feynman.Frontend.OpenQASM.Syntax where
 
 import Feynman.Core hiding (Stmt)
@@ -13,24 +14,27 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Control.DeepSeq (NFData)
+import GHC.Generics (Generic)
+
 import Control.Monad
 import Debug.Trace
 
 {- Abstract syntax -}
-data Typ = Numeric | Creg Int | Qreg Int | Circ Int Int deriving (Eq,Show)
-data Arg = Var ID | Offset ID Int deriving (Eq,Show)
+data Typ = Numeric | Creg Int | Qreg Int | Circ Int Int deriving (Eq,Show,Generic)
+data Arg = Var ID | Offset ID Int deriving (Eq,Show,Generic)
 
-data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show)
-data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
+data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show,Generic)
+data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show,Generic)
 
-data QASM = QASM Double [Stmt] deriving (Eq,Show)
+data QASM = QASM Double [Stmt] deriving (Eq,Show,Generic)
 
 data Stmt =
     IncStmt String
   | DecStmt Dec
   | QStmt QExp
   | IfStmt ID Int QExp
-  deriving (Eq,Show)
+  deriving (Eq,Show,Generic)
 
 data Dec =
     VarDec  { id :: ID,
@@ -42,20 +46,20 @@ data Dec =
   | UIntDec { id :: ID,
               cparams :: [ID],
               qparams :: [ID] }
-  deriving (Eq,Show)
+  deriving (Eq,Show,Generic)
 
 data QExp =
     GateExp UExp
   | MeasureExp Arg Arg
   | ResetExp Arg
-  deriving (Eq,Show)
+  deriving (Eq,Show,Generic)
 
 data UExp =
     UGate Exp Exp Exp Arg
   | CXGate Arg Arg
   | CallGate ID [Exp] [Arg]
   | BarrierGate [Arg]
-  deriving (Eq,Show)
+  deriving (Eq,Show,Generic)
 
 data Exp =
     FloatExp Double
@@ -64,7 +68,18 @@ data Exp =
   | VarExp ID
   | UOpExp UnOp Exp
   | BOpExp Exp BinOp Exp
-  deriving (Eq,Show)
+  deriving (Eq,Show,Generic)
+
+instance NFData Typ
+instance NFData Arg
+instance NFData UnOp
+instance NFData BinOp
+instance NFData QASM
+instance NFData Stmt
+instance NFData Dec
+instance NFData QExp
+instance NFData UExp
+instance NFData Exp
 
 {- Expression evaluation -}
 evalUOp :: UnOp -> (Double -> Double)
@@ -606,22 +621,6 @@ bitCounts (QASM ver stmts) = foldl bcStmt (0, 0) stmts
           VarDec _ (Qreg i) -> (cbits, qbits + i)
           _                 -> (cbits, qbits)
 
---depth :: QASM -> Int
---gateDepth :: [ID] -> QASM -> Int
-
-showStats :: QASM -> [String]
-showStats qasm =
-  let qasm'  = inline qasm
-      bits   =
-        let (cbits, qbits) = bitCounts qasm' in
-          ["cbits: " ++ show cbits, "qubits: " ++ show qbits]
-      counts =
-        let f (gate, count) = gate ++ ": " ++ show count in
-          map f . Map.toList $ gateCounts qasm'
-  in
-    bits ++ counts
-    
-      
 {- Cross compilation -}
 
 -- .qc --> openQASM

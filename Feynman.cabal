@@ -57,6 +57,7 @@ library
 
                        Feynman.Frontend.DotQC
                        Feynman.Frontend.Frontend
+                       Feynman.Frontend.OpenQASM.Driver
                        Feynman.Frontend.OpenQASM.Syntax
                        Feynman.Frontend.OpenQASM.Lexer
                        Feynman.Frontend.OpenQASM.Parser

@@ -4,7 +4,7 @@ module Benchmarks where
 import Data.List
 import Data.Maybe (fromJust)
 import Control.Monad (when)
-import Numeric
+import Numeric (showFFloat)
 import System.CPUTime (getCPUTime)
 import System.Console.ANSI
 import System.FilePath
@@ -198,7 +198,7 @@ withTiming f = do
   let t = (fromIntegral $ end - start) / 10^9
   putStrLn $ "Time: " ++ formatFloatN t 3 ++ "ms"
 
-qcRunBenchmarks pass verify xs =
+runBenchmarks pass verify xs =
   let runBench s = do
         src   <- B.readFile $ s ++ ".qc"
         start <- getCPUTime
@@ -255,9 +255,6 @@ qcRunBenchmarks pass verify xs =
             then return Map.empty
             else return $ Map.fromList [(stat, diff)]
         printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
-
-
-qcBenchmarkRunner src pass = (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c')
 
 {- Benchmarking for [AAM17] -}
 

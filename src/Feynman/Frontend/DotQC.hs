@@ -1,9 +1,9 @@
 {-# LANGUAGE DeriveGeneric #-}
-module Feynman.Frontend.DotQC where
+module Feynman.Frontend.DotQC (DotQC(..), Gate(..), Decl(..), gateCounts, depth, fromCliffordT, parseDotQC, tDepth, toCliffordT, toGatelist) where
 
-import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
+import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase, expandCNOT, expandCZ)
 import Feynman.Algebra.Base
-import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..))
+import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..), resynthesizeCircuit)
 
 import Data.List
 
@@ -14,6 +14,7 @@ import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 import Text.Parsec hiding (space)
 import Text.Parsec.Char hiding (space)
@@ -24,6 +25,17 @@ import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
 
 import qualified Feynman.Frontend.Frontend as FE
+
+import Feynman.Optimization.PhaseFold
+import Feynman.Optimization.StateFold
+import Feynman.Optimization.TPar
+import Feynman.Optimization.Clifford
+import Feynman.Optimization.RelationalFold as L
+import Feynman.Optimization.RelationalFoldNL as NL
+import Feynman.Synthesis.Pathsum.Unitary
+import Feynman.Verification.Symbolic
+
+import Numeric (showFFloat)
 
 type Nat = Word
 
@@ -37,7 +49,7 @@ data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: [Gate] }
             deriving (Generic)
- 
+
 data DotQC = DotQC { qubits  :: [ID],
                      inputs  :: Set ID,
                      outputs :: Set ID,
@@ -338,10 +350,10 @@ computeStats circ =
   let gatelist   = toGatelist circ
       counts     = gateCounts gatelist
       qubitCount = length . qubits $ circ
-      totaldepth = depth gatelist
-      tdepth     = tDepth gatelist
+      totaldepth = Just $ depth gatelist
+      tdepth     = Just $ tDepth gatelist
   in
-    FE.ProgramStats counts qubitCount totaldepth tdepth
+    FE.ProgramStats counts Nothing qubitCount totaldepth tdepth
 
 
 showStats :: DotQC -> [String]
@@ -365,7 +377,7 @@ parseID = try $ do
   c  <- letter
   cs <- many (alphaNum <|> char '*')
   if (c:cs) == "BEGIN" || (c:cs) == "END" then fail "" else return (c:cs)
-parseParams = sepEndBy (many1 alphaNum) (many1 sep) 
+parseParams = sepEndBy (many1 alphaNum) (many1 sep)
 
 parseDiscrete = do
   numerator <- option 1 nat
@@ -406,7 +418,7 @@ parseDecl = do
   skipSpace
   id <- option "main" (try parseID)
   skipSpace
-  args <- parseFormals 
+  args <- parseFormals
   skipWithBreak
   body <- endBy parseGate skipWithBreak
   string "END"
@@ -434,3 +446,79 @@ parseFile = do
 
 parseDotQC :: ByteString -> Either ParseError DotQC
 parseDotQC = parse parseFile ".qc parser"
+
+printErr (Left l)  = Left $ show l
+printErr (Right r) = Right r
+
+optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC -> DotQC
+optimizeDotQC f qc = qc { decls = map go $ decls qc }
+  where go decl =
+          let circuitQubits = qubits qc ++ params decl
+              circuitInputs = (Set.toList $ inputs qc) ++ params decl
+              wrap g        = fromCliffordT . g . toCliffordT
+          in
+            decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
+
+decompileDotQC :: DotQC -> DotQC
+decompileDotQC qc = qc { decls = map go $ decls qc }
+  where go decl =
+          let circuitQubits  = qubits qc ++ params decl
+              circuitInputs  = (Set.toList $ inputs qc) ++ params decl
+              resynthesize c = case resynthesizeCircuit $ toCliffordT c of
+                Nothing -> c
+                Just c' -> fromExtractionBasis c'
+          in
+            decl { body = resynthesize $ body decl }
+
+formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
+
+instance FE.ProgramRepresentation DotQC where
+  readAndParse path = do
+    src <- B.readFile path
+    return $ printErr $ parseDotQC src
+
+  expectValid _ = Right ()
+
+  applyPass _ pass = case pass of
+    FE.Triv        -> id
+    FE.Inline      -> inlineDotQC
+    FE.Unroll      -> id
+    FE.MCT         -> expandToffolis
+    FE.CT          -> expandAll
+    FE.Simplify    -> simplifyDotQC
+    FE.Phasefold   -> optimizeDotQC phaseFold
+    FE.PauliFold d -> optimizeDotQC (pauliFold d)
+    FE.Statefold d -> optimizeDotQC (stateFold d)
+    FE.CNOTMin     -> optimizeDotQC minCNOT
+    FE.TPar        -> optimizeDotQC tpar
+    FE.Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
+    FE.CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
+    FE.CX          -> optimizeDotQC (\_ _ -> expandCZ)
+    FE.Decompile   -> decompileDotQC
+
+  prettyPrint = show
+  computeStats = computeStats
+
+  prettyPrintWithBenchmarkInfo name time stats stats' qc =
+    unlines (
+        [ "# Feynman -- quantum circuit toolkit",
+          "# Original (" ++ name ++ "):"
+        ] ++ map ("#   " ++) (FE.statsLines stats) ++ [
+          "# Result (", formatFloatN time 3, "ms):\n"
+        ] ++ map ("#   " ++) (FE.statsLines stats')
+        ++ lines (show qc)
+      )
+
+  equivalenceCheck qc qc' =
+    let circ    = toCliffordT . toGatelist $ qc
+        circ'   = toCliffordT . toGatelist $ qc'
+        vars    = union (qubits qc) (qubits qc')
+        ins     = Set.toList $ inputs qc
+        result  = validate True vars ins circ circ'
+    in
+      case (inputs qc == inputs qc', result) of
+        (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
+        (_, NotIdentity ce)   -> Left $ "Circuits not equivalent (" ++ ce ++ ")"
+        (_, Inconclusive sop) -> Left $ "Failed to verify: \n  " ++ show sop
+        _                     -> Right qc'
+

@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Feynman.Frontend.OpenQASM3.Syntax
@@ -34,12 +35,14 @@ module Feynman.Frontend.OpenQASM3.Syntax
   )
 where
 
+import Control.DeepSeq (NFData)
 import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Debug.Trace (trace)
 import Feynman.Frontend.OpenQASM3.Ast
-import Numeric
+import GHC.Generics (Generic)
+import Numeric (readDec, readFloat, readHex, readOct)
 import Text.Read (readMaybe)
 
 type ParseNode = Node Tag SourceRef
@@ -168,7 +171,7 @@ data Token
   | StringLiteralToken String
   | RemainingLineContentToken String
   | CalibrationBlockToken String
-  deriving (Eq, Ord, Read, Show)
+  deriving (Eq, Ord, Read, Show, Generic)
 
 data Timing
   = TimeDt Double
@@ -176,7 +179,7 @@ data Timing
   | TimeUs Double
   | TimeMs Double
   | TimeS Double
-  deriving (Eq, Read, Show)
+  deriving (Eq, Read, Show, Generic)
 
 data Tag
   = Program {openqasmMajorVersion :: Int, openqasmMinorVersion :: Maybe Int, versionTok :: Token} -- [Statement..]
@@ -268,7 +271,13 @@ data Tag
   | DefcalTarget {defcalTargetName :: String, defcalTargetTok :: Token} -- []
   | ArgumentDefinition -- [{Scalar,Qubit,Creg,Qreg,*ArrayRef}TypeSpec, Identifier]
   | List -- [element..]
-  deriving (Eq, Read, Show)
+  deriving (Eq, Read, Show, Generic)
+
+instance NFData Token
+
+instance NFData Timing
+
+instance NFData Tag
 
 isEmptyStatement :: Node Tag c -> Bool
 isEmptyStatement NilNode = True
