@@ -212,8 +212,8 @@ applyGate (gate, l) = case gate of
   _      -> error $ "Unsupported gate " ++ show gate
 
 {- Run the analysis on a circuit and state -}
-runCircuit :: Int -> [Primitive] -> Ctx -> Ctx
-runCircuit d circ = execState $ (mapM_ applyGate (zip circ [2..])) >> go where
+runCircuit :: Int -> [AnnotatedPrimitive] -> Ctx -> Ctx
+runCircuit d circ = execState $ (mapM_ applyGate circ) >> go where
   go | d == 1 = do
          i1 <- applyReductions (Just 1) -- linear reductions
          return ()
@@ -235,7 +235,10 @@ initialState vars inputs = st where
   ket = (zip inputs [ofVar (var x) | x <- [0..]]) ++ (zip (vars\\inputs) $ repeat 0)
   
 stateFold :: Int -> [ID] -> [ID] -> [Primitive] -> [Primitive]
-stateFold d vars inputs circ =
+stateFold d vars inputs circ = fst . unzip $ stateFold' d vars inputs (annotate circ)
+
+stateFold' :: Int -> [ID] -> [ID] -> [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+stateFold' d vars inputs circ =
   let result = runCircuit d circ $ initialState vars inputs
       phases = Map.elems $ terms result
       (map, gphase) = foldr go (Map.empty, phase result) phases where
@@ -246,12 +249,12 @@ stateFold d vars inputs circ =
               update (l,_) = Map.insert l (if l == loc then angle' else 0)
           in
             (Set.foldr update map locs, gphase')
-      circ' = concatMap go (zip circ [2..]) where
+      circ' = concatMap go circ where
         go (gate, l) = case Map.lookup l map of
               Nothing -> [(gate, l)]
               Just angle
                 | angle == 0 -> []
-                | otherwise -> zip (synthesizePhase (getTarget gate) angle) [0..]
+                | otherwise -> annotateWith l (synthesizePhase (getTarget gate) angle)
         getTarget gate = case gate of
           T x    -> x
           S x    -> x
@@ -260,4 +263,35 @@ stateFold d vars inputs circ =
           Sinv x -> x
           Rz _ x -> x
   in
-    (fst $ unzip $ circ') ++ (globalPhase (head vars) gphase)
+    circ' ++ (annotateWith (-1) $ globalPhase (head vars) gphase)
+
+-- Fold after swapping CNOT to CZ
+pauliFold :: Int -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+pauliFold d vars inputs circ = 
+  let initCirc = zip circ [2..]
+      tmpCirc  = simplifyPrimitive' . expandCNOT' $ initCirc
+      result = runCircuit d tmpCirc $ initialState vars inputs
+      phases = Map.elems $ terms result
+      (map, gphase) = foldr go (Map.empty, phase result) phases where
+        go (locs, angle) (map, gphase) =
+          let (loc, gphase', angle') = case Set.findMin locs of
+                (l, 0) -> (l, gphase, angle)
+                (l, 1)  -> (l, gphase + angle, (-angle))
+              update (l,_) = Map.insert l (if l == loc then angle' else 0)
+          in
+            (Set.foldr update map locs, gphase')
+      circ' = concatMap go initCirc where
+        go (gate, l) = case Map.lookup l map of
+              Nothing -> [(gate, l)]
+              Just angle
+                | angle == 0 -> []
+                | otherwise -> annotateWith l (synthesizePhase (getTarget gate) angle)
+        getTarget gate = case gate of
+          T x    -> x
+          S x    -> x
+          Z x    -> x
+          Tinv x -> x
+          Sinv x -> x
+          Rz _ x -> x
+  in
+    (fst . unzip $ circ') ++ (globalPhase (head vars) gphase)

@@ -4,7 +4,7 @@ module Benchmarks where
 import Data.List
 import Data.Maybe (fromJust)
 import Control.Monad (when)
-import Numeric
+import Numeric (showFFloat)
 import System.CPUTime (getCPUTime)
 import System.Console.ANSI
 import System.FilePath
@@ -40,13 +40,12 @@ import Control.Monad
 
 formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
-addToDirectory s f = let (d, n) = splitFileName f in (d++s) </> n
-
 {- Benchmark circuits -}
-benchmarksPath = "benchmarks/"
+qcBenchmarksPath = "benchmarks/qc/"
+qasm3benchmarksPath = "benchmarks/qasm3/"
 
 -- Benchmarks of up to 10 qubits
-benchmarksSmall = map (benchmarksPath ++) [
+benchmarksSmall = map (qcBenchmarksPath ++) [
   "barenco_tof_3",
   "barenco_tof_4",
   "barenco_tof_5",
@@ -62,7 +61,7 @@ benchmarksSmall = map (benchmarksPath ++) [
   ]
 
 -- Benchmarks which don't crash the verifier
-benchmarksMedium = benchmarksSmall ++ map (benchmarksPath ++) [
+benchmarksMedium = benchmarksSmall ++ map (qcBenchmarksPath ++) [
   "adder_8",
   "barenco_tof_10",
   "csla_mux_3",
@@ -90,7 +89,7 @@ benchmarksMedium = benchmarksSmall ++ map (benchmarksPath ++) [
   ]
 
 -- Includes even the most ludicrous benchmarks
-benchmarksAll = benchmarksMedium ++ map (benchmarksPath ++) [
+benchmarksAll = benchmarksMedium ++ map (qcBenchmarksPath ++) [
   "cycle_17_3",
   "gf2^64_mult",
   --"gf2^128_mult",
@@ -99,6 +98,45 @@ benchmarksAll = benchmarksMedium ++ map (benchmarksPath ++) [
   --"hwb10",
   --"hwb12",
   "mod_adder_1048576"
+  ]
+
+benchmarksPOPL25 = map (qcBenchmarksPath ++) [
+  "grover_5",
+  "mod5_4",
+  "vbe_adder_3",
+  "csla_mux_3",
+  "csum_mux_9",
+  "qcla_com_7",
+  "qcla_mod_7",
+  "qcla_adder_10",
+  "adder_8",
+  "rc_adder_6",
+  "mod_red_21",
+  "mod_mult_55",
+  "mod_adder_1024",
+  "gf2^4_mult",
+  "gf2^5_mult",
+  "gf2^6_mult",
+  "gf2^7_mult",
+  "gf2^8_mult",
+  "gf2^9_mult",
+  "gf2^10_mult",
+  "gf2^16_mult",
+  "gf2^32_mult",
+  "ham15-low",
+  "ham15-med",
+  "ham15-high",
+  "hwb6",
+  "qft_4",
+  "tof_3",
+  "tof_4",
+  "tof_5",
+  "tof_10",
+  "barenco_tof_3",
+  "barenco_tof_4",
+  "barenco_tof_5",
+  "barenco_tof_10",
+  "fprenorm"
   ]
 
 benchmarkFolder f = liftM (map ((f </>) . dropExtension) . filter (\s -> takeExtension s == ".qc")) $ getDirectoryContents f
@@ -191,7 +229,11 @@ runBenchmarks pass verify xs =
               gateRed   <- mapM printStat (Map.toList $ counts)
               depthRed  <- printStat ("Depth", depths)
               tdepthRed <- printStat ("Tdepth", tdepths)
-              writeFile (addToDirectory "opt/" $ s ++ "_opt.qc") (show c')
+              let (dir, name) = splitFileName s
+                  outputDir = dir </> "opt"
+                  outputPath = outputDir </> (name ++ "_opt.qc")
+              createDirectoryIfMissing False outputDir
+              writeFile outputPath (show c')
               return . Just $ Map.unionsWith (+) (gateRed ++ [depthRed, tdepthRed])
   in do
     results <- liftM catMaybes $ mapM runBench xs
@@ -213,7 +255,6 @@ runBenchmarks pass verify xs =
             then return Map.empty
             else return $ Map.fromList [(stat, diff)]
         printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
-
 
 {- Benchmarking for [AAM17] -}
 

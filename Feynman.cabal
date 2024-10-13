@@ -51,13 +51,24 @@ library
                        Feynman.Optimization.Clifford,
                        Feynman.Optimization.ARD,
                        Feynman.Optimization.RelationalFold,
+                       Feynman.Optimization.RelationalFoldNL,
 
                        Feynman.Verification.Symbolic,
 
                        Feynman.Frontend.DotQC
+                       Feynman.Frontend.Frontend
+                       Feynman.Frontend.OpenQASM.Driver
                        Feynman.Frontend.OpenQASM.Syntax
                        Feynman.Frontend.OpenQASM.Lexer
                        Feynman.Frontend.OpenQASM.Parser
+                       Feynman.Frontend.OpenQASM3.Ast
+                       Feynman.Frontend.OpenQASM3.Chatty
+                       Feynman.Frontend.OpenQASM3.Driver
+                       Feynman.Frontend.OpenQASM3.Lexer
+                       Feynman.Frontend.OpenQASM3.Parser
+                       Feynman.Frontend.OpenQASM3.Semantics
+                       Feynman.Frontend.OpenQASM3.Syntax
+                       Feynman.Frontend.OpenQASM3.Syntax.Transformations
 
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,
@@ -66,6 +77,7 @@ library
                        bv,
                        bytestring,
                        containers >= 0.6.3.1,
+                       deepseq,
                        fast-digits >= 0.2.1.0,
                        fin >= 0.1.1,
                        ghc-prim >= 0.5.0.0,
