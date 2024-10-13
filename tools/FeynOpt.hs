@@ -35,6 +35,7 @@ import Feynman.Verification.Symbolic
 
 import System.Environment (getArgs)
 import System.CPUTime     (getCPUTime)
+import System.IO (hPutStrLn, stderr)
 
 import Data.List
 import qualified Data.Set as Set
@@ -141,14 +142,16 @@ runDotQC passes verify fname src = do
   start <- getCPUTime
   end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
-    Left err        -> putStrLn $ "ERROR: " ++ err
+    Left err        -> hPutStrLn stderr $ "ERROR: " ++ err
     Right (qc, qc') -> do
       let time = (fromIntegral $ end - start) / 10^9
+      let verStr = if verify then ", Verified" else ""
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc
-      putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms):"
+      putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms" ++ verStr ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
+      if verify then putStrLn $ "# Verified" else return ()
       putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
@@ -156,7 +159,7 @@ runDotQC passes verify fname src = do
           qc  <- printErr $ DotQC.parseDotQC src
           qc' <- return $ foldr dotQCPass qc passes
           seq (DotQC.depth $ DotQC.toGatelist qc') (return ()) -- Nasty solution to strictifying
-          when verify . void $ equivalenceCheckDotQC qc qc'
+          equivalenceCheckDotQC qc qc'
           return (qc, qc')
 
 {- Deprecated transformations for benchmark suites -}
@@ -403,8 +406,8 @@ parseArgs doneSwitches options (x:xs) = case x of
         o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         o4  = [CNOTMin,Cliff,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,PauliFold 2,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,PauliFold 0,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,PauliFold 1,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
         runFile f | (drop (length f - 5) f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f

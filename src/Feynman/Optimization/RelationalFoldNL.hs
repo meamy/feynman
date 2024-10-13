@@ -401,7 +401,7 @@ applyStmt d stmt = case stmt of
     let (a,ctx') = runState (processBlock d s) $ initialState vars vars
     summary <- loopSummary ctx'
     fastForward summary
-    return $ a ++ ["// Loop " ++ show l ++ " summary: " ++ show summary]
+    return $ a ++ ["Summary of loop at pos " ++ show l ++ ": " ++ show (snd summary)]
 
 -- | Analysis
 processBlock :: Int -> WStmt Loc -> State (Ctx) [String]

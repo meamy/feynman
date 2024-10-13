@@ -22,6 +22,7 @@ import qualified Feynman.Algebra.Polynomial.Multilinear as P
 import Feynman.Algebra.Polynomial.Multilinear.Groebner
 import Feynman.Algebra.Pathsum.Balanced (toBooleanPoly)
 import Feynman.Synthesis.Phase
+import Feynman.Optimization.Clifford
 
 {-- "State" folding optimization -}
 {- The idea here is to apply some [HH] reductions when possible
@@ -80,6 +81,11 @@ addTerm theta loc bexp = modify go where
   parity = getConstant bexp
   theta' = if parity == 1 then (-theta) else theta
   bexp'  = dropConstant $ bexp
+
+-- Adds a non-mergeable phase term
+addTermNM :: Angle -> SBool String -> State Ctx ()
+addTermNM theta bexp = modify $ \st -> st { pp = pp st + poly } where
+  poly = distribute theta bexp
 
 -- Adds a quadratic phase term
 addQuadTerm :: SBool String -> SBool String -> State Ctx ()
@@ -180,13 +186,13 @@ reduceAll ideal = do
   put $ st { terms = Map.mapKeysWith comb (flip mvd gbasis) $ terms st }
 
 {- The Super phase folding analysis -}
-applyGate :: (Primitive, Loc) -> State Ctx ()
-applyGate (gate, l) = case gate of
+applyGate :: Bool -> (Primitive, Loc) -> State Ctx ()
+applyGate tonly (gate, l) = case gate of
   T v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 2) l
   Tinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 7 2) l
-  S v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 1) l
-  Sinv v -> getSt v >>= addTerm (dyadicPhase $ dyadic 3 1) l
-  Z v    -> getSt v >>= addTerm (dyadicPhase $ dyadic 1 0) l
+  S v    -> getSt v >>= if tonly then addTermNM (dyadicPhase $ dyadic 1 1) else addTerm (dyadicPhase $ dyadic 1 1) l
+  Sinv v -> getSt v >>= if tonly then addTermNM (dyadicPhase $ dyadic 3 1) else addTerm (dyadicPhase $ dyadic 3 1) l
+  Z v    -> getSt v >>= if tonly then addTermNM (dyadicPhase $ dyadic 1 0) else addTerm (dyadicPhase $ dyadic 1 0) l
   Rz p v -> getSt v >>= addTerm p l
   CNOT c t -> do
     bexp  <- getSt c
@@ -213,8 +219,8 @@ applyGate (gate, l) = case gate of
   _      -> error $ "Unsupported gate " ++ show gate
 
 {- Run the analysis on a circuit and state -}
-runCircuit :: Int -> [AnnotatedPrimitive] -> Ctx -> Ctx
-runCircuit d circ = execState $ (mapM_ applyGate circ) >> go where
+runCircuit :: Bool -> Int -> [AnnotatedPrimitive] -> Ctx -> Ctx
+runCircuit tonly d circ = execState $ (mapM_ (applyGate tonly) circ) >> go where
   go | d == 1 = do
          i1 <- applyReductions (Just 1) -- linear reductions
          return ()
@@ -240,7 +246,7 @@ stateFold d vars inputs circ = fst . unzip $ stateFold' d vars inputs (annotate 
 
 stateFold' :: Int -> [ID] -> [ID] -> [AnnotatedPrimitive] -> [AnnotatedPrimitive]
 stateFold' d vars inputs circ =
-  let result = runCircuit d circ $ initialState vars inputs
+  let result = runCircuit False d circ $ initialState vars inputs
       phases = Map.elems $ terms result
       (map, gphase) = foldr go (Map.empty, phase result) phases where
         go (locs, angle) (map, gphase) =
@@ -270,8 +276,8 @@ stateFold' d vars inputs circ =
 pauliFold :: Int -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 pauliFold d vars inputs circ = 
   let initCirc = zip circ [2..]
-      tmpCirc  = simplifyPrimitive' . expandCNOT' $ initCirc
-      result = runCircuit d tmpCirc $ initialState vars inputs
+      tmpCirc  = simplifyCliffords' . simplifyPrimitive' . expandCNOT' $ initCirc
+      result = runCircuit True d tmpCirc $ initialState vars inputs
       phases = Map.elems $ terms result
       (map, gphase) = foldr go (Map.empty, phase result) phases where
         go (locs, angle) (map, gphase) =
