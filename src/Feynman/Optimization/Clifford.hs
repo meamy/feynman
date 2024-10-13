@@ -79,13 +79,17 @@ simplifyCliffords = go [] ([], []) where
 
 -- | Annotated version
 simplifyCliffords' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
-simplifyCliffords' = go [] ([], []) where
-  finalize (c, t) =
-    let l  = if c == [] then 0 else snd (head c) in
-      (annotateWith l . resynthesizeClifford . reverse . unannotate $ c) ++ (reverse t)
+simplifyCliffords' circ = go mx [] ([], []) circ where
+  mx = maximum . map snd $ circ
 
-  go acc (c, t) []          = acc ++ finalize (c, t)
-  go acc (c, t) ((gate,l):xs)
-    | not (isClifford gate)              = go acc (c, (gate,l):t) xs
-    | gate `commutesWith` (unannotate t) = go acc ((gate,l):c, t) xs
-    | otherwise                          = go (acc ++ (finalize (c, t))) ([(gate,l)], []) xs
+  finalize mx (c, t) =
+    let c' = resynthesizeClifford . reverse . unannotate $ c in
+      (mx + length c', ((flip zip) [mx+1..] c') ++ reverse t)
+
+  go mx acc (c, t) []                    = acc ++ snd (finalize mx (c, t))
+  go mx acc (c, t) ((gate,l):xs)
+    | not (isClifford gate)              = go mx acc (c, (gate,l):t) xs
+    | gate `commutesWith` (unannotate t) = go mx acc ((gate,l):c, t) xs
+    | otherwise                          =
+      let (mx', circ') = finalize mx (c, t) in
+        go mx' (acc ++ circ') ([(gate,l)], []) xs
