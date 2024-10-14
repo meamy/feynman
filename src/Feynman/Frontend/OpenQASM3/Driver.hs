@@ -7,7 +7,6 @@ import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Word (Word64)
-import Debug.Trace (trace)
 import Feynman.Algebra.Base
 import Feynman.Core hiding (Decl, subst)
 import qualified Feynman.Frontend.Frontend as FE
@@ -266,7 +265,7 @@ instance FE.ProgramRepresentation (QASM3.SyntaxNode Loc) where
         tdepth = Nothing
      in FE.ProgramStats counts Nothing qbits totaldepth tdepth
 
-  prettyPrintWithBenchmarkInfo name time stats stats' qc =
+  prettyPrintWithBenchmarkInfo name time stats stats' verified qc =
     unlines
       ( [ "// Feynman -- quantum circuit toolkit",
           "// Original (" ++ name ++ ", using QASM3 frontend):"
@@ -277,4 +276,4 @@ instance FE.ProgramRepresentation (QASM3.SyntaxNode Loc) where
       )
       ++ QASM3.pretty qc
 
-  equivalenceCheck _ _ = Left "Equivalence check not implemented for QASM3"
+  equivalenceCheck _ _ = Left "Can't verify QASM3 programs"

@@ -5,25 +5,58 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
-import Benchmarks
-import Control.DeepSeq (NFData, deepseq)
-import Control.Monad
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import Data.List
-import qualified Data.Set as Set
-import Debug.Trace as Trace
-import Feynman.Core hiding (getArgs, CZ)
-import qualified Feynman.Frontend.DotQC as DotQC
+import Feynman.Core (Primitive,
+                     ID,
+                     Loc,
+                     simplifyPrimitive',
+                     expandCNOT,
+                     expandCNOT',
+                     annotate,
+                     unannotate,
+                     expandCZ,
+                     idsW)
+
 import Feynman.Frontend.Frontend
+import qualified Feynman.Frontend.DotQC as DotQC
+
 import Feynman.Frontend.OpenQASM.Driver
 import qualified Feynman.Frontend.OpenQASM.Syntax as QASM2
+import qualified Feynman.Frontend.OpenQASM.Lexer  as QASM2Lexer
+import qualified Feynman.Frontend.OpenQASM.Parser as QASM2Parser
+
 import Feynman.Frontend.OpenQASM3.Driver
+import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
+import qualified Feynman.Frontend.OpenQASM3.Parser as QASM3Parser
+import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3Syntax
+import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as QASM3
 import qualified Feynman.Frontend.OpenQASM3.Semantics as QASM3
-import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3
-import System.CPUTime (getCPUTime)
+
+import Feynman.Optimization.PhaseFold
+import Feynman.Optimization.StateFold
+import Feynman.Optimization.TPar
+import Feynman.Optimization.Clifford
+import Feynman.Optimization.RelationalFold as L
+import Feynman.Optimization.RelationalFoldNL as NL
+import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
+import Feynman.Verification.Symbolic
+
 import System.Environment (getArgs)
-import System.FilePath (takeBaseName, takeDirectory, takeExtension)
+import System.FilePath    (takeBaseName, takeDirectory, takeExtension)
+import System.CPUTime     (getCPUTime)
+import System.IO          (hPutStrLn, stderr)
+
+import Control.Monad
+import Control.DeepSeq (NFData, deepseq)
+
+import Data.List
+import qualified Data.Set as Set
+import Data.Map (Map)
+import qualified Data.Map as Map
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+import Data.Either (isRight)
+
+import Benchmarks
 
 {- Toolkit passes -}
 
@@ -40,21 +73,23 @@ runPasses :: forall a. (ProgramRepresentation a, NFData a) => [a -> a] -> Option
 runPasses passFns options path = do
   parseResult <- readAndParse path
   case parseResult of
-    Left err -> putStrLn $ "ERROR: " ++ err
+    Left err -> hPutStrLn stderr $ "ERROR: " ++ err
     Right qprog -> do
       start <- qprog `deepseq` getCPUTime
       let qprog' = foldr ($) qprog passFns
       end <- qprog' `deepseq` getCPUTime
+      let eqCheck = equivalenceCheck qprog qprog'
+      let verified = verify options && isRight eqCheck
       when (verify options) . void $
         ( case equivalenceCheck qprog qprog' of
-            Left err -> putStrLn $ "ERROR: " ++ err
+            Left err -> hPutStrLn stderr $ "ERROR: " ++ err
             Right qprog -> return ()
         )
       let time = (fromIntegral $ end - start) / 10 ^ 9
       let stats = computeStats qprog
       let stats' = computeStats qprog'
       let name = takeBaseName path
-      putStr (prettyPrintWithBenchmarkInfo name time stats stats' qprog')
+      putStr (prettyPrintWithBenchmarkInfo name time stats stats' verified qprog')
 
 dotQCPasses :: Options -> [DotQC.DotQC -> DotQC.DotQC]
 dotQCPasses options = map (applyPass True) (passes options)
@@ -177,11 +212,10 @@ parseArgs doneSwitches options (x : xs) = case x of
     o3 = [CNOTMin, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
     o4 = [CNOTMin, Cliff, PauliFold 1, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
     apf = [Simplify, PauliFold 1, Simplify, Statefold 1, Phasefold, Simplify, CT, Simplify, MCT]
-    qpf = [Simplify, PauliFold 2, Simplify, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
-    ppf = [Simplify, PauliFold 0, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
-    runFile f | (takeExtension f) == ".qc" = runPasses (dotQCPasses options) options f
-    runFile f
-      | (takeExtension f) == ".qasm" =
+    qpf = [Simplify, PauliFold 1, Simplify, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
+    ppf = [Simplify, PauliFold 1, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
+    runFile f | (takeExtension f) == ".qc"   = runPasses (dotQCPasses options) options f
+    runFile f | (takeExtension f) == ".qasm" =
           if useQASM3 options
             then runPasses (qasm3Passes options) options f
             else runPasses (qasmPasses options) options f

@@ -59,6 +59,6 @@ class ProgramRepresentation a where
   expectValid :: a -> Either String ()
   applyPass :: Bool -> Pass -> (a -> a)
   prettyPrint :: a -> String
-  prettyPrintWithBenchmarkInfo :: String -> Float -> ProgramStats -> ProgramStats -> a -> String
+  prettyPrintWithBenchmarkInfo :: String -> Float -> ProgramStats -> ProgramStats -> Bool -> a -> String
   computeStats :: a -> ProgramStats
   equivalenceCheck :: a -> a -> Either String a

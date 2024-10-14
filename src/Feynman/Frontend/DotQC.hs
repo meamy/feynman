@@ -499,12 +499,13 @@ instance FE.ProgramRepresentation DotQC where
   prettyPrint = show
   computeStats = computeStats
 
-  prettyPrintWithBenchmarkInfo name time stats stats' qc =
+  prettyPrintWithBenchmarkInfo name time stats stats' verified qc =
     unlines (
         [ "# Feynman -- quantum circuit toolkit",
           "# Original (" ++ name ++ "):"
         ] ++ map ("#   " ++) (FE.statsLines stats) ++ [
-          "# Result (", formatFloatN time 3, "ms):\n"
+          "# Result (" ++ formatFloatN time 3 ++ "ms" ++
+          (if verified then ", Verified" else "") ++ "):"
         ] ++ map ("#   " ++) (FE.statsLines stats')
         ++ lines (show qc)
       )

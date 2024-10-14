@@ -59,7 +59,7 @@ instance FE.ProgramRepresentation QASM.QASM where
         tdepth = Nothing
      in FE.ProgramStats counts (Just cbits) qbits totaldepth tdepth
 
-  prettyPrintWithBenchmarkInfo name time stats stats' qc =
+  prettyPrintWithBenchmarkInfo name time stats stats' verified qc =
     unlines
       ( [ "// Feynman -- quantum circuit toolkit",
           "// Original (" ++ name ++ "):"
@@ -70,4 +70,4 @@ instance FE.ProgramRepresentation QASM.QASM where
           ++ QASM.prettyPrint qc
       )
 
-  equivalenceCheck _ _ = Left "Equivalence check not implemented for QASM"
+  equivalenceCheck _ _ = Left "Can't verify QASM programs"
