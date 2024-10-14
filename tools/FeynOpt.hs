@@ -205,15 +205,16 @@ parseArgs doneSwitches options (x : xs) = case x of
   "Med" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksMedium
   "All" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksAll
   "POPL25" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksPOPL25
+  "POPL25QASM" -> runBenchmarksQASM (benchPass options) (benchVerif options) benchmarksPOPL25QASM
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where
     o2 = [Simplify, Phasefold, Simplify, CT, Simplify, MCT]
     o3 = [CNOTMin, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
     o4 = [CNOTMin, Cliff, PauliFold 1, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
-    apf = [Simplify, PauliFold 1, Simplify, Statefold 1, Phasefold, Simplify, CT, Simplify, MCT]
-    qpf = [Simplify, PauliFold 1, Simplify, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
-    ppf = [Simplify, PauliFold 1, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
+    apf = [Simplify, PauliFold 1, Simplify, Statefold 1, Statefold 1, Phasefold, Simplify, CT, Simplify, MCT]
+    qpf = [Simplify, PauliFold 1, Simplify, Statefold 2, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
+    ppf = [Simplify, PauliFold 1, Simplify, Statefold 0, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
     runFile f | (takeExtension f) == ".qc"   = runPasses (dotQCPasses options) options f
     runFile f | (takeExtension f) == ".qasm" =
           if useQASM3 options

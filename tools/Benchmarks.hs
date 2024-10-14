@@ -23,13 +23,17 @@ import qualified Data.Array as Array
 import Control.Monad
 import Data.Maybe
 
-import Feynman.Frontend.DotQC
+import Feynman.Frontend.Frontend
+import Feynman.Frontend.DotQC hiding (gateCounts, tDepth)
+import qualified Feynman.Frontend.DotQC as DotQC
+import qualified Feynman.Frontend.OpenQASM3.Semantics as QASM3
+import Feynman.Frontend.OpenQASM3.Driver hiding (formatFloatN)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Algebra.Linear
 import Feynman.Synthesis.Reversible.Gray
 import Feynman.Verification.Symbolic
-import Feynman.Core (Primitive(CNOT, T, Tinv))
+import Feynman.Core (Primitive(CNOT, T, Tinv), Loc)
 
 import qualified Data.BitVector as BitVector
 import Test.QuickCheck
@@ -43,6 +47,7 @@ formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum "
 {- Benchmark circuits -}
 qcBenchmarksPath = "benchmarks/qc/"
 qasm3benchmarksPath = "benchmarks/qasm3/"
+popl25benchPath = "benchmarks/popl25/"
 
 -- Benchmarks of up to 10 qubits
 benchmarksSmall = map (qcBenchmarksPath ++) [
@@ -100,7 +105,7 @@ benchmarksAll = benchmarksMedium ++ map (qcBenchmarksPath ++) [
   "mod_adder_1048576"
   ]
 
-benchmarksPOPL25 = map (qcBenchmarksPath ++) [
+benchmarksPOPL25 = map (popl25benchPath ++) [
   "grover_5",
   "mod5_4",
   "vbe_adder_3",
@@ -137,6 +142,19 @@ benchmarksPOPL25 = map (qcBenchmarksPath ++) [
   "barenco_tof_5",
   "barenco_tof_10",
   "fprenorm"
+  ]
+
+benchmarksPOPL25QASM = map (popl25benchPath ++) [
+  "rus",
+  "grover",
+  "reset-simple",
+  "if-simple",
+  "loop-simple",
+  "loop-h",
+  "loop-nested",
+  "loop-swap",
+  "loop-nonlinear",
+  "loop-null"
   ]
 
 benchmarkFolder f = liftM (map ((f </>) . dropExtension) . filter (\s -> takeExtension s == ".qc")) $ getDirectoryContents f
@@ -217,9 +235,9 @@ runBenchmarks pass verify xs =
                                " PASS" ++
                                setSGRCode [Reset]
                 (glist, glist') = (fromCliffordT . toCliffordT . toGatelist $ c, toGatelist c')
-                counts          = mergeCounts (gateCounts $ glist) (gateCounts glist')
+                counts          = mergeCounts (DotQC.gateCounts $ glist) (DotQC.gateCounts glist')
                 depths          = (depth glist, depth glist')
-                tdepths         = (tDepth glist, tDepth glist')
+                tdepths         = (DotQC.tDepth glist, DotQC.tDepth glist')
             in do
               end  <- verResult `deepseq` counts `deepseq` getCPUTime
               let time = (fromIntegral $ end - start) / 10^9
@@ -256,6 +274,47 @@ runBenchmarks pass verify xs =
             else return $ Map.fromList [(stat, diff)]
         printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
 
+runBenchmarksQASM pass verify xs =
+  let runBench s = do
+        start <- getCPUTime
+        c <- (readAndParse :: String -> IO (Either String (QASM3.SyntaxNode Loc))) $ s ++ ".qasm"
+        case c >>= \c -> pass c >>= \c' -> Right (c, c') of
+          Left err      -> do
+            putStrLn $ s ++ ": ERROR"
+            return Nothing
+          Right (c, c') -> do
+            let stats = computeStats c
+            let stats' = computeStats c'
+            let counts = mergeCounts (gateCounts stats) (gateCounts stats')
+            end  <- counts `deepseq` getCPUTime
+            let time = (fromIntegral $ end - start) / 10^9
+            putStrLn $ s ++ ":"
+            putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
+            putStrLn $ "\tQubits:\t\t" ++ show (qubitCount stats)
+            gateRed   <- mapM printStat (Map.toList $ counts)
+            let (dir, name) = splitFileName s
+                outputDir = dir </> "opt"
+                outputPath = outputDir </> (name ++ "_opt.qasm")
+            createDirectoryIfMissing False outputDir
+            writeFile outputPath (show c')
+            return . Just $ Map.unionsWith (+) (gateRed)
+  in do
+    results <- liftM catMaybes $ mapM runBench xs
+    putStrLn "Averages:"
+    mapM_ printAvg (Map.toList . Map.map (/ fromIntegral (length results)) . Map.unionsWith (+) $ results)
+  where mergeCounts left right =
+          let left'  = Map.map (,0) left
+              right' = Map.map (0,) right
+          in
+            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
+        printStat (stat, (orig, opt)) = do
+            let diff = 100.0 * ((fromIntegral (orig-opt)) / (fromIntegral orig))
+            putStrLn $ "\t" ++ stat ++ ":\t\t" ++ show orig ++ "/"
+                            ++ show opt ++ "\t\t" ++ (if orig == 0 then "N/A" else formatFloatN diff 3 ++ "%")
+            if orig == 0
+            then return Map.empty
+            else return $ Map.fromList [(stat, diff)]
+        printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
 {- Benchmarking for [AAM17] -}
 
 generateVecNonzero :: Int -> Gen F2Vec
