@@ -400,6 +400,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
   "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
+  "POPL25QASM"   -> runBenchmarksQASM (benchPass options) (benchVerif options) benchmarksPOPL25QASM
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
