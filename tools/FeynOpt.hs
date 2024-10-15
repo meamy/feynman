@@ -204,8 +204,23 @@ parseArgs doneSwitches options (x : xs) = case x of
   "Small" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksSmall
   "Med" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksMedium
   "All" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksAll
-  "POPL25" -> runBenchmarks (benchPass options) (benchVerif options) benchmarksPOPL25
-  "POPL25QASM" -> runBenchmarksQASM (benchPass options) (benchVerif options) benchmarksPOPL25QASM
+  "POPL25-affine" -> do
+    putStrLn "Running circuit benchmarks..."
+    runBenchmarks (benchPass defaultOptions {passes = apf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25
+    putStrLn "\nRunning program benchmarks..."
+    runBenchmarksQASM (benchPass defaultOptions {passes = apf}) (benchVerif defaultOptions {useQASM3 = True}) benchmarksPOPL25QASM
+  "POPL25-polynomial" -> do
+    putStrLn "Running circuit benchmarks..."
+    runBenchmarks (benchPass defaultOptions {passes = qpf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25
+    putStrLn "\nRunning additional unbounded optimization of fprenorm..."
+    runBenchmarks (benchPass defaultOptions {passes = ppf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25FP
+    putStrLn "\nRunning program benchmarks..."
+    runBenchmarksQASM (benchPass defaultOptions {passes = qpf}) (benchVerif defaultOptions {useQASM3 = True}) benchmarksPOPL25QASM
+  "POPL25" -> do
+    putStrLn "Running circuit benchmarks..."
+    runBenchmarks (benchPass options) (benchVerif options) benchmarksPOPL25
+    putStrLn "\nRunning program benchmarks..."
+    runBenchmarksQASM (benchPass options) (benchVerif options {useQASM3 = True}) benchmarksPOPL25QASM
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where
