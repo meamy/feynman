@@ -347,7 +347,7 @@ tDepth = gateDepth ["T", "T*"]
 
 computeStats :: DotQC -> FE.ProgramStats
 computeStats circ =
-  let gatelist   = toGatelist circ
+  let gatelist   = fromCliffordT . toCliffordT . toGatelist $ circ
       counts     = gateCounts gatelist
       qubitCount = length . qubits $ circ
       totaldepth = Just $ depth gatelist
