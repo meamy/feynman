@@ -157,6 +157,8 @@ benchmarksPOPL25QASM = map (popl25benchPath ++) [
   "loop-null"
   ]
 
+benchmarksPOPL25FP = map (popl25benchPath ++) ["fprenorm"]
+
 benchmarkFolder f = liftM (map ((f </>) . dropExtension) . filter (\s -> takeExtension s == ".qc")) $ getDirectoryContents f
 
 {- Printing results -}
