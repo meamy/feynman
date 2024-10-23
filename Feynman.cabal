@@ -114,6 +114,30 @@ executable feynopt
                        random
   default-language:    Haskell2010
 
+executable feyncount
+  main-is:             FeynCount.hs
+  buildable:           True
+  ghc-options:         -O2
+  default-extensions:  GADTs,
+                       ExistentialQuantification,
+                       FlexibleContexts,
+                       FlexibleInstances
+  hs-source-dirs:      tools
+  other-modules:       Benchmarks
+  build-depends:       Feynman,
+                       QuickCheck >= 2.8.2,
+                       ansi-terminal,
+                       array >= 0.5.1.0,
+                       base,
+                       bv,
+                       bytestring,
+                       containers >= 0.6.3.1,
+                       deepseq,
+                       directory,
+                       filepath,
+                       random
+  default-language:    Haskell2010
+
 executable feynver
   main-is:             FeynVerify.hs
   buildable:           True
