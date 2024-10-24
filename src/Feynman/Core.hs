@@ -374,11 +374,12 @@ instance Show Stmt where
   show (Repeat i stmt)           = "BEGIN^" ++ show i ++ "\n" ++ show stmt ++ "\n" ++ "END"
 
 instance Show Decl where
-  show decl = "BEGIN " ++ putName (name decl) ++ showLst (params decl) ++ "\n"
+  show decl = "BEGIN" ++ putName (name decl) ++ showLst (params decl) ++ "\n"
               ++ show (body decl) ++ "\n"
               ++ "END"
     where putName "main" = ""
-          putName s      = s
+          putName ""     = ""
+          putName s      = " " ++ s
 
 instance Show Circuit where
   show circ = intercalate "\n" (qubitline:inputline:body)

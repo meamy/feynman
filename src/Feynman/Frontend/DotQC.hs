@@ -73,8 +73,9 @@ instance Show Gate where
 instance Show Decl where
   show (Decl name params body) = intercalate "\n" [l1, l2, l3]
     where showName "main" = ""
-          showName s      = s
-          l1 = "BEGIN " ++ showName name ++ if length params > 0 then "(" ++ showLst params ++ ")" else ""
+          showName ""     = ""
+          showName s      = " " ++ s
+          l1 = "BEGIN" ++ showName name ++ if length params > 0 then "(" ++ showLst params ++ ")" else ""
           l2 = intercalate "\n" $ map show body
           l3 = "END"
 

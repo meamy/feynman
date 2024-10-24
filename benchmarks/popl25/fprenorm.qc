@@ -1,7 +1,7 @@
 .v q1 q2 a1 a2 a3 x1 x2 x3 x4 t
 .i x1 x2 x3 x4
 .o q1 q2 a1 a2 a3 x1 x2 x3 x4 t
-BEGIN 
+BEGIN
 X t
 tof x1 t
 tof t x2 q1
