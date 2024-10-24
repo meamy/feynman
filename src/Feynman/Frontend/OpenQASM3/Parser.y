@@ -184,10 +184,10 @@ import Feynman.Frontend.OpenQASM3.Syntax
 
 
 program :: { ParseNode {- Program -} }
-    : OPENQASM VersionSpecifier SEMICOLON many0(statement)
+    : OPENQASM VersionSpecifier SEMICOLON many0(statementOrScope)
                                     { let tok = lexemeToken $2; (maj, min) = tokenVersionMajMin tok
                                        in Ast.Node (Program maj min tok) $4 (lsr $1) }
-    | many0(statement)
+    | many0(statementOrScope)
                                     { Ast.Node (Program 3 Nothing EofToken) $1
                                                (srList $ map Ast.context $1) }
 
@@ -216,7 +216,7 @@ annotation :: { ParseNode {- Annotation -} }
                                         Ast.Node (Annotation (tokenIdentifierName kwt) "" kwt) [] sr}
 
 scope :: { ParseNode {- Statement -} }
-    : LBRACE many0(statement) RBRACE
+    : LBRACE many0(statementOrScope) RBRACE
                                     { Ast.Node Scope $2 (lsr $1) }
 
 statementOrScope :: { ParseNode {- Statement | Scope -} }
