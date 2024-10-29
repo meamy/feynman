@@ -48,13 +48,18 @@ import Feynman.Frontend.OpenQASM.Syntax
   id      { TID   $$ }
   float   { TReal $$ }
   nat     { TNat  $$ }
+  annot   { TAnnot  $$ }
   
 %%
 
-program : qasm float ';' statements { QASM $2 $4 }
+program : annot_opt qasm float ';' statements { QASM $3 Nothing $5 }
 
-statements : statement             { [$1] }
-           | statements statement  { $1 ++ [$2] }
+annot_opt : {- empty -}  {  Nothing }
+          | annot        { Just $1 }
+
+
+statements : annot_opt statement             { [annotate $1 $2] }
+           | statements annot_opt statement  { $1 ++ [annotate $2 $3] }
 
 statement : include str ';'               { IncStmt $2 }
           | declaration                   { DecStmt $1 }
@@ -63,8 +68,8 @@ statement : include str ';'               { IncStmt $2 }
 
 declaration : qreg id '[' nat ']' ';'                { VarDec $2 (Qreg $4) }
             | creg id '[' nat ']' ';'                { VarDec $2 (Creg $4) }
-            | gate id ids '{' uops0 '}'              { GateDec $2 [] $3 $5 }
-            | gate id '(' ids0 ')' ids '{' uops0 '}' { GateDec $2 $4 $6 $8 }
+            | gate id ids '{' uops0 '}'              { GateDec $2 [] $3 Nothing $5 }
+            | gate id '(' ids0 ')' ids '{' uops0 '}' { GateDec $2 $4 $6 Nothing $8 }
             | opaque id ids                          { UIntDec $2 [] $3 }
             | opaque id '(' ids0 ')' ids             { UIntDec $2 $4 $6 }
 

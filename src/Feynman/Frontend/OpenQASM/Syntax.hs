@@ -26,7 +26,7 @@ data Arg = Var ID | Offset ID Int deriving (Eq,Show)
 data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show)
 data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
 
-data QASM = QASM Double [Stmt] deriving (Eq,Show)
+data QASM = QASM Double (Maybe GateSpec) [Stmt] deriving (Eq,Show)
 
 data Stmt =
     IncStmt String
@@ -35,6 +35,7 @@ data Stmt =
   | IfStmt ID Int QExp
   | AssertStmt Assertion
   deriving (Eq, Show)
+
 
 data Assertion =
     AssertProj Arg QState
@@ -53,6 +54,7 @@ data Dec =
   | GateDec { id :: ID,
               cparams :: [ID],
               qparams :: [ID],
+              spec :: Maybe GateSpec,
               gates :: [UExp] }
   | UIntDec { id :: ID,
               cparams :: [ID],
@@ -80,6 +82,11 @@ data Exp =
   | UOpExp UnOp Exp
   | BOpExp Exp BinOp Exp
   deriving (Eq,Show)
+
+{- Annotations -}
+annotate :: Maybe String -> Stmt -> Stmt
+annotate Nothing    stmt = stmt
+annotate (Just str) stmt = stmt
 
 {- Expression evaluation -}
 evalUOp :: UnOp -> (Double -> Double)
@@ -116,7 +123,7 @@ emit :: QASM -> IO ()
 emit = mapM_ putStrLn . prettyPrint
 
 prettyPrint :: QASM -> [String]
-prettyPrint (QASM ver body) =
+prettyPrint (QASM ver spec body) =
   ["OPENQASM " ++ show ver ++ ";"] ++ concatMap prettyPrintStmt body
 
 prettyPrintStmt :: Stmt -> [String]
@@ -130,11 +137,11 @@ prettyPrintDec :: Dec -> [String]
 prettyPrintDec dec = case dec of
   VarDec x (Creg i) -> ["creg " ++ x ++ "[" ++ show i ++ "];"]
   VarDec x (Qreg i) -> ["qreg " ++ x ++ "[" ++ show i ++ "];"]
-  GateDec x [] qp b ->
+  GateDec x [] qp _ b ->
     ["gate " ++ x ++ " " ++ prettyPrintIDs qp ++ " {"]
     ++ map (\uexp -> "  " ++ prettyPrintUExp uexp ++ ";") b
     ++ ["}"]
-  GateDec x cp qp b ->
+  GateDec x cp qp _ b ->
     ["gate(" ++ prettyPrintIDs cp ++ ") " ++ x ++ " " ++ prettyPrintIDs qp, "{"]
     ++ map (\uexp -> "  " ++ prettyPrintUExp uexp ++ ";") b
     ++ ["}"]
@@ -235,7 +242,7 @@ qelib1 = Map.fromList
     
 
 check :: QASM -> Either String Ctx
-check (QASM _ stmts) = foldM checkStmt Map.empty stmts
+check (QASM _ _ stmts) = foldM checkStmt Map.empty stmts
 
 checkStmt :: Ctx -> Stmt -> Either String Ctx
 checkStmt ctx stmt = case stmt of
@@ -256,9 +263,9 @@ checkStmt ctx stmt = case stmt of
 -- Note that we don't require that arguments in the body of a dec are not offsets
 checkDec :: Ctx -> Dec -> Either String Ctx
 checkDec ctx dec = case dec of
-  VarDec v typ      -> return $ Map.insert v typ ctx
-  UIntDec v cp qp   -> return $ Map.insert v (Circ (length cp) (length qp)) ctx
-  GateDec v cp qp b -> do
+  VarDec v typ        -> return $ Map.insert v typ ctx
+  UIntDec v cp qp     -> return $ Map.insert v (Circ (length cp) (length qp)) ctx
+  GateDec v cp qp _ b -> do
     let ctx' = foldr (\v -> Map.insert v (Qreg 1)) (foldr (\v -> Map.insert v Numeric) ctx cp) qp
     forM_ b (checkUExp ctx')
     return $ Map.insert v (Circ (length cp) (length qp)) ctx
@@ -375,7 +382,7 @@ substArg asub arg = case arg of
 
 -- Expands all implicitly mapped functions
 desugar :: Ctx -> QASM -> QASM
-desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
+desugar symtab (QASM ver spec stmts) = QASM ver spec $ concatMap f stmts
   where f stmt = case stmt of
           IncStmt _       -> [stmt]
           -- By the specification of QASM, functions can only refer to
@@ -405,12 +412,12 @@ desugar symtab (QASM ver stmts) = QASM ver $ concatMap f stmts
 -- Note: non-strictness can hopefully allow for some efficient
 --       fusion with operations on inlined code
 inline :: QASM -> QASM
-inline (QASM ver stmts) = QASM ver . snd . foldl f (Map.empty, []) $ stmts
+inline (QASM ver spec stmts) = QASM ver spec . snd . foldl f (Map.empty, []) $ stmts
   where f (ctx, stmts) stmt = case stmt of
-          DecStmt (GateDec v c q b) -> (Map.insert v (c, q, concatMap (h ctx) b) ctx, stmts)
-          QStmt qexp                -> (ctx, stmts ++ (map QStmt $ g ctx qexp))
-          IfStmt v i qexp           -> (ctx, stmts ++ (map (IfStmt v i) $ g ctx qexp))
-          _                         -> (ctx, stmts ++ [stmt])
+          DecStmt (GateDec v c q _ b) -> (Map.insert v (c, q, concatMap (h ctx) b) ctx, stmts)
+          QStmt qexp                  -> (ctx, stmts ++ (map QStmt $ g ctx qexp))
+          IfStmt v i qexp             -> (ctx, stmts ++ (map (IfStmt v i) $ g ctx qexp))
+          _                           -> (ctx, stmts ++ [stmt])
         g ctx qexp = case qexp of
           GateExp uexp    -> map GateExp $ h ctx uexp
           _               -> [qexp]
@@ -427,20 +434,20 @@ inline (QASM ver stmts) = QASM ver . snd . foldl f (Map.empty, []) $ stmts
 
 -- Provides an optimization interface for the main IR
 applyOpt :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> Bool -> QASM -> QASM
-applyOpt opt pureCircuit (QASM ver stmts) = QASM ver $ optStmts stmts
+applyOpt opt pureCircuit (QASM ver spec stmts) = QASM ver spec $ optStmts stmts
   where optStmts stmts =
           let (hdr, body) = foldl' optStmt ([], []) stmts in
             reverse hdr ++ applyToStmts (reverse body)
 
         optStmt :: ([Stmt], [Stmt]) -> Stmt -> ([Stmt], [Stmt])
         optStmt (hdr, body) stmt = case stmt of
-          IncStmt _                        -> (stmt:hdr, body)
-          DecStmt (GateDec _ _ _ [])       -> (stmt:hdr, body)
-          DecStmt (GateDec v c q gateBody) ->
-            let stmt' = DecStmt $ GateDec v c q $ applyToUExps q gateBody in
+          IncStmt _                          -> (stmt:hdr, body)
+          DecStmt (GateDec _ _ _ _ [])       -> (stmt:hdr, body)
+          DecStmt (GateDec v c q s gateBody) ->
+            let stmt' = DecStmt $ GateDec v c q s $ applyToUExps q gateBody in
               (stmt':hdr, body)
-          DecStmt _                        -> (stmt:hdr, body)
-          _                                -> (hdr, stmt:body)
+          DecStmt _                          -> (stmt:hdr, body)
+          _                                  -> (hdr, stmt:body)
 
         applyToStmts :: [Stmt] -> [Stmt]
         applyToStmts stmts =
@@ -573,7 +580,7 @@ applyOpt opt pureCircuit (QASM ver stmts) = QASM ver $ optStmts stmts
 
 -- Assumes inlined code
 gateCounts :: QASM -> Map ID Int
-gateCounts (QASM ver stmts) = foldl gcStmt Map.empty stmts
+gateCounts (QASM ver spec stmts) = foldl gcStmt Map.empty stmts
   where gcStmt cnts stmt = case stmt of
           IncStmt _       -> cnts
           DecStmt _       -> cnts 
@@ -612,7 +619,7 @@ gateCounts (QASM ver stmts) = foldl gcStmt Map.empty stmts
             Map.alter alterf str cnts
 
 bitCounts :: QASM -> (Int, Int)
-bitCounts (QASM ver stmts) = foldl bcStmt (0, 0) stmts
+bitCounts (QASM ver spec stmts) = foldl bcStmt (0, 0) stmts
   where bcStmt cnts stmt = case stmt of
           DecStmt dec  -> bcDec cnts dec
           _            -> cnts
@@ -698,10 +705,10 @@ qcGatesToQASM :: Map ID Int -> [DotQC.Gate] -> [UExp]
 qcGatesToQASM mp = concatMap (qcGateToQASM $ regify "qubits" mp)
 
 fromDotQC :: String -> DotQC -> QASM
-fromDotQC mainName dotqc = QASM (2.0) $ (IncStmt "qelib1.inc"):stmts where
+fromDotQC mainName dotqc = QASM (2.0) Nothing $ (IncStmt "qelib1.inc"):stmts where
   stmts = map go $ DotQC.decls dotqc
   go (DotQC.Decl name loc body)
-    | name == "main" = DecStmt $ GateDec (validate mainName) [] (glob ++ map validate loc) (convert body)
-    | otherwise      = DecStmt $ GateDec (validate name) [] (glob ++ map validate loc) (convert body)
+    | name == "main" = DecStmt $ GateDec (validate mainName) [] (glob ++ map validate loc) Nothing (convert body)
+    | otherwise      = DecStmt $ GateDec (validate name) [] (glob ++ map validate loc) Nothing (convert body)
   glob = map validate $ DotQC.qubits dotqc
   convert = concatMap (qcGateToQASM $ Var . validate)

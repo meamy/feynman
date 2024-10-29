@@ -1,5 +1,7 @@
 {
 module Feynman.Frontend.OpenQASM.Lexer (Token(..), lexer) where
+
+import Data.Maybe
 }
 
 %wrapper "basic"
@@ -15,6 +17,7 @@ tokens :-
   $eol                                                      ;
 
   -- Comments
+  \/\/\:.*                                                  { \s -> TAnnot s}
   \/\/.*                                                    ;
 
   -- Tokens 
@@ -104,6 +107,8 @@ data Token =
   | TID String
   | TReal Double
   | TNat Int 
+  -- Misc
+  | TAnnot String
   deriving (Eq,Show)
 
 lexer :: String -> [Token]
