@@ -83,11 +83,6 @@ data Exp =
   | BOpExp Exp BinOp Exp
   deriving (Eq,Show)
 
-{- Annotations -}
-annotate :: Maybe String -> Stmt -> Stmt
-annotate Nothing    stmt = stmt
-annotate (Just str) stmt = stmt
-
 {- Expression evaluation -}
 evalUOp :: UnOp -> (Double -> Double)
 evalUOp op = case op of

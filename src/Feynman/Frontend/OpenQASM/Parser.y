@@ -3,6 +3,8 @@ module Feynman.Frontend.OpenQASM.Parser(parse) where
 
 import Feynman.Frontend.OpenQASM.Lexer
 import Feynman.Frontend.OpenQASM.Syntax
+import Feynman.Frontend.OpenQASM.VerificationSyntax
+
 }
 
 %name parse
@@ -48,18 +50,29 @@ import Feynman.Frontend.OpenQASM.Syntax
   id      { TID   $$ }
   float   { TReal $$ }
   nat     { TNat  $$ }
-  annot   { TAnnot  $$ }
+  annot   { TAnnot }
+  '|'     { TBar }
+  lket    { TLangle }
+  rket    { TRangle }
+  mapsto  { TMapsto }
+  sum     { TSum }
   
 %%
 
 program : annot_opt qasm float ';' statements { QASM $3 Nothing $5 }
 
 annot_opt : {- empty -}  {  Nothing }
-          | annot        { Just $1 }
+          | pathspec     { Just $1 }
 
+pathspec : '|' args rket mapsto exp_opt sum_opt exp_opt '|' exps0 rket { GateSpec 0 0 0 Half [] }
 
-statements : annot_opt statement             { [annotate $1 $2] }
-           | statements annot_opt statement  { $1 ++ [annotate $2 $3] }
+sum_opt : {- empty -}  {  Nothing }
+        | sumover      { Just $1 }
+
+sumover : sum '{' ids0 '}' { "Temp" }
+
+statements : statement             { [$1] }
+           | statements statement  { $1 ++ [$2] }
 
 statement : include str ';'               { IncStmt $2 }
           | declaration                   { DecStmt $1 }
@@ -68,8 +81,8 @@ statement : include str ';'               { IncStmt $2 }
 
 declaration : qreg id '[' nat ']' ';'                { VarDec $2 (Qreg $4) }
             | creg id '[' nat ']' ';'                { VarDec $2 (Creg $4) }
-            | gate id ids '{' uops0 '}'              { GateDec $2 [] $3 Nothing $5 }
-            | gate id '(' ids0 ')' ids '{' uops0 '}' { GateDec $2 $4 $6 Nothing $8 }
+            | annot_opt gate id ids '{' uops0 '}'              { GateDec $3 [] $4 $1 $6 }
+            | annot_opt gate id '(' ids0 ')' ids '{' uops0 '}' { GateDec $3 $5 $7 $1 $9 }
             | opaque id ids                          { UIntDec $2 [] $3 }
             | opaque id '(' ids0 ')' ids             { UIntDec $2 $4 $6 }
 
@@ -106,6 +119,9 @@ exps0 : {- empty -} { [] }
 
 exps : exp          { [$1] }
      | exps ',' exp { $1 ++ [$3] }
+
+exp_opt : {- empty -} { Nothing }
+        | exp         { Just $1 }
 
 exp : term         { $1 }
     | exp '+' term { BOpExp $1 PlusOp $3 }

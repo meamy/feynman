@@ -17,7 +17,7 @@ tokens :-
   $eol                                                      ;
 
   -- Comments
-  \/\/\:.*                                                  { \s -> TAnnot s}
+  \/\/\:                                                    { \s -> TAnnot }
   \/\/.*                                                    ;
 
   -- Tokens 
@@ -59,6 +59,11 @@ tokens :-
   [a-z]($digit|$alpha)*                                     { \s -> TID s }
   ($digit+\.$digit*|$digit*\.$digit+)([eE][\-\+]?$digit+)?  { \s -> TReal (read s) }
   [1-9]$digit*|0                                            { \s -> TNat (read s) }
+  \|                                                        { \s -> TBar }
+  \<                                                        { \s -> TLangle }
+  \>                                                        { \s -> TRangle }
+  \-\-\>                                                    { \s -> TMapsto }
+  sum                                                       { \s -> TSum }
 
 {
 
@@ -107,8 +112,13 @@ data Token =
   | TID String
   | TReal Double
   | TNat Int 
-  -- Misc
-  | TAnnot String
+  -- Specifications
+  | TAnnot
+  | TBar
+  | TLangle
+  | TRangle
+  | TMapsto
+  | TSum
   deriving (Eq,Show)
 
 lexer :: String -> [Token]
