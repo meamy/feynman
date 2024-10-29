@@ -230,7 +230,7 @@ runCircuit tonly d circ = execState $ (mapM_ (applyGate tonly) circ) >> go where
      | d < 1  = do
          i1 <- applyReductions (Just 1) -- linear reductions
          id <- applyReductions Nothing  -- all reductions
-         reduceAll $ i1 ++ id
+         --reduceAll $ i1 ++ id
          return ()
 
 {- Generates an initial state -}

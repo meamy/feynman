@@ -246,6 +246,7 @@ runBenchmarks pass verify xs =
               putStrLn $ s ++ ":" ++ verResult
               putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
               putStrLn $ "\tQubits:\t\t" ++ show (length $ qubits c)
+              putStrLn $ "\tTotal gates:\t\t" ++ show (length $ glist) ++ "/" ++ show (length $ glist')
               gateRed   <- mapM printStat (Map.toList $ counts)
               depthRed  <- printStat ("Depth", depths)
               tdepthRed <- printStat ("Tdepth", tdepths)
