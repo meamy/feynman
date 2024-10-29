@@ -1,7 +1,8 @@
 module Feynman.Simulation.Pathsum where
 
-import Feynman.Core hiding (Stmt,Gate)
+import Feynman.Core hiding (Stmt,Gate,dagger)
 import Feynman.Frontend.OpenQASM.Syntax
+import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec, sopOfSpec)
 import Feynman.Algebra.Pathsum.Balanced hiding (Var, Zero)
 import Feynman.Algebra.Base (DMod2, fromDyadic)
 
@@ -29,7 +30,7 @@ data Binding =
   | Gate { cparams :: [ID],
            qparams :: [ID],
            body :: [UExp] }
-  | SumGate { bodySum :: Pathsum DMod2 }
+  | SumGate { bodySum :: Pathsum DMod2}
   deriving (Show)
 
 initEnv :: Env
@@ -133,6 +134,12 @@ simDeclare dec = case dec of
   GateDec id cparams qparams body -> addBind id (Gate cparams qparams body)
   UIntDec _ _ _                   -> return ()
 
+verifyGate :: GateSpec -> Pathsum DMod2 -> Bool
+verifyGate spec gate =
+  let specPs = sopOfSpec spec
+      n      = inDeg gate     in
+    (grind $ specPs .> (dagger gate)) == identity n
+
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
   let init = identity (length qparams)
@@ -179,9 +186,9 @@ evalGate uexp = case uexp of
       liftM (<>omegabar) . evalGate $ UGate halfPi phi lambda arg
   CallGate "u1" [lambda] [arg] -> evalGate $ UGate (IntExp 0) (IntExp 0) lambda arg
   CallGate "cu1" [lambda] [arg1, arg2] ->
-    liftM controlled . evalGate $ CallGate "u1" [lambda] [arg2]
+    liftM controlled' . evalGate $ CallGate "u1" [lambda] [arg2]
   CallGate "cu3" [theta, phi, lambda] [arg1, arg2] ->
-    liftM controlled . evalGate $ CallGate "u3" [theta, phi, lambda] [arg2]
+    liftM controlled' . evalGate $ CallGate "u3" [theta, phi, lambda] [arg2]
   CXGate _ _ -> return cxgate
   UGate theta phi lambda arg ->
     let thetaPlusPi = BOpExp theta PlusOp PiExp
@@ -335,6 +342,11 @@ checkAssertion assert = case assert of
   AssertProj arg@(Var id) state -> do
     regsize <- liftM size $ getBinding id
     liftM and . mapM checkAssertion . map (\a -> AssertProj a state) $ [ Offset id i | i <- [0..regsize-1] ]
+  AssertGate id spec -> do
+    bind <- getBinding id
+    case bind of
+      SumGate ps -> return $ verifyGate spec ps 
+      _ -> error "gate has no summary"
       
   where
     assertState offset state env@(Env ps _ density) = 

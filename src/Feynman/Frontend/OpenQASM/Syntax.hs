@@ -17,6 +17,8 @@ import qualified Data.Set as Set
 import Control.Monad
 import Debug.Trace
 
+import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec)
+
 {- Abstract syntax -}
 data Typ = Numeric | Creg Int | Qreg Int | Circ Int Int deriving (Eq,Show)
 data Arg = Var ID | Offset ID Int deriving (Eq,Show)
@@ -32,13 +34,14 @@ data Stmt =
   | QStmt QExp
   | IfStmt ID Int QExp
   | AssertStmt Assertion
-  deriving (Eq,Show)
+  deriving (Eq, Show)
 
 data Assertion =
     AssertProj Arg QState
   | AssertAnd Assertion Assertion
   | AssertOr Assertion Assertion
   | AssertNot Assertion
+  | AssertGate ID GateSpec
   deriving (Eq, Show)
 
 data QState = Zero | One | Plus | Minus
