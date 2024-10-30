@@ -17,7 +17,7 @@ tokens :-
   $eol                                                      ;
 
   -- Comments
-  \/\/\:                                                    { \s -> TAnnot }
+  \/\/\:.*                                                  { \s -> TMacro s }
   \/\/.*                                                    ;
 
   -- Tokens 
@@ -46,6 +46,7 @@ tokens :-
   reset                                                     { \s -> TReset }
   U                                                         { \s -> TU }
   CX                                                        { \s -> TCX }
+  sum                                                       { \s -> TSum }
   \-\>                                                      { \s -> TArrow }
   \(                                                        { \s -> TLParen }
   \)                                                        { \s -> TRParen }
@@ -63,7 +64,6 @@ tokens :-
   \<                                                        { \s -> TLangle }
   \>                                                        { \s -> TRangle }
   \-\-\>                                                    { \s -> TMapsto }
-  sum                                                       { \s -> TSum }
 
 {
 
@@ -113,6 +113,7 @@ data Token =
   | TReal Double
   | TNat Int 
   -- Specifications
+  | TMacro String
   | TAnnot
   | TBar
   | TLangle
@@ -122,7 +123,9 @@ data Token =
   deriving (Eq,Show)
 
 lexer :: String -> [Token]
-lexer = alexScanTokens
+lexer = concatMap go . alexScanTokens where
+  go (TMacro str) = (TAnnot:(alexScanTokens $ drop 3 str))
+  go tok          = [tok]
 
 -- vim: ft=haskell
 }

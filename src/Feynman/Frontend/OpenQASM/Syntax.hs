@@ -26,7 +26,15 @@ data Arg = Var ID | Offset ID Int deriving (Eq,Show)
 data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show)
 data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
 
-data QASM = QASM Double (Maybe GateSpec) [Stmt] deriving (Eq,Show)
+data QASM = QASM Double (Maybe Spec) [Stmt] deriving (Eq,Show)
+
+data Spec = PSSpec {
+  inputs  :: [ID],
+  scalar  :: Maybe Exp,
+  sum     :: [ID],
+  phaseP  :: Maybe Exp,
+  outputs :: [Exp]
+  } deriving (Eq,Show)
 
 data Stmt =
     IncStmt String
@@ -35,7 +43,6 @@ data Stmt =
   | IfStmt ID Int QExp
   | AssertStmt Assertion
   deriving (Eq, Show)
-
 
 data Assertion =
     AssertProj Arg QState
@@ -54,7 +61,7 @@ data Dec =
   | GateDec { id :: ID,
               cparams :: [ID],
               qparams :: [ID],
-              spec :: Maybe GateSpec,
+              spec :: Maybe Spec,
               gates :: [UExp] }
   | UIntDec { id :: ID,
               cparams :: [ID],
@@ -112,14 +119,60 @@ evalExp exp = case exp of
     e1 <- evalExp exp1
     e2 <- evalExp exp2
     return $ (evalBOp op) e1 e2
+
+{- Specification building -}
+{-
+polyOfExp :: Exp -> PseudoBoolean Var Double
+polyOfExp exp
+  | evalExp exp == Just d = constant d
+  | otherwise             = case exp of
+      FloatExp d       -> constant d
+      IntExp i         -> constant $ fromInteger i
+      PiExp            -> constant $ pi
+      VarExp v         -> ofVar $ FVar v
+      UOpExp uop e     -> fmap (evalUOp uop) $ polyOfExp exp
+      BOpExp e1 bop e2 -> case bop of
+        PlusOp  -> e1' + e2'
+        MinusOp -> e1' - e2'
+        TimesOp -> e1' * e2'
+        DivOp   -> error "Unsupported division of polynomials"
+        PowOp   -> error "Unsupported exponent of polynomials"
+        where e1' = polyOfExp e1
+              e2' = polyOfExp e2
+
+buildGateSpec :: [Arg] -> Maybe Exp -> Maybe [ID] -> Maybe Exp -> [Exp] -> GateSpec
+buildGateSpec args scalar pvars ampl ovals = bind args sop where
+  (sde, constPhase) = decomposeScalar scalar
+  pp = constPhase + phasepolyOfExp ampl
   
+  sde = 
+  sop = 
+-}
+
 {- Pretty printing -}
 emit :: QASM -> IO ()
 emit = mapM_ putStrLn . prettyPrint
 
 prettyPrint :: QASM -> [String]
 prettyPrint (QASM ver spec body) =
-  ["OPENQASM " ++ show ver ++ ";"] ++ concatMap prettyPrintStmt body
+  prettyPrintSpec spec ++ ["OPENQASM " ++ show ver ++ ";"] ++ concatMap prettyPrintStmt body
+
+prettyPrintSpec :: Maybe Spec -> [String]
+prettyPrintSpec Nothing = []
+prettyPrintSpec (Just (PSSpec input scalar sum phaseP outputs)) = str where
+  str = ["//: " ++ inputStr ++ " --> " ++ scalarStr ++ sumStr ++ phasePStr ++ outputStr]
+
+  inputStr = "|" ++ prettyPrintIDs input ++ ">"
+  scalarStr = case scalar of
+    Nothing  -> ""
+    Just exp -> prettyPrintExp exp ++ "*"
+  sumStr = case sum of
+    [] -> ""
+    _  -> "sum{" ++ prettyPrintIDs sum ++ "}"
+  phasePStr = case phaseP of
+    Nothing  -> ""
+    Just exp -> "exp(" ++ prettyPrintExp exp ++ ")"
+  outputStr = "|" ++ prettyPrintExps outputs ++ ">"
 
 prettyPrintStmt :: Stmt -> [String]
 prettyPrintStmt stmt = case stmt of
@@ -132,11 +185,13 @@ prettyPrintDec :: Dec -> [String]
 prettyPrintDec dec = case dec of
   VarDec x (Creg i) -> ["creg " ++ x ++ "[" ++ show i ++ "];"]
   VarDec x (Qreg i) -> ["qreg " ++ x ++ "[" ++ show i ++ "];"]
-  GateDec x [] qp _ b ->
+  GateDec x [] qp spec b ->
+    prettyPrintSpec spec ++
     ["gate " ++ x ++ " " ++ prettyPrintIDs qp ++ " {"]
     ++ map (\uexp -> "  " ++ prettyPrintUExp uexp ++ ";") b
     ++ ["}"]
-  GateDec x cp qp _ b ->
+  GateDec x cp qp spec b ->
+    prettyPrintSpec spec ++
     ["gate(" ++ prettyPrintIDs cp ++ ") " ++ x ++ " " ++ prettyPrintIDs qp, "{"]
     ++ map (\uexp -> "  " ++ prettyPrintUExp uexp ++ ";") b
     ++ ["}"]

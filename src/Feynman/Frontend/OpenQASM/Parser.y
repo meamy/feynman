@@ -59,17 +59,20 @@ import Feynman.Frontend.OpenQASM.VerificationSyntax
   
 %%
 
-program : annot_opt qasm float ';' statements { QASM $3 Nothing $5 }
+program : annot_opt qasm float ';' statements { QASM $3 $1 $5 }
 
-annot_opt : {- empty -}  {  Nothing }
-          | pathspec     { Just $1 }
+annot_opt : {- empty -}    {  Nothing }
+          | annot pathspec { Just $2 }
 
-pathspec : '|' args rket mapsto exp_opt sum_opt exp_opt '|' exps0 rket { GateSpec 0 0 0 Half [] }
+pathspec : '|' ids0 rket mapsto exp_opt sum_opt pp_opt '|' exps0 rket { PSSpec $2 $5 $6 $7 $9 }
 
-sum_opt : {- empty -}  {  Nothing }
-        | sumover      { Just $1 }
+pp_opt : {- empty -}      { Nothing }
+       | expt '(' exp ')' { Just $3 }
 
-sumover : sum '{' ids0 '}' { "Temp" }
+sum_opt : {- empty -}  { [] }
+        | sumover      { $1 }
+
+sumover : sum '{' ids0 '}' { $3 }
 
 statements : statement             { [$1] }
            | statements statement  { $1 ++ [$2] }
