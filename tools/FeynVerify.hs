@@ -15,9 +15,14 @@ import qualified Data.Set as Set
 
 import Feynman.Core hiding (inputs, qubits, getArgs)
 import Feynman.Frontend.DotQC
+import Feynman.Frontend.OpenQASM.Lexer (lexer)
+import Feynman.Frontend.OpenQASM.Syntax (QASM, check, desugar, emit)
+import Feynman.Frontend.OpenQASM.Parser (parse)
 import Feynman.Algebra.Base (DMod2)
 import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>))
 import Feynman.Verification.Symbolic
+
+import Feynman.Simulation.Pathsum hiding (body)
 
 -- | Check whether two .qc files are equivalent
 checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
@@ -44,6 +49,18 @@ getSOP qc = grind $ complexAction vars inpts circ where
   vars  = qubits qc
   inpts = Set.toList (inputs qc)
   circ  = toCliffordT $ toGatelist qc
+
+-- | Run openQASM verification
+runQASM :: String -> IO ()
+runQASM src = case parseQASM of
+  Left err   -> putStrLn $ "ERROR: " ++ err
+  Right qasm -> putStrLn ""
+  where printErr (Left l)  = Left $ show l
+        printErr (Right r) = Right r
+        parseQASM = do
+          let qasm = parse . lexer $ src
+          symtab <- check qasm
+          return $ desugar symtab qasm
 
 -- | Get the extension of a filename
 extension :: String -> String
@@ -95,6 +112,9 @@ run options xs = case xs of
              xsrc <- lift $ B.readFile x
              qc <- ExceptT $ return $ parseDotQC xsrc
              return . show $ getSOP qc
+  [x]    | extension x == "qasm" -> do
+             lift $ readFile x >>= runQASM
+             return ""
   [x,y]  | extension x == "qc" && extension y == "qc" -> do
              xsrc <- lift $ B.readFile x
              ysrc <- lift $ B.readFile y

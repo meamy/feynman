@@ -52,6 +52,7 @@ library
                        Feynman.Optimization.Clifford,
 
                        Feynman.Verification.Symbolic,
+                       Feynman.Simulation.Pathsum,
 
                        Feynman.Frontend.DotQC
                        Feynman.Frontend.OpenQASM.Syntax

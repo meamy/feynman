@@ -3,14 +3,19 @@ module Feynman.Simulation.Pathsum where
 import Feynman.Core hiding (Stmt,Gate,dagger)
 import Feynman.Frontend.OpenQASM.Syntax
 import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec, sopOfSpec)
+import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced hiding (Var, Zero)
-import Feynman.Algebra.Base (DMod2, fromDyadic)
+import qualified Feynman.Algebra.Pathsum.Balanced as PS
+import Feynman.Algebra.Base (DMod2, fromDyadic, toDyadic)
 
+import Data.Maybe
 import qualified Data.List as List
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Traversable (for)
 import Data.Bits (testBit)
+
+import qualified Debug.Trace as Trace
 
 import Control.Monad.State.Strict
 
@@ -122,17 +127,17 @@ popEnv = do
 
 simDeclare :: Dec -> State Env ()
 simDeclare dec = case dec of
-  VarDec id (Qreg size)           -> do
-                                      offset <- allocatePathsum size
-                                      addBind id (QReg size offset)
-  VarDec id (Creg size)           -> do
-                                      offset <- allocatePathsum size
-                                      addBind id (CReg size offset)
-  GateDec id []      qparams body -> do
-                                      summary <- summarizeGate qparams body
-                                      addBind id (SumGate summary)
-  GateDec id cparams qparams body -> addBind id (Gate cparams qparams body)
-  UIntDec _ _ _                   -> return ()
+  VarDec id (Qreg size)             -> do
+                                        offset <- allocatePathsum size
+                                        addBind id (QReg size offset)
+  VarDec id (Creg size)             -> do
+                                        offset <- allocatePathsum size
+                                        addBind id (CReg size offset)
+  GateDec id []      qparams _ body -> do
+                                        summary <- summarizeGate qparams body
+                                        addBind id (SumGate summary)
+  GateDec id cparams qparams _ body -> addBind id (Gate cparams qparams body)
+  UIntDec _ _ _                     -> return ()
 
 verifyGate :: GateSpec -> Pathsum DMod2 -> Bool
 verifyGate spec gate =
@@ -393,5 +398,51 @@ simControlled controls qexp = case qexp of
   ResetExp arg -> simReset controls arg
 
 simQASM :: QASM -> Env
-simQASM (QASM _ stmts) =
+simQASM (QASM _ (Just spec) stmts) =
+  Trace.trace ("Spec: " ++ show spec ++ "\nPathsum: " ++ show (sopOfPSSpec spec) ++ "\n") $
   execState (mapM_ simStmt stmts) initEnv
+simQASM (QASM _ _ stmts) =
+  execState (mapM_ simStmt stmts) initEnv
+
+{- Specification building -}
+polyOfExp :: Exp -> PseudoBoolean PS.Var Double
+polyOfExp exp
+  | isJust (evalExp exp) = constant $ fromJust (evalExp exp)
+  | otherwise             = case exp of
+      FloatExp d       -> constant d
+      IntExp i         -> constant $ fromIntegral i
+      PiExp            -> constant $ pi
+      VarExp v         -> ofVar $ FVar v
+      UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp exp
+      BOpExp e1 bop e2 -> case bop of
+        PlusOp  -> e1' + e2'
+        MinusOp -> e1' - e2'
+        TimesOp -> e1' * e2'
+        DivOp   -> error "Unsupported division of polynomials"
+        PowOp   -> error "Unsupported exponent of polynomials"
+        where e1' = polyOfExp e1
+              e2' = polyOfExp e2
+
+polyOfMaybeExp :: Maybe Exp -> PseudoBoolean PS.Var Double
+polyOfMaybeExp Nothing    = 0
+polyOfMaybeExp (Just exp) = polyOfExp exp
+
+decomposeScalar :: Maybe Exp -> (Int, DMod2)
+decomposeScalar Nothing    = (0, 0)
+decomposeScalar (Just exp) = error "Normalization check not implemented"
+
+castDMod2 :: PseudoBoolean v Double -> PseudoBoolean v DMod2
+castDMod2 = cast (fromDyadic . toDyadic . (/pi))
+
+castBoolean :: PseudoBoolean v Double -> SBool v
+castBoolean = cast go where
+  go 0.0 = 0
+  go 1.0 = 1
+  go _   = error "Not a Boolean polynomial"
+
+sopOfPSSpec :: Spec -> Pathsum DMod2
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind args $ sumover pvars sop where
+  (s, gphase) = decomposeScalar scalar
+  pp  = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
+  out = map (castBoolean . polyOfExp) ovals
+  sop = Pathsum s 0 (length out) 0 pp out

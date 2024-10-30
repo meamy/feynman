@@ -15,7 +15,6 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Control.Monad
-import Debug.Trace
 
 import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec)
 
@@ -119,35 +118,6 @@ evalExp exp = case exp of
     e1 <- evalExp exp1
     e2 <- evalExp exp2
     return $ (evalBOp op) e1 e2
-
-{- Specification building -}
-{-
-polyOfExp :: Exp -> PseudoBoolean Var Double
-polyOfExp exp
-  | evalExp exp == Just d = constant d
-  | otherwise             = case exp of
-      FloatExp d       -> constant d
-      IntExp i         -> constant $ fromInteger i
-      PiExp            -> constant $ pi
-      VarExp v         -> ofVar $ FVar v
-      UOpExp uop e     -> fmap (evalUOp uop) $ polyOfExp exp
-      BOpExp e1 bop e2 -> case bop of
-        PlusOp  -> e1' + e2'
-        MinusOp -> e1' - e2'
-        TimesOp -> e1' * e2'
-        DivOp   -> error "Unsupported division of polynomials"
-        PowOp   -> error "Unsupported exponent of polynomials"
-        where e1' = polyOfExp e1
-              e2' = polyOfExp e2
-
-buildGateSpec :: [Arg] -> Maybe Exp -> Maybe [ID] -> Maybe Exp -> [Exp] -> GateSpec
-buildGateSpec args scalar pvars ampl ovals = bind args sop where
-  (sde, constPhase) = decomposeScalar scalar
-  pp = constPhase + phasepolyOfExp ampl
-  
-  sde = 
-  sop = 
--}
 
 {- Pretty printing -}
 emit :: QASM -> IO ()

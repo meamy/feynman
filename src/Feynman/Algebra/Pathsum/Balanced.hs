@@ -599,6 +599,15 @@ bind = flip (foldr go)
                   phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),
                   outVals = map (subst (FVar x) (ofVar v)) (outVals sop) }
 
+-- | Sum over some collection of free variables in a path sum
+sumover :: (Foldable f, Eq g, Abelian g) => f String -> Pathsum g -> Pathsum g
+sumover = flip (foldr go)
+  where go x sop =
+          let v = PVar $ pathVars sop in
+            sop { pathVars = (pathVars sop) + 1,
+                  phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),
+                  outVals = map (subst (FVar x) (ofVar v)) (outVals sop) }
+
 -- | Close a path sum by binding all free variables
 close :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 close sop = bind (freeVars sop) sop
