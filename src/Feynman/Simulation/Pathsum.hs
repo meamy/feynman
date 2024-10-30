@@ -133,7 +133,14 @@ simDeclare dec = case dec of
   VarDec id (Creg size)             -> do
                                         offset <- allocatePathsum size
                                         addBind id (CReg size offset)
-  GateDec id []      qparams _ body -> do
+  GateDec id []      qparams (Just spec) body -> do
+                                        summary <- summarizeGate qparams body
+                                        let result = case verifyGate' spec summary of
+                                              False -> "Failed!"
+                                              True  -> "Success!"
+                                        Trace.trace ("Verifying \"" ++ id ++ "\" against specification " ++ show (sopOfPSSpec spec) ++ "..." ++ result) $ return ()
+                                        addBind id (SumGate summary)
+  GateDec id []      qparams Nothing body -> do
                                         summary <- summarizeGate qparams body
                                         addBind id (SumGate summary)
   GateDec id cparams qparams _ body -> addBind id (Gate cparams qparams body)
@@ -144,6 +151,12 @@ verifyGate spec gate =
   let specPs = sopOfSpec spec
       n      = inDeg gate     in
     (grind $ specPs .> (dagger gate)) == identity n
+
+verifyGate' :: Spec -> Pathsum DMod2 -> Bool
+verifyGate' spec gate =
+  let specPs = sopOfPSSpec spec
+      n      = inDeg gate     in
+    (dropAmplitude $ grind $ specPs .> (dagger gate)) == identity n
 
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
@@ -398,9 +411,6 @@ simControlled controls qexp = case qexp of
   ResetExp arg -> simReset controls arg
 
 simQASM :: QASM -> Env
-simQASM (QASM _ (Just spec) stmts) =
-  Trace.trace ("Spec: " ++ show spec ++ "\nPathsum: " ++ show (sopOfPSSpec spec) ++ "\n") $
-  execState (mapM_ simStmt stmts) initEnv
 simQASM (QASM _ _ stmts) =
   execState (mapM_ simStmt stmts) initEnv
 
@@ -441,7 +451,7 @@ castBoolean = cast go where
   go _   = error "Not a Boolean polynomial"
 
 sopOfPSSpec :: Spec -> Pathsum DMod2
-sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind args $ sumover pvars sop where
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind (reverse args) $ sumover (reverse pvars) sop where
   (s, gphase) = decomposeScalar scalar
   pp  = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
   out = map (castBoolean . polyOfExp) ovals

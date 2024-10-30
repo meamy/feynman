@@ -54,7 +54,8 @@ getSOP qc = grind $ complexAction vars inpts circ where
 runQASM :: String -> IO ()
 runQASM src = case parseQASM of
   Left err   -> putStrLn $ "ERROR: " ++ err
-  Right qasm -> putStrLn ""
+  Right qasm -> let env = simQASM qasm in
+    env `seq` return ()
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseQASM = do
