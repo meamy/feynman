@@ -1,12 +1,14 @@
 module Feynman.Simulation.Pathsum where
 
-import Feynman.Core hiding (Stmt,Gate,dagger)
+import Feynman.Core hiding (Stmt,Gate,dagger,inputs)
 import Feynman.Frontend.OpenQASM.Syntax
 import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec, sopOfSpec)
 import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced hiding (Var, Zero)
 import qualified Feynman.Algebra.Pathsum.Balanced as PS
 import Feynman.Algebra.Base (DMod2, fromDyadic, toDyadic)
+
+import qualified Feynman.Util.Unicode as U
 
 import Data.Maybe
 import qualified Data.List as List
@@ -22,7 +24,8 @@ import Control.Monad.State.Strict
 data Env = Env {
   pathsum :: Pathsum DMod2,
   binds :: [Map ID Binding],
-  density :: Bool
+  density :: Bool,
+  uninitialized :: [ID]
 } deriving (Show)
 
 data Binding =
@@ -38,8 +41,12 @@ data Binding =
   | SumGate { bodySum :: Pathsum DMod2}
   deriving (Show)
 
+-- | Gives the unicode representation of the ith offset of v
+varOfOffset :: ID -> Int -> String
+varOfOffset v i = U.sub v (fromIntegral i)
+
 initEnv :: Env
-initEnv = Env (ket []) [Map.empty] False
+initEnv = Env (ket []) [Map.empty] False []
 
 isDensity :: State Env Bool
 isDensity = gets $ density
@@ -58,26 +65,37 @@ getBinding id = gets $ search id . binds
       Just bind -> bind
       Nothing -> search id bs
 
+searchBinding :: ID -> State Env (Maybe Binding)
+searchBinding id = gets $ search id . binds
+  where
+    search id []     = Nothing
+    search id (b:bs) = case Map.lookup id b of
+      Just bind -> Just bind
+      Nothing   -> search id bs
+
 psSize :: Env -> Int
-psSize (Env ps _ False) = outDeg ps
-psSize (Env ps _ True)  = outDeg ps `div` 2
+psSize (Env ps _ False _) = outDeg ps
+psSize (Env ps _ True _)  = outDeg ps `div` 2
 
 getPSSize :: State Env Int
 getPSSize = gets psSize
 
 -- action returns offset of allocated register
-allocatePathsum :: Int -> State Env Int
-allocatePathsum size = do
+allocatePathsum :: ID -> Int -> State Env Int
+allocatePathsum v size = do
   offset <- getPSSize
-  modify allocate
+  ps' <- gets uninitialized >>= \tf -> case v `elem` tf of
+    True  -> return $ ket [ofVar (varOfOffset v (offset+i)) | i <- [0..size-1]]
+    False -> return $ ket (replicate size 0)
+  modify (allocate ps')
   return offset
   where
-    allocate env@(Env ps _ False) = env { pathsum = ps <> (ket $ replicate size 0) }
-    allocate env@(Env ps _ True)  = env { pathsum = newps }
+    allocate ps' env@(Env ps _ False _) = env { pathsum = ps <> ps' }
+    allocate ps' env@(Env ps _ True _)  = env { pathsum = newps }
       where
         oldsize  = outDeg ps `div` 2
         embedded = embed ps (size * 2) (\i -> i) (\i -> if i < oldsize then i else i + size)
-        newps = (ket $ replicate (size*2) 0) .> embedded
+        newps = (ps' <> ps') .> embedded
 
 addBind :: ID -> Binding -> State Env ()
 addBind id binding = do
@@ -127,36 +145,69 @@ popEnv = do
 
 simDeclare :: Dec -> State Env ()
 simDeclare dec = case dec of
-  VarDec id (Qreg size)             -> do
-                                        offset <- allocatePathsum size
-                                        addBind id (QReg size offset)
-  VarDec id (Creg size)             -> do
-                                        offset <- allocatePathsum size
-                                        addBind id (CReg size offset)
-  GateDec id []      qparams (Just spec) body -> do
-                                        summary <- summarizeGate qparams body
-                                        let result = case verifyGate' spec summary of
-                                              False -> "Failed!"
-                                              True  -> "Success!"
-                                        Trace.trace ("Verifying \"" ++ id ++ "\" against specification " ++ show (sopOfPSSpec spec) ++ "..." ++ result) $ return ()
-                                        addBind id (SumGate summary)
-  GateDec id []      qparams Nothing body -> do
-                                        summary <- summarizeGate qparams body
-                                        addBind id (SumGate summary)
-  GateDec id cparams qparams _ body -> addBind id (Gate cparams qparams body)
-  UIntDec _ _ _                     -> return ()
+  GateDec id [] qparams (Just spec) body -> do
+    summary <- summarizeGate qparams body
+    verifyGate' id spec summary
+    addBind id (SumGate summary)
+  GateDec id [] qparams Nothing body     -> do
+    summary <- summarizeGate qparams body
+    addBind id (SumGate summary)
+  GateDec id cparams qparams _ body      ->
+    addBind id (Gate cparams qparams body)
+
+  VarDec id (Qreg size) -> do
+    offset <- allocatePathsum id size
+    addBind id (QReg size offset)
+  VarDec id (Creg size) -> do
+    offset <- allocatePathsum id size
+    addBind id (CReg size offset)
+
+  UIntDec _ _ _  -> return ()
 
 verifyGate :: GateSpec -> Pathsum DMod2 -> Bool
 verifyGate spec gate =
   let specPs = sopOfSpec spec
-      n      = inDeg gate     in
+      n      = inDeg gate
+  in
     (grind $ specPs .> (dagger gate)) == identity n
 
-verifyGate' :: Spec -> Pathsum DMod2 -> Bool
-verifyGate' spec gate =
-  let specPs = sopOfPSSpec spec
-      n      = inDeg gate     in
-    (dropAmplitude $ grind $ specPs .> (dagger gate)) == identity n
+verifyGate' :: ID -> Spec -> Pathsum DMod2 -> State Env ()
+verifyGate' id spec gatePS = do
+  env <- get
+  let specPS = sopOfPSSpec spec env
+  let n      = inDeg gatePS
+  let result = case (dropAmplitude $ grind $ specPS .> (dagger gatePS)) == identity n of
+        False -> "Failed!"
+        True  -> "Success!"
+  Trace.trace ("Verifying \"" ++ id ++ "\" against specification " ++ show (specPS) ++ "..." ++ result) $ return ()
+
+traceList :: [ID] -> Env -> [Int]
+traceList nxs = reverse . List.sort . concatMap go . concatMap Map.toList . binds
+  where go (id, QReg size idx) | not (id `elem` nxs) = [idx+i | i <- [0..size-1]]
+        go (id, CReg size idx) | not (id `elem` nxs) = [idx+i | i <- [0..size-1]]
+        go _ = []
+
+bindingList :: [TypedID] -> Env -> [String]
+bindingList nxs env = concatMap go nxs
+  where go (v, _)  = case evalState (searchBinding v) env of
+          Just (QReg sz _) -> [varOfOffset v i | i <- [0..sz-1]]
+          _                -> [v]
+
+verifyProg' :: Spec -> Env -> Bool
+verifyProg' spec env =
+  let specPs     = channelize $ sopOfPSSpec spec env
+      initPS     = let tmp = open (identity (n `div` 2)) in close $ tmp <> tmp
+      progPS     = case density env of
+        False -> conjugate (pathsum env) <> pathsum env
+        True  -> pathsum env
+      traceBinds = traceList (fst . unzip $ inputs spec) env
+      tracedPS   = grind $ foldl (\ps (i, idx) -> traceOut idx (idx+m-i) ps) progPS $ zip [0..] traceBinds
+      bindings   = bindingList (inputs spec) env
+      closedPS   = bind bindings tracedPS
+      n          = inDeg specPs
+      m          = outDeg (pathsum env)
+  in
+    (dropAmplitude $ grind $ closedPS .> (dagger specPs)) == initPS
 
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
@@ -333,7 +384,7 @@ simMeasure controls arg1 arg2 = densifyEnv >> case (arg1, arg2) of
       modify $ applyMeasurement controlOffsets offset
       simGateExp controls $ CXGate arg1 arg2
 
-    applyMeasurement controlOffsets offset env@(Env ps _ _) =
+    applyMeasurement controlOffsets offset env@(Env ps _ _ _) =
       env { pathsum = ps .> embed (controlledN m measureGate) (2*n - 2 - m) f f }
       where
         m = length controlOffsets
@@ -367,7 +418,7 @@ checkAssertion assert = case assert of
       _ -> error "gate has no summary"
       
   where
-    assertState offset state env@(Env ps _ density) = 
+    assertState offset state env@(Env ps _ density _) = 
       let statePs = evalStatePs state
           projector = embed (densify statePs) (psSize env - 1) f f
           projector' = if density then channelize projector else projector
@@ -411,6 +462,14 @@ simControlled controls qexp = case qexp of
   ResetExp arg -> simReset controls arg
 
 simQASM :: QASM -> Env
+simQASM (QASM _ (Just spec) stmts) =
+  let env = execState (mapM_ simStmt stmts) (initEnv { uninitialized = fst . unzip $ inputs spec })
+      result = case verifyProg' spec env of
+        False -> "Failed!"
+        True  -> "Success!"
+  in
+    Trace.trace ("Verifying whole program against specification " ++ (show $ sopOfPSSpec spec env) ++ "..." ++ result) $ env
+  
 simQASM (QASM _ _ stmts) =
   execState (mapM_ simStmt stmts) initEnv
 
@@ -423,6 +482,7 @@ polyOfExp exp
       IntExp i         -> constant $ fromIntegral i
       PiExp            -> constant $ pi
       VarExp v         -> ofVar $ FVar v
+      OffsetExp v i    -> ofVar $ FVar (varOfOffset v i)
       UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp exp
       BOpExp e1 bop e2 -> case bop of
         PlusOp  -> e1' + e2'
@@ -450,11 +510,12 @@ castBoolean = cast go where
   go 1.0 = 1
   go _   = error "Not a Boolean polynomial"
 
-sopOfPSSpec :: Spec -> Pathsum DMod2
-sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind (reverse . map getID $ args) $ sumover (reverse pvars) sop where
-  (s, gphase) = decomposeScalar scalar
-  pp  = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
-  out = map (castBoolean . polyOfExp) ovals
-  sop = Pathsum s 0 (length out) 0 pp out
-  getID (id, _) = id
+sopOfPSSpec :: Spec -> Env -> Pathsum DMod2
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover pvars $ sop
+  where bindings      = bindingList args env
+        (s, gphase)   = decomposeScalar scalar
+        pp            = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
+        out           = map (castBoolean . polyOfExp) ovals
+        sop           = Pathsum s 0 (length out) 0 pp out
+        getID (id, _) = id
 

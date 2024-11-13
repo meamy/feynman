@@ -20,7 +20,7 @@ import Feynman.Frontend.OpenQASM.VerificationSyntax (GateSpec)
 
 {- Abstract syntax -}
 data Typ = Numeric | Creg Int | Qreg Int | Circ Int Int deriving (Eq,Show)
-data Arg = Var ID | Offset ID Int deriving (Eq,Show)
+data Arg = Var ID | Offset ID Int deriving (Eq,Show,Ord)
 
 data UnOp  = SinOp | CosOp | TanOp | ExpOp | LnOp | SqrtOp deriving (Eq,Show)
 data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
@@ -89,6 +89,7 @@ data Exp =
   | IntExp  Int
   | PiExp
   | VarExp ID
+  | OffsetExp ID Int
   | UOpExp UnOp Exp
   | BOpExp Exp BinOp Exp
   deriving (Eq,Show)
@@ -117,6 +118,7 @@ evalExp exp = case exp of
   IntExp i            -> Just $ fromIntegral i
   PiExp               -> Just $ pi
   VarExp _            -> Nothing
+  OffsetExp _ _       -> Nothing
   UOpExp op exp       -> liftM (evalUOp op) $ evalExp exp
   BOpExp exp1 op exp2 -> do
     e1 <- evalExp exp1
@@ -219,7 +221,8 @@ prettyPrintExp exp = case exp of
   FloatExp d           -> show d
   IntExp i             -> show i
   PiExp                -> "pi"
-  VarExp v             -> v 
+  VarExp v             -> v
+  OffsetExp v o        -> v ++ "[" ++ show o ++ "]"
   UOpExp uop exp       -> prettyPrintUnOp uop ++ "(" ++ prettyPrintExp exp ++ ")"
   BOpExp exp1 bop exp2 -> prettyPrintExp exp1 ++ " " ++ prettyPrintBinOp bop ++ " " ++ prettyPrintExp exp2
 

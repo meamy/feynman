@@ -592,8 +592,8 @@ traceOut i j sop@(Pathsum s d o p pp ovals) = sop .> embed epsilon (o-2) mp (\_ 
 
 -- | Bind some collection of free variables in a path sum
 bind :: (Foldable f, Eq g, Abelian g) => f String -> Pathsum g -> Pathsum g
-bind = flip (foldr go)
-  where go x sop =
+bind = flip (foldl go)
+  where go sop x =
           let v = IVar $ inDeg sop in
             sop { inDeg = (inDeg sop) + 1,
                   phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),
@@ -601,8 +601,8 @@ bind = flip (foldr go)
 
 -- | Sum over some collection of free variables in a path sum
 sumover :: (Foldable f, Eq g, Abelian g) => f String -> Pathsum g -> Pathsum g
-sumover = flip (foldr go)
-  where go x sop =
+sumover = flip (foldl go)
+  where go sop x =
           let v = PVar $ pathVars sop in
             sop { pathVars = (pathVars sop) + 1,
                   phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),

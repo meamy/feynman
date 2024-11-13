@@ -154,6 +154,7 @@ factor : float             { FloatExp $1 }
        | nat               { IntExp $1 }
        | pi                { PiExp }
        | id                { VarExp $1 }
+       | id '[' nat ']'    { OffsetExp $1 $3 }
        | '-' factor        { BOpExp (IntExp 0) MinusOp $2 }
        | unary '(' exp ')' { UOpExp $1 $3 }
        | '(' exp ')'       { $2 }
