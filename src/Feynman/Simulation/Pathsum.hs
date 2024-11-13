@@ -451,8 +451,10 @@ castBoolean = cast go where
   go _   = error "Not a Boolean polynomial"
 
 sopOfPSSpec :: Spec -> Pathsum DMod2
-sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind (reverse args) $ sumover (reverse pvars) sop where
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) = bind (reverse . map getID $ args) $ sumover (reverse pvars) sop where
   (s, gphase) = decomposeScalar scalar
   pp  = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
   out = map (castBoolean . polyOfExp) ovals
   sop = Pathsum s 0 (length out) 0 pp out
+  getID (id, _) = id
+

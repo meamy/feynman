@@ -45,6 +45,7 @@ import Feynman.Frontend.OpenQASM.VerificationSyntax
   '['     { TLBracket }
   ']'     { TRBracket }
   ';'     { TSemicolon }
+  ':'     { TColon }
   ','     { TComma }
   str     { TString $$ }
   id      { TID   $$ }
@@ -56,6 +57,8 @@ import Feynman.Frontend.OpenQASM.VerificationSyntax
   rket    { TRangle }
   mapsto  { TMapsto }
   sum     { TSum }
+  qubit   { TQubitType }
+  int     { TIntType }
   
 %%
 
@@ -64,7 +67,7 @@ program : annot_opt qasm float ';' statements { QASM $3 $1 $5 }
 annot_opt : {- empty -}    {  Nothing }
           | annot pathspec { Just $2 }
 
-pathspec : '|' ids0 rket mapsto exp_opt sum_opt pp_opt '|' exps0 rket { PSSpec $2 $5 $6 $7 $9 }
+pathspec : '|' typed_ids0 rket mapsto exp_opt sum_opt pp_opt '|' exps0 rket { PSSpec $2 $5 $6 $7 $9 }
 
 pp_opt : {- empty -}      { Nothing }
        | expt '(' exp ')' { Just $3 }
@@ -116,6 +119,18 @@ ids0 : {- empty -} { [] }
 
 ids : id         { [$1] }
     | ids ',' id { $1 ++ [$3] }
+
+typed_ids0 : {- empty -} { [] }
+	   | typed_ids   { $1 }
+
+typed_ids : typed_id               { [$1] }
+          | typed_ids ',' typed_id { $1 ++ [$3] }
+
+typed_id : id ':' type { ($1, $3) }
+	 | id          { ($1, TypeQubit) }
+
+type : qubit   { TypeQubit }
+     | int nat { TypeInt $2 }
 
 exps0 : {- empty -} { [] }
       | exps        { $1 }

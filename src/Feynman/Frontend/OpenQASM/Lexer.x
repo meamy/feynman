@@ -54,6 +54,7 @@ tokens :-
   \}                                                        { \s -> TRBrace }
   \[                                                        { \s -> TLBracket }
   \]                                                        { \s -> TRBracket }
+  \:                                                        { \s -> TColon }
   \;                                                        { \s -> TSemicolon }
   \,                                                        { \s -> TComma }
   \"[^\"]*\"                                                { \s -> TString (filter (/='"') s) }
@@ -64,7 +65,8 @@ tokens :-
   \<                                                        { \s -> TLangle }
   \>                                                        { \s -> TRangle }
   \-\-\>                                                    { \s -> TMapsto }
-
+  qubit                                                     { \s -> TQubitType }
+  int                                                       { \s -> TIntType }
 {
 
 -- OpenQASM tokens
@@ -105,6 +107,7 @@ data Token =
   | TRBrace
   | TLBracket
   | TRBracket
+  | TColon
   | TSemicolon
   | TComma
   -- identifiers & literals
@@ -120,6 +123,9 @@ data Token =
   | TRangle
   | TMapsto
   | TSum
+  -- Types for specifications
+  | TQubitType
+  | TIntType
   deriving (Eq,Show)
 
 lexer :: String -> [Token]

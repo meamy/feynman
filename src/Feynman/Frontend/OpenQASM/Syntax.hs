@@ -28,12 +28,16 @@ data BinOp = PlusOp | MinusOp | TimesOp | DivOp | PowOp deriving (Eq,Show)
 data QASM = QASM Double (Maybe Spec) [Stmt] deriving (Eq,Show)
 
 data Spec = PSSpec {
-  inputs  :: [ID],
+  inputs  :: [TypedID],
   scalar  :: Maybe Exp,
   sum     :: [ID],
   phaseP  :: Maybe Exp,
   outputs :: [Exp]
   } deriving (Eq,Show)
+
+type TypedID = (ID, SpecInputType)
+
+data SpecInputType = TypeQubit | TypeInt Int deriving (Eq, Show)
 
 data Stmt =
     IncStmt String
@@ -132,7 +136,7 @@ prettyPrintSpec Nothing = []
 prettyPrintSpec (Just (PSSpec input scalar sum phaseP outputs)) = str where
   str = ["//: " ++ inputStr ++ " --> " ++ scalarStr ++ sumStr ++ phasePStr ++ outputStr]
 
-  inputStr = "|" ++ prettyPrintIDs input ++ ">"
+  inputStr = "|" ++ prettyPrintTypedIDs input ++ ">"
   scalarStr = case scalar of
     Nothing  -> ""
     Just exp -> prettyPrintExp exp ++ "*"
@@ -191,6 +195,13 @@ prettyPrintUExp uexp = case uexp of
 
 prettyPrintIDs :: [ID] -> String
 prettyPrintIDs = intercalate ","
+
+prettyPrintTypedIDs :: [TypedID] -> String
+prettyPrintTypedIDs = intercalate "," . map prettyPrintTypedID
+
+prettyPrintTypedID :: TypedID -> String
+prettyPrintTypedID (id, TypeInt n) = id ++ ":" ++ "int[" ++ show n ++ "]"
+prettyPrintTypedID (id, TypeQubit) = id
 
 prettyPrintArgs :: [Arg] -> String
 prettyPrintArgs = intercalate "," . map prettyPrintArg
