@@ -121,16 +121,16 @@ ids : id         { [$1] }
     | ids ',' id { $1 ++ [$3] }
 
 typed_ids0 : {- empty -} { [] }
-	   | typed_ids   { $1 }
+           | typed_ids   { $1 }
 
 typed_ids : typed_id               { [$1] }
           | typed_ids ',' typed_id { $1 ++ [$3] }
 
 typed_id : id ':' type { ($1, $3) }
-	 | id          { ($1, TypeQubit) }
+         | id          { ($1, TypeQubit) }
 
-type : qubit   { TypeQubit }
-     | int nat { TypeInt $2 }
+type : qubit           { TypeQubit }
+     | int '[' nat ']' { TypeInt $3 }
 
 exps0 : {- empty -} { [] }
       | exps        { $1 }

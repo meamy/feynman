@@ -47,6 +47,8 @@ tokens :-
   U                                                         { \s -> TU }
   CX                                                        { \s -> TCX }
   sum                                                       { \s -> TSum }
+  qubit                                                     { \s -> TQubitType }
+  int                                                       { \s -> TIntType }
   \-\>                                                      { \s -> TArrow }
   \(                                                        { \s -> TLParen }
   \)                                                        { \s -> TRParen }
@@ -57,16 +59,14 @@ tokens :-
   \:                                                        { \s -> TColon }
   \;                                                        { \s -> TSemicolon }
   \,                                                        { \s -> TComma }
-  \"[^\"]*\"                                                { \s -> TString (filter (/='"') s) }
-  [a-z]($digit|$alpha)*                                     { \s -> TID s }
-  ($digit+\.$digit*|$digit*\.$digit+)([eE][\-\+]?$digit+)?  { \s -> TReal (read s) }
-  [1-9]$digit*|0                                            { \s -> TNat (read s) }
   \|                                                        { \s -> TBar }
   \<                                                        { \s -> TLangle }
   \>                                                        { \s -> TRangle }
   \-\-\>                                                    { \s -> TMapsto }
-  qubit                                                     { \s -> TQubitType }
-  int                                                       { \s -> TIntType }
+  \"[^\"]*\"                                                { \s -> TString (filter (/='"') s) }
+  [a-z]($digit|$alpha)*                                     { \s -> TID s }
+  ($digit+\.$digit*|$digit*\.$digit+)([eE][\-\+]?$digit+)?  { \s -> TReal (read s) }
+  [1-9]$digit*|0                                            { \s -> TNat (read s) }
 {
 
 -- OpenQASM tokens
