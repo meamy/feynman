@@ -205,7 +205,9 @@ verifyProg' spec env =
       bindings   = bindingList (inputs spec) env
       closedPS   = bind bindings tracedPS
       n          = inDeg specPs
-      m          = outDeg (pathsum env)
+      m          = case density env of
+        False -> outDeg (pathsum env)
+        True -> outDeg (pathsum env) `div` 2
   in
     (dropAmplitude $ grind $ closedPS .> (dagger specPs)) == initPS
 
@@ -283,7 +285,6 @@ applyGate density ps controls gate@(Pathsum _ b _ _ _ _) args
   | not $ null controls = applyGate density ps [] (controlledN (length controls) gate) (controls ++ args)
   | length args == b = do
       offsets <- mapM getOffset args
-      controlOffsets <- mapM getOffset controls
       return $ applyGate' ps offsets
   where
     applyGate' :: Pathsum DMod2 -> [Int] -> Pathsum DMod2
@@ -293,7 +294,7 @@ applyGate density ps controls gate@(Pathsum _ b _ _ _ _) args
       where
         f, g :: Int -> Int
         f = (!!) offsets
-        g = (!!) (offsets ++ map (+c) offsets)
+        g = (!!) (offsets ++ map (+c`div`2) offsets)
 
 stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
 
@@ -384,15 +385,15 @@ simMeasure controls arg1 arg2 = densifyEnv >> case (arg1, arg2) of
       modify $ applyMeasurement controlOffsets offset
       simGateExp controls $ CXGate arg1 arg2
 
-    applyMeasurement controlOffsets offset env@(Env ps _ _ _) =
+    applyMeasurement controlOffsets offset env@(Env ps _ True _) =
       env { pathsum = ps .> embed (controlledN m measureGate) (2*n - 2 - m) f f }
       where
-        m = length controlOffsets
-        n = psSize env
+        m = length controls
+        n = outDeg ps `div` 2
         f i
           | i < m = controlOffsets !! i
           | i == m = offset
-          | i == m+1 = offset + psSize env
+          | i == m+1 = offset + n
 
 simQExp :: QExp -> State Env ()
 simQExp qexp = case qexp of
