@@ -35,9 +35,6 @@ import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
 import Feynman.Synthesis.Phase
-import Feynman.Optimization.ARD
-
-import qualified Debug.Trace as Trace
 
 {-----------------------------------
  Utilities
@@ -51,7 +48,7 @@ newtype Analysis repr = Analysis ([ID] -> [ID] -> [Primitive] -> ([Term], Angle)
 
 -- | Type class for the representation of affine parities in /n/ variables.
 --   Roughly, isomorphic to \(2^{[n]}\times \mathbb{Z}_2\)
-class (Eq parity, Ord parity, Show parity) => Parity parity where
+class (Eq parity, Ord parity) => Parity parity where
   (.+.) :: parity -> parity -> parity
   split :: parity -> (parity, Bool)
   comb  :: (parity, Bool) -> parity

@@ -12,43 +12,70 @@ module Feynman.Algebra.AffineRel(
   top,
   bot,
   eye,
-  assign,
-  plusEquals,
-  disconnect,
-  constant,
+  addPost,
+  negatePost,
+  clearPost,
+  addVars,
+  makeExplicit,
+  projectTemporaries,
+  projectOut,
   meet,
   meets,
   join,
   compose,
   star,
-  addPost,
-  negatePost,
-  addVars,
-  mix) where
+  makeExplicitFF,
+  composeFF,
+  joinFF,
+  starFF,
+  cOp,
+  projectVector,
+  compose'
+  ) where
 
 import Data.Bits
+import Data.Coerce (coerce)
+
 import Feynman.Algebra.Linear
 
-{- | The Affine relation domain is based on [Karr 76] and [Elder et al. 2014].
-     An element of the Affine Relation Domain represents a set of constraints
-     on the pre- and post- states of a set of /n/ binary variables as the kernel of
-     a /2n+1/-column matrix, corresponding to an affine subspace of /F2^(2n)/.
-     Meet and Join are the intersection and (smallest enclosing subspace of the)
-     union. Elements are kept in reduced echelon form with the left-most bits
-     corresponding to the pre-state -}
+{-| The Affine relation domain is based on [Karr 76] and [Elder et al. 2014].
+    An element of the Affine Relation Domain represents a set of constraints
+    on a set of /n/ + /m/ binary variables, where the constraints are stored in
+    an /m/ by /n+1/ matrix /(A,c)/. The interpretation of such an element is the
+    set of constraints /x' = Ax + c/.
+
+    Note when /n/=/m/, this set of constraints has the representation [I|A|c] in
+    the KS domain of Elder et al., stored in post-major order. More generally, we
+    can think of our domain as the KS domain with 3 vocabularies: X', X, and
+    temporaries Y. We arrive at our representation from the KS domain representation
+    of these vocabularies [X'|X|Y|c] and drop X' from the representation as
+    we maintain that X' always has full rank throughout our analysis.
+-}
 
 -- | Affine relation domain
-data AffineRelation = ARD {
-  vars :: Int,
-  mat  :: F2Mat
-  } deriving (Eq)
+
+newtype AffineRelation = ARD { unARD :: F2Mat } deriving (Eq)
 
 instance Show AffineRelation where
-  show ar = foldl (++) "" $ map go (vals $ mat ar) where
+  show ar = foldl (++) "" $ map go (rows ar) where
     n      = vars ar
-    go row = "[" ++ show (row@@(n-1,0)) ++
-             "|" ++ show (row@@(2*n-1,n)) ++
-             "|" ++ show (row@.(2*n)) ++ "]\n"
+    go row = "[" ++ show (row@@(n-1,0)) ++ "|" ++ show (row@.(n)) ++ "]\n"
+
+{---------------------------
+ Accessors
+ ----------------------------}
+
+-- | Returns the number of vars tracked
+vars :: AffineRelation -> Int
+vars = (+ (-1)) . n . unARD
+
+-- | Returns the rows or constraints of the matrix
+rows :: AffineRelation -> [F2Vec]
+rows = vals . unARD
+
+-- | Gets the postcondition of a particular variable
+getPost :: Int -> AffineRelation -> F2Vec
+getPost i = (!!i).rows
 
 {---------------------------
  Utilities
@@ -66,10 +93,6 @@ insert num i (F2Mat m n vals) = F2Mat m (n+num) vals' where
   vals'  = map go vals
   go row = appends [row@@(i-1,0), bitVec num 0, row@@(n-i-1,i)]
 
--- | Decomposes a bit vector according to the encoding of the ARD
-decompose :: Int -> F2Vec -> (F2Vec, F2Vec, F2Vec)
-decompose n row = (row@@(n-1,0), row@@(2*n-1,n), row@@(2*n,2*n))
-
 -- | Project out a range
 project :: (Int,Int) -> F2Mat -> F2Mat
 project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
@@ -80,10 +103,12 @@ project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
 
 -- | Canonicalize a relation
 canonicalize :: AffineRelation -> AffineRelation
-canonicalize (ARD n a) = checkUnsat (ARD n $ rowReduce a) where
-  checkUnsat ar = if (bitI (2*n+1) (2*n) `elem` (vals $ mat ar))
-                  then bot n
-                  else ar
+canonicalize = checkUnsat . (coerce rowReduce) where
+  checkUnsat ar =
+    let n = vars ar in
+      if (bitI (n+1) n) `elem` (rows ar)
+      then bot n
+      else ar
 
 {---------------------------
  Constructors
@@ -91,43 +116,79 @@ canonicalize (ARD n a) = checkUnsat (ARD n $ rowReduce a) where
 
 -- | The top element. Corresponds to the empty relation.
 top :: Int -> AffineRelation
-top n = ARD n (F2Mat 0 (2*n+1) [])
+top n = ARD (F2Mat 0 (n+1) [])
 
 -- | The bottom element. Corresponds to complete relation.
 bot :: Int -> AffineRelation
-bot n = ARD n (F2Mat 1 (2*n+1) [bitI (2*n+1) (2*n)])
+bot n = ARD (F2Mat 1 (n+1) [bitI (n+1) (n)])
 
 -- | The identity relation.
 eye :: Int -> AffineRelation
-eye n = ARD n (F2Mat n (2*n+1) xs) where
-  xs = [appends [bitVec 1 0, bitI n i, bitI n i] | i <- [0..n-1]]
+eye n = ARD (F2Mat n (n+1) xs) where
+  xs = [bitI (n+1) i | i <- [0..n-1]]
 
--- | The relation with a single non-identity relation
-assign :: Int -> Int -> F2Vec -> AffineRelation
-assign n j rel = ARD n (F2Mat n (2*n+1) xs) where
-  xs = map go [0..n-1]
-  go i
-    | i == j    = rel
-    | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
+{---------------------------
+ Operations
+ ----------------------------}
 
--- | The relation with the single non-identity relation /j'/ = /j/ + /k/
-plusEquals :: Int -> Int -> Int -> AffineRelation
-plusEquals n j k = ARD n (F2Mat n (2*n+1) xs) where
-  xs = map go [0..n-1]
-  go i
-    | i == j    = appends [bitVec 1 0, bitI n i + bitI n k, bitI n i]
-    | otherwise = appends [bitVec 1 0, bitI n i, bitI n i]
+-- | Extends the variable set
+addVars :: Int -> AffineRelation -> AffineRelation
+addVars num (ARD (F2Mat m n vals)) = ARD (F2Mat (m+num) n' vals') where
+  n'     = n + num
+  vals'  = map go vals ++ [bitI n' (i-1) | i <- [n..n'-1]]
+  go row = appends [row@@(n-1,n-1), bitVec num 0, row@@(n-2,0)]
 
--- | The relation which is identity everywhere except /j/
-disconnect :: Int -> Int -> AffineRelation
-disconnect n j = ARD n (F2Mat n (2*n+1) xs) where
-  xs   = map go . filter (/= j) $ [0..n-1]
-  go i = appends [bitVec 1 0, bitI n i, bitI n i]
+-- | Negates the postcondition associated to row /j/ (/j'/ <- /j'/ + 1)
+negatePost :: Int -> AffineRelation -> AffineRelation
+negatePost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
+  go (row,i) = if i == j then complementBit row (n-1) else row
 
--- | The singleton relation corresponding to a constant variable
-constant :: Int -> Int -> Bool -> AffineRelation
-constant n j val = ARD n (F2Mat 1 (2*n+1) xs) where
-  xs = [appends [bitVec 1 (if val then 1 else 0), bitI n j, bitVec n 0]]
+-- | Adds /k/ to /j/ (corresp. to the relation /j'/ <- /j'/ + /k'/)
+addPost :: Int -> Int -> AffineRelation -> AffineRelation
+addPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
+  go (row,i) = if i == j then row + vals!!k else row
+
+-- | Swaps /j/ and /k/ in the postcondition (/j'/ <- /k'/, /k'/ <- /j'/)
+swapPost :: Int -> Int -> AffineRelation -> AffineRelation
+swapPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
+  go (row,i)
+    | i == j    = vals!!k
+    | i == k    = vals!!j
+    | otherwise = row
+
+-- | Resets a variable to 0 (/j'/ <- /0/)
+clearPost :: Int -> AffineRelation -> AffineRelation
+clearPost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
+  go (row,i) = if i == j then bitVec n 0 else row
+
+-- | Converts an (implicit) two-vocabulary relation to an explicit one
+makeExplicit :: AffineRelation -> AffineRelation
+makeExplicit (ARD (F2Mat m n vals)) = ARD (F2Mat m (n+m) vals') where
+  vals' = [append r (bitI m i) | (r,i) <- zip vals [0..]]
+
+-- | Sets /j/ to a fresh variable (/j'/ <- /x/)
+setFresh :: Int -> AffineRelation -> AffineRelation
+setFresh j (ARD (F2Mat m n vals)) = ARD (F2Mat m n' (map go $ zip vals [0..])) where
+  n'         = n + 1
+  go (row,i) = if i == j
+               then bitI n' (n-1)
+               else (appends [row@@(n-1,n-1), bitVec 1 0, row@@(n-2,0)])
+
+-- | Projects out temporary variables, needed for loop summarization
+projectTemporaries :: AffineRelation -> AffineRelation
+projectTemporaries ar@(ARD (F2Mat m n vals))
+  | n == 2*m + 1 = ar
+  | otherwise    = ARD $ project (n-m-1,m) (F2Mat m n vals)
+
+-- | Projects out a range from a vector
+projectOut :: (Int,Int) -> F2Vec -> Maybe F2Vec
+projectOut (j,i) vec
+  | j == i    = Just vec
+  | otherwise = let (a,b,c) = (if i == 0 then bitVec 0 0 else vec@@(i-1,0),
+                               vec@@(j-1,i),
+                               vec@@(width vec-1,j))
+                in
+                  if b /= 0 then Nothing else Just $ append c a
 
 {--------------------------
  Lattice operations
@@ -135,64 +196,139 @@ constant n j val = ARD n (F2Mat 1 (2*n+1) xs) where
 
 -- | Intersection
 meet :: AffineRelation -> AffineRelation -> AffineRelation
-meet (ARD n mat) (ARD n' mat')
-  | n /= n'   = error "Can't meet relations on different sets of variables"
-  | otherwise = canonicalize $ ARD n (stack mat mat')
+meet (ARD mat) (ARD mat')
+  | n mat /= n mat' = error "Can't meet relations on different sets of variables"
+  | otherwise       = canonicalize $ ARD (stack mat mat')
 
 -- | More efficient meet for many constraint sets
 meets :: [AffineRelation] -> AffineRelation
 meets []     = top 0
-meets (x:xs) = canonicalize $ ARD n rel where
+meets (x:xs) = canonicalize $ ARD rel where
   n   = vars x
-  rel = foldl (\rel ar -> stack rel (mat ar)) (mat x) xs
-
--- | Union
-join :: AffineRelation -> AffineRelation -> AffineRelation
-join (ARD n mat) (ARD n' mat')
-  | n /= n'   = error "Can't join relations on different sets of variables"
-  | otherwise = ARD n (project (2*n+1,0) $ fromList mat'') where
-      mat'' = [append r r | r <- vals mat] ++
-              [append (bitVec (2*n+1) 0) r | r <- vals mat']
+  rel = foldl (\rel ar -> stack rel (unARD ar)) (unARD x) xs
 
 -- | Sequential composition
 compose :: AffineRelation -> AffineRelation -> AffineRelation
-compose (ARD n mat) (ARD n' mat')
-  | n /= n'   = error "Can't join relations on different sets of variables"
-  | otherwise = ARD n (project (2*n,n) $ fromList mat'') where
-      mat'' = [append (bitVec n 0) r | r <- vals mat] ++
-              [append r (bitVec n 0) | r <- vals mat']
+compose ar1 ar2
+  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
+      v = (vars ar1) `div` 2
+      mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar2] ++
+              [append r (bitVec v 0) | r <- rows ar1]
+
+-- | Union
+join :: AffineRelation -> AffineRelation -> AffineRelation
+join ar1 ar2
+  | vars ar1 /= vars ar2 = error $ "Can't join relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
+      v = vars ar1
+      constraints = [append r r | r <- rows ar1] ++ [append (bitVec (v+1) 0) r | r <- rows ar2]
 
 -- | Kleene star (iteration)
 star :: AffineRelation -> AffineRelation
 star ar = if ar' /= ar then star ar' else ar where
   ar' = join ar (compose ar ar)
 
-{---------------------------
- Ad hoc operations
- ----------------------------}
+{--------------------------
+ Fast-forward operators
+ --------------------------}
 
--- | Directly sets /j'/ = /j'/ + /k'/. Any equation involving /j'/ is
---   now satisfied by /j'/ + /k'/
-addPost :: Int -> Int -> AffineRelation -> AffineRelation
-addPost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
-  go row = if row@.(v+j) then complementBit row (v+k) else row
+-- | Converts a relation [X|Y|c] to forward-canonicalization [X|X']
+--   projecting out any temporaries Y
+makeExplicitFF :: AffineRelation -> AffineRelation
+makeExplicitFF (ARD (F2Mat m n vals))
+  | m == n-1 =
+    let vals' = [appends [r@@(n-1,n-1), bitI m i, r@@(m-1,0)] | (r,i) <- zip vals [0..]] in
+      canonicalize $ ARD $ fromList vals'
+  | otherwise =
+    let t = n - 1 - m
+        vals' = [appends [r@@(n-1,n-1), bitI m i, r@@(m-1,0), r@@(n-2,m)] | (r,i) <- zip vals [0..]]
+    in
+      ARD $ project (t,0) $ fromList vals' where
 
--- | Directly sets /j'/ = /j'/ + 1. Any equation involving /j'/ is
---   now satisfied by /j'/ + 1
-negatePost :: Int -> Int -> AffineRelation -> AffineRelation
-negatePost j k (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (map go vals)) where
-  go row = if row@.(v+j) then complementBit row (2*v) else row
+-- | Sequential composition in the [X|X'] order
+composeFF :: AffineRelation -> AffineRelation -> AffineRelation
+composeFF ar1 ar2
+  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
+      v = (vars ar1) `div` 2
+      mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar1] ++
+              [append r (bitVec v 0) | r <- rows ar2]
 
--- | Extends the variable set
-addVars :: Int -> AffineRelation -> AffineRelation
-addVars num (ARD v (F2Mat n m vals)) = ARD v' (F2Mat n m vals') where
-  v'     = v + num
-  vals'  = map go vals ++ [appends [bitVec 1 0, bitI v' i, bitI v' i] | i <- [v..v'-1]]
-  go row =
-    let (a,b,c) = decompose v row in
-      appends [c, zeroExtend num a, zeroExtend num b]
+-- | Union in the [X|X'] order
+joinFF :: AffineRelation -> AffineRelation -> AffineRelation
+joinFF ar1 ar2
+  | vars ar1 /= vars ar2 = error "Can't join relations on different sets of variables"
+  | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
+      v = vars ar1
+      constraints = [append r r | r <- rows ar1] ++ [append (bitVec (v+1) 0) r | r <- rows ar2]
 
--- | Directly sets /j'/ to Top
-mix :: Int -> AffineRelation -> AffineRelation
-mix j (ARD v (F2Mat n m vals)) = ARD v (F2Mat n m (filter go vals)) where
-  go row = not $ row@.j
+-- | Kleene star (iteration) in the [X|X'] order
+starFF :: AffineRelation -> AffineRelation
+starFF ar = if ar' /= ar then star ar' else ar where
+  ar' = joinFF ar (composeFF ar ar)
+
+
+-- | Forward-Backward canonicalization operator. Given two domain elements with schemes
+--
+--   A1: X' | Y  | X | a (backward)
+--   A2: Z  | Z' | b     (forward)
+--
+--   we generate the forward constraint system
+--
+--   A2.A1 = X' | Y | X | 0  | a
+--           Z  | 0 | 0 | Z' | b
+--
+--   Projecting onto Z' existentially quantifies X, Y, X'=Z and gives a representation,
+--   if it exists, over the variables of Z'
+cOp :: AffineRelation -> AffineRelation -> AffineRelation
+cOp (ARD (F2Mat m n vals)) (ARD (F2Mat m' n' vals')) = ARD (project (vFin,0) $ fromList vals'') where
+  vFin = (n' - 1) `div` 2
+  vals'' = [appends [r@@(n-1,n-1), bitVec vFin 0, r@@(n-2,0)] | r <- vals] ++
+           [appends [r@@(n'-1,vFin), bitVec (n - 1 - vFin) 0, r@@(vFin-1,0)] | r <- vals']
+
+-- | Fast-forward a vector over the pre-conditions to a vector over the postconditions, if such
+--   a vector exists
+projectVector :: AffineRelation -> F2Vec -> Maybe F2Vec
+projectVector (ARD mat) vec = if vec'@@(v-2,0) /= 0
+                              then Nothing
+                              else Just (vec'@@(v'+v-1,v-1))
+  where v    = width vec
+        v'   = (n mat) - v
+        vec' = reduceVector mat $ appends [vec@@(v-1,v-1), bitVec v' 0, vec@@(v-2,0)]
+  
+
+-- | Full-rank composition. Assures that every variable in X' has a representation.
+--
+--   Given the (full-rank) relation
+--
+--   A1: X' | Y  | X | a (backward)
+--
+--   And the not necessarily full-rank relation
+--
+--   A2: X'' | X' | b
+--
+--   we generate the constraint system
+--
+--   A2.A1 = I | I  | 0 | 0 | 0 | 0
+--           0 | X''| X'| 0 | 0 | b
+--           0 | 0  | X'| Y | X | a
+--
+--   Projecting away X' canonicalizes X'' over the relations between X'' Y and X,
+--   eliminating X'' first
+--
+compose' :: AffineRelation -> AffineRelation -> F2Mat
+compose' (ARD (F2Mat m n mat)) (ARD (F2Mat m' n' mat')) = fromList vals'' where
+  -- The number of program variables
+  v = m
+
+  -- The initial constraint system
+  cons = [appends [bitVec n 0, bitI v i, bitI v i] | i <- [0..v-1]] ++
+         [appends [r@@(n'-1,n'-1), bitVec (n-v-1) 0, r@@(n'-2,0), bitVec v 0] | r <- mat'] ++
+         [appends [r, bitVec (2*v) 0] | r <- mat]
+
+  -- The reduced relation
+  cons' = rowReduce $ fromList cons
+
+  -- The final matrix
+  vals'' = [r@@(width r - 1, v) | r <- take v $ vals cons']

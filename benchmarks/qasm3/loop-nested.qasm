@@ -9,6 +9,8 @@ include "stdgates.inc";
 qubit a;
 qubit b;
 
+reset a;
+
 t b;
 while (true) {
     t a;

@@ -129,7 +129,7 @@ equivalenceCheckDotQC qc qc' =
       circ'   = DotQC.toCliffordT . DotQC.toGatelist $ qc'
       vars    = union (DotQC.qubits qc) (DotQC.qubits qc')
       ins     = Set.toList $ DotQC.inputs qc
-      result  = validate False vars ins circ circ'
+      result  = validate True vars ins circ circ'
   in
     case (DotQC.inputs qc == DotQC.inputs qc', result) of
       (False, _)            -> Left $ "Circuits not equivalent (different inputs)"
@@ -239,37 +239,6 @@ qasm3Pass pureCircuit pass = case pass of
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
-  -- let !result =
-  --       ( do
-  --           parseTree <- OpenQASM3Parser.parseString src
-  --           normalizedParse <- OpenQASM3Semantics.normalize parseTree
-  --           let normalized = Tr.decorateIDs . Tr.unrollLoops . Tr.inlineGateCalls $ normalizedParse
-  --           let wstmt = OpenQASM3Driver.buildModel normalized
-  --           let vlst  = idsW wstmt
-  --           let optList = genSubstList vlst vlst wstmt
-  --           --let optimized = Trace.trace ("Model: " ++ show wstmt ++ "\n\n") $ Tr.applyPFOpt optList normalized
-  --           let optimized = OpenQASM3Driver.applyPFOpt optList normalized
-  --           return (normalized, optimized)
-  --       )
-  -- mapM_ putStrLn (Chatty.messages result)
-  -- end <- getCPUTime
-  -- let time = (fromIntegral $ end - start) / 10 ^ 9
-  -- case result of
-  --   Chatty.Value _ (normalized, optimized) ->
-  --     ( do
-  --         putStrLn $ "// Feynman -- quantum circuit toolkit"
-  --         putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-  --         mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls normalized
-  --         putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-  --         mapM_ putStrLn . map ("//   " ++) $ showCounts $ Tr.countGateCalls optimized
-  --         putStrLn $ OpenQASM3Syntax.pretty optimized
-  --         return ()
-  --     )
-  --   Chatty.Failure _ err ->
-  --     ( do
-  --         putStrLn ("ERROR: " ++ err)
-  --         return ()
-  --     )
   end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
     Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
@@ -400,24 +369,6 @@ parseArgs doneSwitches options (x:xs) = case x of
   "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
   "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
-  "POPL25QASM"   -> runBenchmarksQASM (benchPass options) (benchVerif options) benchmarksPOPL25QASM
-  "POPL25-affine" -> do
-    putStrLn "Running circuit benchmarks..."
-    runBenchmarks (benchPass defaultOptions {passes = apf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25
-    putStrLn "\nRunning program benchmarks..."
-    runBenchmarksQASM (benchPass defaultOptions {passes = apf}) (benchVerif defaultOptions {useQASM3 = True}) benchmarksPOPL25QASM
-  "POPL25-polynomial" -> do
-    putStrLn "Running circuit benchmarks..."
-    runBenchmarks (benchPass defaultOptions {passes = qpf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25
-    putStrLn "\nRunning additional unbounded optimization of fprenorm..."
-    runBenchmarks (benchPass defaultOptions {passes = ppf}) (benchVerif defaultOptions {verify = True}) benchmarksPOPL25FP
-    putStrLn "\nRunning program benchmarks..."
-    runBenchmarksQASM (benchPass defaultOptions {passes = qpf}) (benchVerif defaultOptions {useQASM3 = True}) benchmarksPOPL25QASM
-  "POPL25" -> do
-    putStrLn "Running circuit benchmarks..."
-    runBenchmarks (benchPass options) (benchVerif options) benchmarksPOPL25
-    putStrLn "\nRunning program benchmarks..."
-    runBenchmarksQASM (benchPass options) (benchVerif options {useQASM3 = True}) benchmarksPOPL25QASM
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]

@@ -29,8 +29,8 @@ import Control.Monad.State.Strict hiding (join)
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
+import Feynman.Algebra.AffineRel
 import Feynman.Synthesis.Phase
-import Feynman.Optimization.ARD
 
 {-----------------------------------
  Utilities
@@ -178,13 +178,15 @@ branchSummary ctx' ctx'' = do
 -- | Summarizes a loop
 loopSummary :: Ctx -> Map ID F2Vec -> State (Ctx) AffineRelation
 loopSummary ctx' input = do
-  let summary     = star . projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
-  let canon       = ARD $ compose' (makeExplicit . ARD . fromList . Map.elems $ input) summary
-  let (tms,ztrms) = Map.partitionWithKey go $ Map.mapKeysWith addTerms reduce (terms ctx') where
-        reduce bv = reduceVector (unARD canon) (zeroExtend (Map.size input) bv)
+  let summary = star. projectTemporaries . makeExplicit . ARD . fromList . Map.elems $ ket ctx'
+  let canon   = ARD $ compose' (makeExplicit . ARD . fromList . Map.elems $ input) summary
+  let (t,z)   = Map.partitionWithKey go $ Map.mapKeysWith addTerms reduce (terms ctx') where
+        reduce bv = case projectOut (width bv - Map.size input, 0) bv of
+          Nothing  -> bv
+          Just bv' -> multRow bv' $ unARD canon
         go bv _   = bv /= 0
-  modify (\ctx -> ctx { terms   = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle ztrms),
-                        orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ tms) })
+  modify (\ctx -> ctx { terms   = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle z),
+                        orphans = orphans ctx ++ orphans ctx' ++ (Map.elems $ t) })
   return summary
 
 -- | Abstract transformers for while statements

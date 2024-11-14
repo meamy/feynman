@@ -32,6 +32,7 @@ library
                        Feynman.Algebra.Base,
                        Feynman.Algebra.Matroid,
                        Feynman.Algebra.Linear,
+                       Feynman.Algebra.AffineRel,
                        Feynman.Algebra.Polynomial,
                        Feynman.Algebra.Polynomial.Univariate,
                        Feynman.Algebra.Polynomial.Multilinear,
@@ -50,7 +51,6 @@ library
                        Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
                        Feynman.Optimization.Clifford,
-                       Feynman.Optimization.ARD,
                        Feynman.Optimization.RelationalFold,
                        Feynman.Optimization.RelationalFoldNL,
 

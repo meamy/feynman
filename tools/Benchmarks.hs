@@ -23,11 +23,8 @@ import qualified Data.Array as Array
 import Control.Monad
 import Data.Maybe
 
-import Feynman.Frontend.Frontend
 import Feynman.Frontend.DotQC hiding (gateCounts, tDepth)
 import qualified Feynman.Frontend.DotQC as DotQC
-import qualified Feynman.Frontend.OpenQASM3.Semantics as QASM3
-import Feynman.Frontend.OpenQASM3.Driver hiding (formatFloatN)
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.TPar
 import Feynman.Algebra.Linear
@@ -157,8 +154,6 @@ benchmarksPOPL25QASM = map (popl25benchPath ++) [
   "loop-null"
   ]
 
-benchmarksPOPL25FP = map (popl25benchPath ++) ["fprenorm"]
-
 benchmarkFolder f = liftM (map ((f </>) . dropExtension) . filter (\s -> takeExtension s == ".qc")) $ getDirectoryContents f
 
 {- Printing results -}
@@ -279,48 +274,6 @@ runBenchmarks pass verify xs =
 
 
 qcBenchmarkRunner src pass = (parseDotQC src) >>= \c -> pass c >>= \c' -> Right (c, c')
-
-runBenchmarksQASM pass verify xs =
-  let runBench s = do
-        start <- getCPUTime
-        c <- (readAndParse :: String -> IO (Either String (QASM3.SyntaxNode Loc))) $ s ++ ".qasm"
-        case c >>= \c -> pass c >>= \c' -> Right (c, c') of
-          Left err      -> do
-            putStrLn $ s ++ ": ERROR"
-            return Nothing
-          Right (c, c') -> do
-            let stats = computeStats c
-            let stats' = computeStats c'
-            let counts = mergeCounts (gateCounts stats) (gateCounts stats')
-            end  <- counts `deepseq` getCPUTime
-            let time = (fromIntegral $ end - start) / 10^9
-            putStrLn $ s ++ ":"
-            putStrLn $ "\tTime:\t\t" ++ formatFloatN time 3 ++ "ms"
-            putStrLn $ "\tQubits:\t\t" ++ show (qubitCount stats)
-            gateRed   <- mapM printStat (Map.toList $ counts)
-            let (dir, name) = splitFileName s
-                outputDir = dir </> "opt"
-                outputPath = outputDir </> (name ++ "_opt.qasm")
-            createDirectoryIfMissing False outputDir
-            writeFile outputPath (show c')
-            return . Just $ Map.unionsWith (+) (gateRed)
-  in do
-    results <- liftM catMaybes $ mapM runBench xs
-    putStrLn "Averages:"
-    mapM_ printAvg (Map.toList . Map.map (/ fromIntegral (length results)) . Map.unionsWith (+) $ results)
-  where mergeCounts left right =
-          let left'  = Map.map (,0) left
-              right' = Map.map (0,) right
-          in
-            Map.unionWith (\(a, b) (c, d) -> (a+c, b+d)) left' right'
-        printStat (stat, (orig, opt)) = do
-            let diff = 100.0 * ((fromIntegral (orig-opt)) / (fromIntegral orig))
-            putStrLn $ "\t" ++ stat ++ ":\t\t" ++ show orig ++ "/"
-                            ++ show opt ++ "\t\t" ++ (if orig == 0 then "N/A" else formatFloatN diff 3 ++ "%")
-            if orig == 0
-            then return Map.empty
-            else return $ Map.fromList [(stat, diff)]
-        printAvg (stat, avg) = putStrLn $ "\t" ++ stat ++ ":\t\t" ++ formatFloatN avg 3 ++ "%"
 
 {- Benchmarking for [AAM17] -}
 
