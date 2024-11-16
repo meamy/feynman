@@ -732,6 +732,7 @@ controlled' sop = Pathsum a (b+1) (c+1) d e' f' where
                          + (constant (-half))) []
 
 controlledN :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+controlledN 0 sop = sop
 controlledN n sop = Pathsum a (b+n) (c+n) d e' f' where
   Pathsum a b c d e f = until balanced balancePathsum sop
   shift               = shiftI n
