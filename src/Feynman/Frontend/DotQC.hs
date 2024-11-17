@@ -1,9 +1,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Feynman.Frontend.DotQC (DotQC(..), Gate(..), Decl(..), gateCounts, depth, fromCliffordT, parseDotQC, tDepth, toCliffordT, toGatelist) where
 
+import Feynman.Control
 import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase, expandCNOT, expandCZ)
 import Feynman.Algebra.Base
-import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..), resynthesizeCircuit)
+import qualified Feynman.Synthesis.Pathsum.AncillaAware as AncillaAware
+import qualified Feynman.Synthesis.Pathsum.Unitary as Unitary
+import Feynman.Synthesis.Pathsum.Util
 
 import Data.List
 
@@ -23,6 +26,8 @@ import Control.Monad
 
 import Control.DeepSeq (NFData)
 import GHC.Generics (Generic)
+
+import qualified Debug.Trace
 
 import qualified Feynman.Frontend.Frontend as FE
 
@@ -460,14 +465,20 @@ optimizeDotQC f qc = qc { decls = map go $ decls qc }
           in
             decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
-decompileDotQC :: DotQC -> DotQC
+decompileDotQC :: HasFeynmanControl => DotQC -> DotQC
 decompileDotQC qc = qc { decls = map go $ decls qc }
   where go decl =
           let circuitQubits  = qubits qc ++ params decl
               circuitInputs  = (Set.toList $ inputs qc) ++ params decl
-              resynthesize c = case resynthesizeCircuit $ toCliffordT c of
-                Nothing -> c
-                Just c' -> fromExtractionBasis c'
+              resynthesize c = 
+                case doResynthesizeCircuit $ toCliffordT c of
+                  Nothing -> if ctlTraceResynthesis
+                    then Debug.Trace.trace "Resynthesis failed, returning original circuit" c
+                    else c
+                  Just c' -> fromExtractionBasis c'
+              doResynthesizeCircuit = if ctlUseAncillaSynthesis
+                then AncillaAware.resynthesizeCircuit
+                else Unitary.resynthesizeCircuit
           in
             decl { body = resynthesize $ body decl }
 

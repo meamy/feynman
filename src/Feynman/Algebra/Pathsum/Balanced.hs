@@ -93,6 +93,11 @@ isF (FVar _) = True
 isF _        = False
 
 -- | Get the string of a free variable
+unI :: Var -> Int
+unI (IVar i) = i
+unI _        = error "Not an input variable"
+
+-- | Get the string of a free variable
 unF :: Var -> String
 unF (FVar s) = s
 unF _        = error "Not a free variable"

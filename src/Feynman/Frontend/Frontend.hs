@@ -8,11 +8,12 @@ module Feynman.Frontend.Frontend
   )
 where
 
+import Control.DeepSeq (NFData)
 import Data.Map.Lazy (Map, toList)
+import Data.Maybe (maybeToList)
+import Feynman.Control
 import Feynman.Core (ID)
 import GHC.Generics (Generic)
-import Control.DeepSeq (NFData)
-import Data.Maybe (maybeToList)
 
 data Pass
   = Triv
@@ -42,6 +43,7 @@ data ProgramStats = ProgramStats
   deriving (Eq, Read, Show, Generic)
 
 instance NFData Pass
+
 instance NFData ProgramStats
 
 statsLines :: ProgramStats -> [String]
@@ -57,7 +59,7 @@ statsLines stats =
 class ProgramRepresentation a where
   readAndParse :: String -> IO (Either String a)
   expectValid :: a -> Either String ()
-  applyPass :: Bool -> Pass -> (a -> a)
+  applyPass :: (HasFeynmanControl) => Bool -> Pass -> (a -> a)
   prettyPrint :: a -> String
   prettyPrintWithBenchmarkInfo :: String -> Float -> ProgramStats -> ProgramStats -> Bool -> a -> String
   computeStats :: a -> ProgramStats

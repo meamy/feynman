@@ -47,6 +47,7 @@ import qualified Feynman.Algebra.Pathsum.Balanced as PS
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Pathsum.Clifford
+import Feynman.Synthesis.Pathsum.Util
 
 import Feynman.Verification.Symbolic
 
@@ -56,7 +57,6 @@ import Feynman.Verification.Symbolic
 
 type Ctx = (Map Int ID, Map ID Int)
 type ExtractionState a = StateT Ctx (Writer [ExtractionGates]) a
-data ExtractionGates = Hadamard ID | Phase DMod2 [ID] | MCT [ID] ID | Swapper ID ID deriving (Show, Eq)
 
 -- | Create a bidirectional context from a mapping from IDs to indices
 mkctx :: Map ID Int -> (Map Int ID, Map ID Int)

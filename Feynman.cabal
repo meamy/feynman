@@ -25,7 +25,8 @@ library
                        FlexibleContexts,
                        FlexibleInstances
   hs-source-dirs:      src
-  exposed-modules:     Feynman.Core,
+  exposed-modules:     Feynman.Control,
+                       Feynman.Core,
                        Feynman.Util.Unicode,
 
                        Feynman.Algebra.Base,
@@ -41,8 +42,11 @@ library
                        Feynman.Synthesis.Reversible,
                        Feynman.Synthesis.Reversible.Parallel,
                        Feynman.Synthesis.Reversible.Gray,
+                       Feynman.Synthesis.Reversible.Xag,
+                       Feynman.Synthesis.Pathsum.AncillaAware,
                        Feynman.Synthesis.Pathsum.Clifford,
                        Feynman.Synthesis.Pathsum.Unitary,
+                       Feynman.Synthesis.Pathsum.Util,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,

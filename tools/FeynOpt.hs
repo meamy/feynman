@@ -1,10 +1,10 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
+import Feynman.Control
 import Feynman.Core (Primitive,
                      ID,
                      Loc,
@@ -64,19 +64,29 @@ data Options = Options
   { passes :: [Pass],
     verify :: Bool,
     pureCircuit :: Bool,
-    useQASM3 :: Bool
+    useQASM3 :: Bool,
+    featureTraceResynthesis :: Bool,
+    featureUseAncillaSynthesis :: Bool
   }
 
-{- DotQC -}
+makeControl options =
+  FeynmanControl
+    { feynmanControlTraceResynthesis = featureTraceResynthesis options,
+      feynmanControlUseAncillaSynthesis = featureUseAncillaSynthesis options
+    }
 
-runPasses :: forall a. (ProgramRepresentation a, NFData a) => [a -> a] -> Options -> String -> IO ()
-runPasses passFns options path = do
+-- yuck: typeF is just there to constrain the type of the intermediate representation
+runPasses :: forall a. (ProgramRepresentation a, NFData a) => Options -> (a -> a) -> String -> IO ()
+runPasses options typeF path = do
   parseResult <- readAndParse path
   case parseResult of
     Left err -> hPutStrLn stderr $ "ERROR: " ++ err
     Right qprog -> do
-      start <- qprog `deepseq` getCPUTime
-      let qprog' = foldr ($) qprog passFns
+      start <- (typeF qprog) `deepseq` getCPUTime
+      let qprog' =
+            ( let ?feynmanControl = makeControl options
+               in foldr (applyPass (pureCircuit options)) qprog (passes options)
+            )
       end <- qprog' `deepseq` getCPUTime
       let eqCheck = equivalenceCheck qprog qprog'
       let verified = verify options && isRight eqCheck
@@ -91,18 +101,11 @@ runPasses passFns options path = do
       let name = takeBaseName path
       putStr (prettyPrintWithBenchmarkInfo name time stats stats' verified qprog')
 
-dotQCPasses :: Options -> [DotQC.DotQC -> DotQC.DotQC]
-dotQCPasses options = map (applyPass True) (passes options)
-
-qasmPasses :: Options -> [QASM2.QASM -> QASM2.QASM]
-qasmPasses options = map (applyPass $ pureCircuit options) (passes options)
-
-qasm3Passes :: Options -> [QASM3.SyntaxNode Loc -> QASM3.SyntaxNode Loc]
-qasm3Passes options = map (applyPass $ pureCircuit options) (passes options)
-
 {- Deprecated transformations for benchmark suites -}
 benchPass :: (ProgramRepresentation a) => Options -> (a -> Either String a)
-benchPass options = \qc -> Right $ foldr ($) qc (map (applyPass $ pureCircuit options) (passes options))
+benchPass options qc =
+  let ?feynmanControl = makeControl options
+   in Right $ foldr (applyPass (pureCircuit options)) qc (passes options)
 
 benchVerif :: Options -> Maybe (DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC)
 benchVerif options | verify options = Just equivalenceCheck
@@ -164,7 +167,9 @@ defaultOptions =
     { passes = [],
       verify = False,
       pureCircuit = False,
-      useQASM3 = False
+      useQASM3 = False,
+      featureTraceResynthesis = False,
+      featureUseAncillaSynthesis = False
     }
 
 parseArgs :: Bool -> Options -> [String] -> IO ()
@@ -172,6 +177,8 @@ parseArgs doneSwitches options [] = printHelp
 parseArgs doneSwitches options (x : xs) = case x of
   f | doneSwitches -> runFile f
   "-h" -> printHelp
+  "--feature-trace-resynthesis" -> parseArgs doneSwitches options {featureTraceResynthesis = True} xs
+  "--feature-use-ancilla-synthesis" -> parseArgs doneSwitches options {featureUseAncillaSynthesis = True} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline" -> parseArgs doneSwitches options {passes = Inline : passes options} xs
   "-unroll" -> parseArgs doneSwitches options {passes = Unroll : passes options} xs
@@ -230,11 +237,12 @@ parseArgs doneSwitches options (x : xs) = case x of
     apf = [Simplify, PauliFold 1, Simplify, Statefold 1, Statefold 1, Phasefold, Simplify, CT, Simplify, MCT]
     qpf = [Simplify, PauliFold 1, Simplify, Statefold 2, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
     ppf = [Simplify, PauliFold 1, Simplify, Statefold 0, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
-    runFile f | (takeExtension f) == ".qc"   = runPasses (dotQCPasses options) options f
-    runFile f | (takeExtension f) == ".qasm" =
+    runFile f | (takeExtension f) == ".qc" = runPasses options (id :: DotQC.DotQC -> DotQC.DotQC) f
+    runFile f
+      | (takeExtension f) == ".qasm" =
           if useQASM3 options
-            then runPasses (qasm3Passes options) options f
-            else runPasses (qasmPasses options) options f
+            then runPasses options (id :: QASM3.SyntaxNode Loc -> QASM3.SyntaxNode Loc) f
+            else runPasses options (id :: QASM2.QASM -> QASM2.QASM) f
     runFile f = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
