@@ -30,7 +30,7 @@ data QASM = QASM Double (Maybe Spec) [Stmt] deriving (Eq,Show)
 data Spec = PSSpec {
   inputs  :: [TypedID],
   scalar  :: Maybe Exp,
-  sum     :: [ID],
+  sum     :: [TypedID],
   phaseP  :: Maybe Exp,
   outputs :: [Exp]
   } deriving (Eq,Show)
@@ -144,7 +144,7 @@ prettyPrintSpec (Just (PSSpec input scalar sum phaseP outputs)) = str where
     Just exp -> prettyPrintExp exp ++ "*"
   sumStr = case sum of
     [] -> ""
-    _  -> "sum{" ++ prettyPrintIDs sum ++ "}"
+    _  -> "sum{" ++ prettyPrintTypedIDs sum ++ "}"
   phasePStr = case phaseP of
     Nothing  -> ""
     Just exp -> "exp(" ++ prettyPrintExp exp ++ ")"

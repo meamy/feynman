@@ -75,7 +75,7 @@ pp_opt : {- empty -}      { Nothing }
 sum_opt : {- empty -}  { [] }
         | sumover      { $1 }
 
-sumover : sum '{' ids0 '}' { $3 }
+sumover : sum '{' typed_ids0 '}' { $3 }
 
 statements : statement             { [$1] }
            | statements statement  { $1 ++ [$2] }

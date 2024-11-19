@@ -512,11 +512,15 @@ castBoolean = cast go where
   go _   = error "Not a Boolean polynomial"
 
 sopOfPSSpec :: Spec -> Env -> Pathsum DMod2
-sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover pvars $ sop
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover sumvars $ sop
   where bindings      = bindingList args env
         (s, gphase)   = decomposeScalar scalar
         pp            = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
         out           = map (castBoolean . polyOfExp) ovals
         sop           = Pathsum s 0 (length out) 0 pp out
         getID (id, _) = id
+        sumvars       = concat . map vars $ pvars
+        vars (id, t)  = case t of
+          TypeInt n -> [varOfOffset id i | i <- [0..n-1]]
+          TypeQubit -> [id]
 
