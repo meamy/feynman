@@ -52,13 +52,13 @@ isDensity :: State Env Bool
 isDensity = gets $ density
 
 densifyEnv :: State Env ()
-densifyEnv = modify $ \env -> 
+densifyEnv = modify $ \env ->
   if density env then
-    env 
+    env
   else
     env { pathsum = vectorize . densify $ pathsum env, density = True }
 
-getBinding :: ID -> State Env Binding 
+getBinding :: ID -> State Env Binding
 getBinding id = gets $ search id . binds
   where
     search id (b:bs) = case Map.lookup id b of
@@ -475,28 +475,34 @@ simQASM (QASM _ _ stmts) =
   execState (mapM_ simStmt stmts) initEnv
 
 {- Specification building -}
-polyOfExp :: Exp -> PseudoBoolean PS.Var Double
-polyOfExp exp
+polyOfExp :: [TypedID] -> Exp -> PseudoBoolean PS.Var Double
+polyOfExp boundIDs exp
   | isJust (evalExp exp) = constant $ fromJust (evalExp exp)
-  | otherwise             = case exp of
-      FloatExp d       -> constant d
-      IntExp i         -> constant $ fromIntegral i
-      PiExp            -> constant $ pi
-      VarExp v         -> ofVar $ FVar v
-      OffsetExp v i    -> ofVar $ FVar (varOfOffset v i)
-      UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp exp
-      BOpExp e1 bop e2 -> case bop of
-        PlusOp  -> e1' + e2'
-        MinusOp -> e1' - e2'
-        TimesOp -> e1' * e2'
-        DivOp   -> error "Unsupported division of polynomials"
-        PowOp   -> error "Unsupported exponent of polynomials"
-        where e1' = polyOfExp e1
-              e2' = polyOfExp e2
+  | otherwise            = polyOfExp' exp
 
-polyOfMaybeExp :: Maybe Exp -> PseudoBoolean PS.Var Double
-polyOfMaybeExp Nothing    = 0
-polyOfMaybeExp (Just exp) = polyOfExp exp
+    where 
+      polyOfExp' exp = case exp of
+        FloatExp d       -> constant d
+        IntExp i         -> constant $ fromIntegral i
+        PiExp            -> constant $ pi
+        VarExp v         -> case lookup v boundIDs of
+          Nothing -> ofVar $ FVar v
+          Just TypeQubit   -> ofVar $ FVar v
+          Just (TypeInt n) -> polyOfExp' $ bitBlast v n
+        OffsetExp v i    -> ofVar $ FVar (varOfOffset v i)
+        UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp' e
+        BOpExp e1 bop e2 -> case bop of
+          PlusOp  -> e1' + e2'
+          MinusOp -> e1' - e2'
+          TimesOp -> e1' * e2'
+          DivOp   -> error "Unsupported division of polynomials"
+          PowOp   -> error "Unsupported exponent of polynomials"
+          where e1' = polyOfExp' e1
+                e2' = polyOfExp' e2
+
+polyOfMaybeExp :: [TypedID] -> Maybe Exp -> PseudoBoolean PS.Var Double
+polyOfMaybeExp boundIDs Nothing    = 0
+polyOfMaybeExp boundIDs (Just exp) = polyOfExp boundIDs exp
 
 decomposeScalar :: Maybe Exp -> (Int, DMod2)
 decomposeScalar Nothing    = (0, 0)
@@ -515,12 +521,28 @@ sopOfPSSpec :: Spec -> Env -> Pathsum DMod2
 sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover sumvars $ sop
   where bindings      = bindingList args env
         (s, gphase)   = decomposeScalar scalar
-        pp            = constant gphase + (castDMod2 $ polyOfMaybeExp ampl)
-        out           = map (castBoolean . polyOfExp) ovals
+        boundIDs      = args ++ pvars
+        pp            = constant gphase + (castDMod2 $ polyOfMaybeExp boundIDs ampl)
+        out           = map (castBoolean . polyOfExp []) $ expandInts boundIDs ovals
         sop           = Pathsum s 0 (length out) 0 pp out
         getID (id, _) = id
         sumvars       = concat . map vars $ pvars
         vars (id, t)  = case t of
           TypeInt n -> [varOfOffset id i | i <- [0..n-1]]
           TypeQubit -> [id]
+
+bitBlast :: ID -> Int -> Exp
+bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo i) | i <- [0..n-1]]
+  where powertwo 0 = IntExp 1
+        powertwo j = BOpExp (IntExp 2) TimesOp (powertwo $ j-1)
+
+expandInts :: [TypedID] -> [Exp] -> [Exp]
+expandInts boundIDs = concat . map expand
+  where 
+    expand exp = case exp of
+      VarExp v -> case lookup v boundIDs of
+                  Nothing          -> error "Varible not bound"
+                  Just TypeQubit   -> [VarExp v]
+                  Just (TypeInt n) -> [OffsetExp v i | i <- [0..n-1]]
+      e        -> [e]
 
