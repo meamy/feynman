@@ -20,12 +20,15 @@ import Data.List
 import qualified Data.Set as Set
 import Data.Ratio
 import Data.Semigroup
+import Control.Exception (assert)
 import Control.Monad (mzero, msum)
 import Data.Maybe (maybeToList)
 import Data.Complex (Complex, mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
+import Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
 import Data.String (IsString(..))
 import Data.Tuple (swap)
 import Data.Functor.Identity
@@ -108,6 +111,18 @@ unF _        = error "Not a free variable"
 
 -- | Path sums of the form
 --   \(\frac{1}{\sqrt{2}^k}\sum_{y\in\mathbb{Z}_2^m}e^{i\pi P(x, y)}|f(x, y)\rangle\)
+-- Note:
+-- - sde is a scaling exponent, 1/(sqrt(2) ** sde); generally inDeg + pathVars
+-- - inDeg is the number of input qubits, i.e., the number of bits in the x vector
+-- - outDeg is the number of output qubits
+-- - pathVars is the number of internal bits, i.e., the number of bits in the y vector we sum over
+-- - phasePoly gives us the phase for any particular sum term, i.e., the P(x, y) value
+-- - outVals gives us the output ket for any particular sum term, i.e., the f(x, y) vector
+-- Therefore:
+-- - the IVars in phasePoly and outVals will have i's <= inDeg
+-- - the PVars in phasePoly and outVals will have i's <= pathVars
+-- - but there can also be FVars in phasePoly and outVals and they are free, if you're doing CAS stuff
+-- - there should be outDeg items in the outVals list, with each SBool computing exactly one bit of the output ket
 data Pathsum g = Pathsum {
   sde       :: !Int,
   inDeg     :: !Int,
@@ -159,6 +174,23 @@ freeVars sop = map unF . Set.toList . Set.filter isF . foldr (Set.union) Set.emp
 -- | Checks if the path sum is (trivially) the identity
 isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
 isTrivial sop = sop == identity (inDeg sop)
+
+-- | Checks if the path sum is trivially the identity, up to some garbage
+isTrivialUpToGarbage :: (Eq g, Num g, Periodic g, Real g, Show g) => Pathsum g -> [Int] -> Bool
+isTrivialUpToGarbage psum@(Pathsum {phasePoly = phase, outVals = ovals}) garbageIs =
+  assert (outDeg psum == length ovals) $
+    all (uncurry outPolyIsGarbageOrTrivial) (zip [0 ..] ovals)
+       && all monomialOnlyHasGarbageTerms (toTermList phase)
+  where
+    monomialOnlyHasGarbageTerms :: (g, Monomial Var r) -> Bool
+    monomialOnlyHasGarbageTerms (_, mono) = all isGarbageVar (vars mono)
+    isGarbageVar v = case v of
+      IVar i -> IntSet.member i garbageISet
+      PVar p -> True
+      FVar f -> error $ "unexpected free variable " ++ show v ++ " in " ++ show psum
+    outPolyIsGarbageOrTrivial :: Int -> SBool Var -> Bool
+    outPolyIsGarbageOrTrivial i poly = IntSet.member i garbageISet || (poly == ofVar (IVar i))
+    garbageISet = IntSet.fromList garbageIs
 
 -- | (To be deprecated) Drops constant term from the phase polynomial
 dropGlobalPhase :: (Eq g, Num g) => Pathsum g -> Pathsum g
@@ -784,7 +816,7 @@ discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
 {--------------------------
  Type class instances
  --------------------------}
-  
+
 instance (Eq g, Num g) => Semigroup (Pathsum g) where
   (<>) = tensor
 
@@ -886,7 +918,7 @@ matchVar sop = do
     (_, 0)      -> mzero
     (PVar _, p) -> return (v, ofVar v + p')
     _           -> mzero
-  
+
 {--------------------------
  Pattern synonyms
  --------------------------}
@@ -1056,7 +1088,7 @@ simulate sop xs = go $ sop * ket (map constant xs)
             let phase     = fromRational . toRational $ getConstant p
                 base      = case k `mod` 2 of
                   0 -> fromInteger $ 1 `shiftL` (abs k)
-                  1 -> sqrt(2.0) * (fromInteger $ 1 `shiftL` (abs (k-1)))
+                  1 -> sqrt (2.0) * (fromInteger $ 1 `shiftL` (abs (k-1)))
                 magnitude = base**(fromIntegral $ signum k)
             in
               Map.singleton (map getConstant xs) (mkPolar magnitude (pi * phase))
@@ -1161,13 +1193,13 @@ teleportChannel = channelize ((identity 1) <> bellstate) .>
                   channelize (swapgate <> hgate) .>
                   embed epsilon 4 (* 3) (* 3) .> -- trace out first qubit
                   embed epsilon 2 (* 2) (* 2)    -- trace out second
-           
+
 -- | Verify teleportation
 verifyTele :: () -> IO ()
 verifyTele _ = case (densify sstate == grind (ptrace . ptrace . densify $ sstate .> teleport)) of
   True -> putStrLn "Identity"
   False -> putStrLn "Not identity"
-  
+
 -- | Verify teleportation channel
 verifyTeleC :: () -> IO ()
 verifyTeleC _ = case (rho == grind (rho .> teleportChannel)) of
@@ -1228,7 +1260,7 @@ cliffordT13_is_identity () = case isIdentity reducedSOP of
               c12     = grind c11
           in
             grind $ (identity 2 <> c12) .> (epsilonN 2 <> identity 2)
-              
+
 -- | Relation 14 from Bian and Selinger's presentation of the 2-qubit Clifford+T group
 cliffordT14 :: Pathsum DMod2
 cliffordT14 =

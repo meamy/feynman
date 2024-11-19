@@ -470,14 +470,14 @@ decompileDotQC qc = qc { decls = map go $ decls qc }
   where go decl =
           let circuitQubits  = qubits qc ++ params decl
               circuitInputs  = (Set.toList $ inputs qc) ++ params decl
-              resynthesize c = 
+              resynthesize c = Debug.Trace.trace ("decompile, inputs: " ++ show circuitInputs ++ ", qubits: " ++ show circuitQubits) $
                 case doResynthesizeCircuit $ toCliffordT c of
                   Nothing -> if ctlTraceResynthesis
                     then Debug.Trace.trace "Resynthesis failed, returning original circuit" c
                     else c
                   Just c' -> fromExtractionBasis c'
               doResynthesizeCircuit = if ctlUseAncillaSynthesis
-                then AncillaAware.resynthesizeCircuit
+                then flip AncillaAware.resynthesizeCircuit []
                 else Unitary.resynthesizeCircuit
           in
             decl { body = resynthesize $ body decl }

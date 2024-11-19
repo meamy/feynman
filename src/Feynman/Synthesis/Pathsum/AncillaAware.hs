@@ -91,7 +91,7 @@ fromCtxWithAncillae expectedOrd ctx ancillae =
                 (Set.insert newID idsSoFar)
                 (newID : listProgressRev, Map.insert newID nextIdx ancillaeProgress)
                 ascList
-      --
+      -- The only remaining case is an explicit ID, so expect that
       | assert ((fst . head) ascList == nextIdx) otherwise =
           let (idx, qID) : ascListRemain = ascList
            in ascListToCompleteListWithAncillae
@@ -343,8 +343,8 @@ finalize sop = do
       let ancID = newAncillaID (Set.fromList idList) ancI
       -- add the clean (constant 0) ancilla to synthSop
       let sopWithAnc = tensor synthSop (ket [constant 0])
-      let idList = idList ++ [ancID]
-      put (AACtx {ctxIDs = idList, ctxAncillae = Map.insert ancID ancI ancillaMap})
+      let newIDList = idList ++ [ancID]
+      put (AACtx {ctxIDs = newIDList, ctxAncillae = Map.insert ancID ancI ancillaMap})
       -- This is kind of elegantly awful. We have a list of terms for
       -- this multilinear, and each term is a list of vars. Eventually
       -- we want to synthesize an MCT (i.e. multiply) for each term and
@@ -355,7 +355,7 @@ finalize sop = do
       -- ... -> then within each list of vars: get the index -> map via
       -- ctx to IDs; and finally -> MCT from each list of IDs.
       -- The controlled qubit is our clean ancilla.
-      let computeGates = map (flip MCT ancID . map ((idList !!) . unI)) termVars :: [ExtractionGates]
+      let computeGates = map (flip MCT ancID . map ((newIDList !!) . unI)) termVars :: [ExtractionGates]
       -- And finally we did this whole computation in the ancilla, so now
       -- swap the desired result with that (and the ancilla is
       -- incidentally garbage now, and we will not concern ourselves with
@@ -501,17 +501,19 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       _ -> Nothing
     go sop = do
       sop' <- synthesizeFrontier sop
+      ancillae <- gets ctxAncillae
       if pathVars sop' < pathVars sop
         then go sop'
         else
-          let good = isTrivial sop'
+          let good = isTrivialUpToGarbage sop' (map snd (Map.toList ancillae))
            in Debug.Trace.trace
                 (if good then "Resynthesis succeeded" else "Resynthesis failed: sop not trivial")
-                (return good)
+                (Debug.Trace.trace ("Trivial up to garbage: " ++ show sop' ++ "; ancillae " ++ show (map snd (Map.toList ancillae))) $ return good)
 
 -- | Resynthesizes a circuit
-resynthesizeCircuit :: (HasFeynmanControl) => [Primitive] -> Maybe [ExtractionGates]
-resynthesizeCircuit xs = pushSwaps <$> extractUnitary (fromCtx (outDeg sop) ctx) sop
+resynthesizeCircuit :: (HasFeynmanControl) => [Primitive] -> [ID] -> Maybe [ExtractionGates]
+resynthesizeCircuit xs ancillae =
+  pushSwaps <$> extractUnitary (fromCtxWithAncillae (outDeg sop) ctx (Set.fromList ancillae)) sop
   where
     (sop, ctx) = runState (computeAction xs) Map.empty
 
@@ -723,7 +725,7 @@ prop_Frame_Reversible (CliffordT xs) = sop == revertFrame subs localSOP
 
 -- | Checks that extraction always succeeds for a unitary path sum
 prop_Clifford_plus_T_Extraction_Possible :: (HasFeynmanControl) => CliffordT -> Bool
-prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCircuit xs)
+prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCircuit xs [])
 
 -- | Checks that the translation from Clifford+T to MCT is correct
 prop_Translation_Correct :: CliffordT -> Bool
