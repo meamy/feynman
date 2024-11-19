@@ -210,7 +210,7 @@ verifyProg' spec env =
         True -> outDeg (pathsum env) `div` 2
   in
     (dropAmplitude $ grind $ closedPS .> (dagger specPs)) == initPS
-
+i
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
   let init = identity (length qparams)
@@ -476,29 +476,28 @@ simQASM (QASM _ _ stmts) =
 
 {- Specification building -}
 polyOfExp :: [TypedID] -> Exp -> PseudoBoolean PS.Var Double
-polyOfExp boundIDs exp
-  | isJust (evalExp exp) = constant $ fromJust (evalExp exp)
-  | otherwise            = polyOfExp' exp
-
-    where 
-      polyOfExp' exp = case exp of
-        FloatExp d       -> constant d
-        IntExp i         -> constant $ fromIntegral i
-        PiExp            -> constant $ pi
-        VarExp v         -> case lookup v boundIDs of
-          Nothing -> ofVar $ FVar v
-          Just TypeQubit   -> ofVar $ FVar v
-          Just (TypeInt n) -> polyOfExp' $ bitBlast v n
-        OffsetExp v i    -> ofVar $ FVar (varOfOffset v i)
-        UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp' e
-        BOpExp e1 bop e2 -> case bop of
-          PlusOp  -> e1' + e2'
-          MinusOp -> e1' - e2'
-          TimesOp -> e1' * e2'
-          DivOp   -> error "Unsupported division of polynomials"
-          PowOp   -> error "Unsupported exponent of polynomials"
-          where e1' = polyOfExp' e1
-                e2' = polyOfExp' e2
+polyOfExp boundIDs = polyOfExp'
+  where
+    polyOfExp' exp
+      | isJust (evalExp exp) = constant $ fromJust (evalExp exp)
+      | otherwise            = case exp of
+          FloatExp d       -> constant d
+          IntExp i         -> constant $ fromIntegral i
+          PiExp            -> constant $ pi
+          VarExp v         -> case lookup v boundIDs of
+            Nothing -> ofVar $ FVar v
+            Just TypeQubit   -> ofVar $ FVar v
+            Just (TypeInt n) -> polyOfExp' $ bitBlast v n
+          OffsetExp v i    -> ofVar $ FVar (varOfOffset v i)
+          UOpExp uop e     -> cast (evalUOp uop) $ polyOfExp' e
+          BOpExp e1 bop e2 -> case bop of
+            PlusOp  -> e1' + e2'
+            MinusOp -> e1' - e2'
+            TimesOp -> e1' * e2'
+            DivOp   -> error "Unsupported division of polynomials"
+            PowOp   -> error "Unsupported exponent of polynomials"
+            where e1' = polyOfExp' e1
+                  e2' = polyOfExp' e2
 
 polyOfMaybeExp :: [TypedID] -> Maybe Exp -> PseudoBoolean PS.Var Double
 polyOfMaybeExp boundIDs Nothing    = 0
