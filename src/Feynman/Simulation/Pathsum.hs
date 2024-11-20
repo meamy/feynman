@@ -85,17 +85,20 @@ allocatePathsum :: ID -> Int -> State Env Int
 allocatePathsum v size = do
   offset <- getPSSize
   ps' <- gets uninitialized >>= \tf -> case v `elem` tf of
+    True  -> return $ ket [ofVar (varOfOffset ("'" ++ v) (offset+i)) | i <- [0..size-1]]
+    False -> return $ ket (replicate size 0)
+  ps'' <- gets uninitialized >>= \tf -> case v `elem` tf of
     True  -> return $ ket [ofVar (varOfOffset v (offset+i)) | i <- [0..size-1]]
     False -> return $ ket (replicate size 0)
-  modify (allocate ps')
+  modify (allocate ps' ps'')
   return offset
   where
-    allocate ps' env@(Env ps _ False _) = env { pathsum = ps <> ps' }
-    allocate ps' env@(Env ps _ True _)  = env { pathsum = newps }
+    allocate ps' ps'' env@(Env ps _ False _) = env { pathsum = ps <> ps'' }
+    allocate ps' ps'' env@(Env ps _ True _)  = env { pathsum = newps }
       where
         oldsize  = outDeg ps `div` 2
         embedded = embed ps (size * 2) (\i -> i) (\i -> if i < oldsize then i else i + size)
-        newps = (ps' <> ps') .> embedded
+        newps = (ps' <> ps'') .> embedded
 
 addBind :: ID -> Binding -> State Env ()
 addBind id binding = do
@@ -195,22 +198,22 @@ bindingList nxs env = concatMap go nxs
 
 verifyProg' :: Spec -> Env -> Bool
 verifyProg' spec env =
-  let specPs     = channelize $ sopOfPSSpec spec env
-      initPS     = let tmp = open (identity (n `div` 2)) in close $ tmp <> tmp
+  let specPs     = grind $ channelize $ sopOfPSSpec spec env
+      initPS     = identity n
       progPS     = case density env of
         False -> conjugate (pathsum env) <> pathsum env
         True  -> pathsum env
       traceBinds = traceList (fst . unzip $ inputs spec) env
       tracedPS   = grind $ foldl (\ps (i, idx) -> traceOut idx (idx+m-i) ps) progPS $ zip [0..] traceBinds
       bindings   = bindingList (inputs spec) env
-      closedPS   = bind bindings tracedPS
+      closedPS   = bind (map ("'" ++) bindings ++ bindings) tracedPS
       n          = inDeg specPs
       m          = case density env of
         False -> outDeg (pathsum env)
         True -> outDeg (pathsum env) `div` 2
   in
     (dropAmplitude $ grind $ closedPS .> (dagger specPs)) == initPS
-i
+
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
   let init = identity (length qparams)
@@ -464,7 +467,7 @@ simControlled controls qexp = case qexp of
 
 simQASM :: QASM -> Env
 simQASM (QASM _ (Just spec) stmts) =
-  let env = execState (mapM_ simStmt stmts) (initEnv { uninitialized = fst . unzip $ inputs spec })
+  let env = execState (mapM_ simStmt stmts) (initEnv { density = True, uninitialized = fst . unzip $ inputs spec })
       result = case verifyProg' spec env of
         False -> "Failed!"
         True  -> "Success!"
@@ -531,7 +534,7 @@ sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover 
           TypeQubit -> [id]
 
 bitBlast :: ID -> Int -> Exp
-bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo i) | i <- [0..n-1]]
+bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo (n-i-1)) | i <- [0..n-1]]
   where powertwo 0 = IntExp 1
         powertwo j = BOpExp (IntExp 2) TimesOp (powertwo $ j-1)
 
