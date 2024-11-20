@@ -312,15 +312,21 @@ finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMo
 finalize sop = do
   Debug.Trace.trace ("Finalizing " ++ show sop) (return ())
   AACtx {ctxIDs = outIDs, ctxAncillae = stateAncs} <- gets id
-  let sopWithAncillae = foldl tensor sop (map (const fresh) outIDs)
+
   -- We just assume the ancilla indices will map to [length outIDs ..] because
   -- indices are always assigned in order in the Pathsum without gaps
   let (_, ancIDIdxRev) =
         foldl
-          (\(idSoFar, ancSoFarRev) ancIdx -> let ancID = findNewID idSoFar ancIdx in (Set.insert ancID idSoFar, (ancID, ancIdx) : ancSoFarRev))
+          ( \(idSoFar, ancSoFarRev) ancIdx ->
+              let ancID = findNewID idSoFar ancIdx
+               in (Set.insert ancID idSoFar, (ancID, ancIdx) : ancSoFarRev)
+          )
           (Set.fromList outIDs, [])
           [length outIDs .. (length outIDs * 2) - 1]
   let (ancIDs, ancIdx) = unzip (reverse ancIDIdxRev)
+
+  let allIDMap = Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
+
   -- mcts is the concatenation of all the circuits synthesized to evaluate the
   -- output ket polynomials
   let mcts = concatMap (uncurry (synthesizeMCTPoly outIDs)) (zip ancIDs (outVals sop))
@@ -330,11 +336,20 @@ finalize sop = do
   -- and reverse the whole synthesized computation up to this point (except the
   -- MCTs we just synthesized of course). Sounds expensive to me :shrug:
   let swaps = zipWith Swapper outIDs ancIDs
-  let copies = zipWith MCT (map (: []) outIDs) ancIDs
+  let copies = [MCT [outID] ancID | (outID, ancID) <- zip outIDs ancIDs]
+  let identitySop = identity (length outIDs)
+  let freshSop = ket [constant 0 | _ <- outIDs]
+  let copySop = applyExtract allIDMap (tensor identitySop freshSop) copies
+  Debug.Trace.trace ("  copySop: " ++ show copySop) (return ())
+  -- Make a whole pathsum for the ancillae: they will need to be init'ed with
+  -- the logic we synthesize, so that they are back to 0 after we have
+  -- unapplied it (because finalize kind of works backwards in time)
+  let sopWithAncillae = times copySop (tensor sop identitySop)
+  Debug.Trace.trace ("  sopWithAncillae: " ++ show sopWithAncillae) (return ())
   put (AACtx {ctxIDs = outIDs ++ ancIDs, ctxAncillae = Map.union (Map.fromList (zip ancIDs ancIdx)) stateAncs})
-  emitGates "Finalize.wastefulSynth" mcts
-  result <- applyExtract sopWithAncillae (swaps ++ mcts ++ copies)
-  Debug.Trace.trace ("  After finalize synthesis, " ++ show result) (return result)
+  emitGates "Finalize.wastefulSynth" (swaps ++ mcts)
+  let sopUndoKetTransform = applyExtract allIDMap sopWithAncillae (swaps ++ mcts)
+  Debug.Trace.trace ("  After finalize synthesis, " ++ show sopUndoKetTransform) (return sopUndoKetTransform)
   where
     n = inDeg sop
     -- synthesizeAffineOnly :: ExtractionState (Pathsum DMod2)
@@ -513,7 +528,8 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
     go sop = do
       sop' <- synthesizeFrontier sop
       ancillae <- gets ctxAncillae
-      if pathVars sop' < pathVars sop
+      let pathVarsLeft = pathVars sop'
+      if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
         else
           let good = isTrivialUpToGarbage sop' (map snd (Map.toList ancillae))
@@ -560,11 +576,14 @@ extractionAction gate = case gate of
   Phase theta xs -> rzNgate theta $ length xs
   MCT xs _ -> mctgate $ length xs
 
--- | Apply a circuit to a state
-applyExtract :: Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
-applyExtract sop xs = do
+doApplyExtract :: Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
+doApplyExtract sop xs = do
   ctx <- gets toIDMap
-  return $ foldl (absorbGate ctx) sop xs
+  return $ applyExtract ctx sop xs
+
+-- | Apply a circuit to a state
+applyExtract :: Map ID Int -> Pathsum DMod2 -> [ExtractionGates] -> Pathsum DMod2
+applyExtract ctx sop xs = foldl (absorbGate ctx) sop xs
   where
     absorbGate ctx sop gate =
       let index xs = ((Map.fromList $ zip [0 ..] [ctx ! x | x <- xs]) !)
@@ -743,7 +762,7 @@ prop_Translation_Correct :: CliffordT -> Bool
 prop_Translation_Correct (CliffordT xs) = grind sop == grind sop'
   where
     (sop, ctx) = runState (computeAction xs) Map.empty
-    sop' = fst $ extract (applyExtract (identity $ Map.size ctx) (map toExtraction xs)) (outDeg sop) ctx
+    sop' = fst $ extract (doApplyExtract (identity $ Map.size ctx) (map toExtraction xs)) (outDeg sop) ctx
 
 -- | Checks that affine simplifications are correct
 prop_Affine_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -751,7 +770,7 @@ prop_Affine_Correctness (CliffordT xs) = grind sop' == grind sop''
   where
     (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
     (sop', gates) = extract (affineSimplifications sop) (outDeg sop) ctx
-    (sop'', _) = extract (applyExtract sop gates) (outDeg sop) ctx
+    (sop'', _) = extract (doApplyExtract sop gates) (outDeg sop) ctx
 
 -- | Checks that phase simplifications are correct
 prop_Phase_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -759,7 +778,7 @@ prop_Phase_Correctness (CliffordT xs) = grind sop' == grind sop''
   where
     (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
     (sop', gates) = extract (phaseSimplifications sop) (outDeg sop) ctx
-    (sop'', _) = extract (applyExtract sop gates) (outDeg sop) ctx
+    (sop'', _) = extract (doApplyExtract sop gates) (outDeg sop) ctx
 
 -- | Checks that nonlinear simplifications are correct
 prop_Nonlinear_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -767,7 +786,7 @@ prop_Nonlinear_Correctness (CliffordT xs) = grind sop' == grind sop''
   where
     (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
     (sop', gates) = extract (nonlinearSimplifications sop) (outDeg sop) ctx
-    (sop'', _) = extract (applyExtract sop gates) (outDeg sop) ctx
+    (sop'', _) = extract (doApplyExtract sop gates) (outDeg sop) ctx
 
 -- | Checks that strength reduction is correct
 prop_Strength_Reduction_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -775,7 +794,7 @@ prop_Strength_Reduction_Correctness (CliffordT xs) = grind sop' == grind sop''
   where
     (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
     (sop', gates) = extract (strengthReduction sop) (outDeg sop) ctx
-    (sop'', _) = extract (applyExtract sop gates) (outDeg sop) ctx
+    (sop'', _) = extract (doApplyExtract sop gates) (outDeg sop) ctx
 
 -- | Checks that each step of the synthesis algorithm is correct
 prop_Frontier_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -783,7 +802,7 @@ prop_Frontier_Correctness (CliffordT xs) = grind sop' == grind sop''
   where
     (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
     (sop', gates) = extract (synthesizeFrontier sop) (outDeg sop) ctx
-    (sop'', _) = extract (applyExtract sop gates) (outDeg sop) ctx
+    (sop'', _) = extract (doApplyExtract sop gates) (outDeg sop) ctx
 
 -- | Checks that the overall algorithm is correct
 prop_Extraction_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
@@ -794,7 +813,7 @@ prop_Extraction_Correctness (CliffordT xs) = go
     go = case gates of
       Nothing -> True
       Just xs' ->
-        let sop' = grind $ fst $ extract (applyExtract (identity $ outDeg sop) xs') (outDeg sop) ctx
+        let sop' = grind $ fst $ extract (doApplyExtract (identity $ outDeg sop) xs') (outDeg sop) ctx
          in sop == sop' || isTrivial (grind $ sop .> PS.dagger sop')
 
 q0 = "q0"
