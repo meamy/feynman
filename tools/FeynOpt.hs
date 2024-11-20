@@ -19,17 +19,15 @@ import qualified Feynman.Frontend.OpenQASM.Syntax as QASM2
 import qualified Feynman.Frontend.OpenQASM.Lexer  as QASM2Lexer
 import qualified Feynman.Frontend.OpenQASM.Parser as QASM2Parser
 
-import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty
+import qualified Feynman.Frontend.OpenQASM3.Chatty as QASM3Chatty
 import qualified Feynman.Frontend.OpenQASM3.Parser as QASM3Parser
 import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3Syntax
-import qualified Feynman.Frontend.OpenQASM3.Syntax.Transformations as QASM3
+import qualified Feynman.Frontend.OpenQASM3.Utils  as QASM3Utils
 
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
-import Feynman.Optimization.RelationalFold as L
-import Feynman.Optimization.RelationalFoldNL as NL
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
@@ -47,16 +45,14 @@ import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
-import Debug.Trace as Trace
-
 import Benchmarks (runBenchmarks,
                    benchmarksSmall,
                    benchmarksMedium,
                    benchmarksAll,
                    benchmarksPOPL25,
+                   benchmarksPOPL25QASM,
                    benchmarkFolder,
                    formatFloatN)
-import qualified Feynman.Frontend.OpenQASM3.Semantics as OpenQASM3Syntax
 
 
 {- Toolkit passes -}
@@ -159,7 +155,7 @@ runDotQC passes verify fname src = do
           qc  <- printErr $ DotQC.parseDotQC src
           qc' <- return $ foldr dotQCPass qc passes
           seq (DotQC.depth $ DotQC.toGatelist qc') (return ()) -- Nasty solution to strictifying
-          equivalenceCheckDotQC qc qc'
+          if verify then void $ equivalenceCheckDotQC qc qc' else return ()
           return (qc, qc')
 
 {- Deprecated transformations for benchmark suites -}
@@ -219,16 +215,16 @@ showCounts = map f . Map.toList where
 
 qasm3Pass pureCircuit pass = case pass of
   Triv        -> id
-  Inline      -> QASM3.inlineGateCalls
-  Unroll      -> QASM3.unrollLoops
+  Inline      -> QASM3Utils.inlineGateCalls
+  Unroll      -> QASM3Utils.unrollLoops
   MCT         -> id
   CT          -> id
   Simplify    -> id
-  Phasefold   -> QASM3.applyWStmtOpt (L.genSubstList)
-  Statefold 1 -> QASM3.applyWStmtOpt (L.genSubstList)
-  Statefold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
-  PauliFold 1 -> QASM3.applyWStmtOpt (L.genSubstList)
-  PauliFold d -> QASM3.applyWStmtOpt (NL.genSubstList d)
+  Phasefold   -> QASM3Utils.applyWStmtOpt phaseAnalysispp
+  Statefold 1 -> QASM3Utils.applyWStmtOpt phaseAnalysispp
+  Statefold d -> QASM3Utils.applyWStmtOpt (stateAnalysispp d)
+  PauliFold 1 -> QASM3Utils.applyWStmtOpt phaseAnalysispp
+  PauliFold d -> QASM3Utils.applyWStmtOpt (stateAnalysispp d)
   CNOTMin     -> id
   TPar        -> id
   Cliff       -> id
@@ -241,19 +237,19 @@ runQASM3 passes verify pureCircuit fname src = do
   start <- getCPUTime
   end   <- parseAndPass `seq` getCPUTime
   case parseAndPass of
-    Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
-    Chatty.Value _ (qasm, qasm') -> do
+    QASM3Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
+    QASM3Chatty.Value _ (qasm, qasm') -> do
       let time = (fromIntegral $ end - start) / 10^9
       putStrLn $ "// Feynman -- quantum circuit toolkit"
       putStrLn $ "// Original (" ++ fname ++ ", using QASM3 frontend):"
-      mapM_ putStrLn . map ("//   " ++) $ QASM3.showStats qasm
+      mapM_ putStrLn . map ("//   " ++) $ QASM3Utils.showStats qasm
       putStrLn $ "// Result (" ++ formatFloatN time 3 ++ "ms):"
-      mapM_ putStrLn . map ("//   " ++) $ QASM3.showStats qasm'
+      mapM_ putStrLn . map ("//   " ++) $ QASM3Utils.showStats qasm'
       putStrLn $ QASM3Syntax.pretty qasm'
       return ()
   where parseAndPass = do
           qasm <- QASM3Parser.parseString  src
-          let qasm' = QASM3.unrollLoops . QASM3.inlineGateCalls . QASM3.decorateIDs $ qasm
+          let qasm' = QASM3Utils.unrollLoops . QASM3Utils.inlineGateCalls . QASM3Utils.decorateIDs $ qasm
           qasm'' <- return $ foldr (qasm3Pass pureCircuit) qasm' passes
           return (qasm', qasm'')
 
@@ -263,17 +259,17 @@ generateInvariants fname = case drop (length fname - 5) fname == ".qasm" of
   True  -> do
     src <- readFile fname
     case go src of
-      Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
-      Chatty.Value _ invs -> do
+      QASM3Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
+      QASM3Chatty.Value _ invs -> do
         putStrLn $ "Loop invariants:"
         mapM_ putStrLn . map ("\t" ++) $ invs
         return ()
   where go src = do
           qasm <- QASM3Parser.parseString src
-          let qasm' = QASM3.decorateIDs . QASM3.unrollLoops . QASM3.inlineGateCalls $ qasm
-          let wstmt = QASM3.buildModel qasm'
+          let qasm' = QASM3Utils.decorateIDs . QASM3Utils.unrollLoops . QASM3Utils.inlineGateCalls $ qasm
+          let wstmt = QASM3Utils.buildModel qasm'
           let ids   = idsW wstmt
-          return $ NL.summarizeLoops 0 ids ids wstmt
+          return $ summarizeLoops 0 ids ids wstmt
 
 {- Main program -}
 
@@ -363,20 +359,19 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
   "-invgen"      -> generateInvariants (head xs)
   "--"           -> parseArgs True options xs
---  "VerBench"     -> runBenchmarks (benchPass [CNOTMin,Simplify]) (benchVerif True) benchmarksMedium
---  "VerAlg"       -> runVerSuite
   "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
   "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
   "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
+  "POPL25QASM"   -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25QASM
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
         o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         o4  = [CNOTMin,Cliff,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,PauliFold 1,Simplify,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,PauliFold 1,Simplify,Statefold 2,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,PauliFold 1,Simplify,Statefold 0,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
         runFile f | (drop (length f - 5) f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f

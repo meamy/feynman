@@ -43,8 +43,7 @@ formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum "
 
 {- Benchmark circuits -}
 qcBenchmarksPath = "benchmarks/qc/"
-qasm3benchmarksPath = "benchmarks/qasm3/"
-popl25benchPath = "benchmarks/popl25/"
+qasm3BenchmarksPath = "benchmarks/qasm3/"
 
 -- Benchmarks of up to 10 qubits
 benchmarksSmall = map (qcBenchmarksPath ++) [
@@ -102,7 +101,7 @@ benchmarksAll = benchmarksMedium ++ map (qcBenchmarksPath ++) [
   "mod_adder_1048576"
   ]
 
-benchmarksPOPL25 = map (popl25benchPath ++) [
+benchmarksPOPL25 = map (qcBenchmarksPath ++) [
   "grover_5",
   "mod5_4",
   "vbe_adder_3",
@@ -124,7 +123,7 @@ benchmarksPOPL25 = map (popl25benchPath ++) [
   "gf2^9_mult",
   "gf2^10_mult",
   "gf2^16_mult",
-  "gf2^32_mult",
+ -- "gf2^32_mult",
   "ham15-low",
   "ham15-med",
   "ham15-high",
@@ -141,7 +140,7 @@ benchmarksPOPL25 = map (popl25benchPath ++) [
   "fprenorm"
   ]
 
-benchmarksPOPL25QASM = map (popl25benchPath ++) [
+benchmarksPOPL25QASM = map (qasm3BenchmarksPath ++) [
   "rus",
   "grover",
   "reset-simple",

@@ -51,8 +51,6 @@ library
                        Feynman.Optimization.StateFold,
                        Feynman.Optimization.TPar,
                        Feynman.Optimization.Clifford,
-                       Feynman.Optimization.RelationalFold,
-                       Feynman.Optimization.RelationalFoldNL,
 
                        Feynman.Verification.Symbolic,
 
@@ -62,12 +60,10 @@ library
                        Feynman.Frontend.OpenQASM.Parser
                        Feynman.Frontend.OpenQASM3.Ast
                        Feynman.Frontend.OpenQASM3.Chatty
-                       Feynman.Frontend.OpenQASM3.Driver
                        Feynman.Frontend.OpenQASM3.Lexer
                        Feynman.Frontend.OpenQASM3.Parser
-                       Feynman.Frontend.OpenQASM3.Semantics
                        Feynman.Frontend.OpenQASM3.Syntax
-                       Feynman.Frontend.OpenQASM3.Syntax.Transformations
+                       Feynman.Frontend.OpenQASM3.Utils
 
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,

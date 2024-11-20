@@ -1,4 +1,4 @@
-module Feynman.Frontend.OpenQASM3.Syntax.Transformations where
+module Feynman.Frontend.OpenQASM3.Utils where
 
 import Control.Monad.State.Lazy
 import Data.Char
@@ -9,7 +9,7 @@ import qualified Data.Map as Map
 import Numeric
 import Text.Read (readMaybe)
 
-import qualified Feynman.Frontend.OpenQASM3.Ast as Ast
+import Feynman.Frontend.OpenQASM3.Ast
 import Feynman.Frontend.OpenQASM3.Syntax
 import Feynman.Core hiding (subst, Decl)
 import Feynman.Synthesis.Phase
@@ -20,51 +20,68 @@ trace :: String -> a -> a
 trace _ a = a
 
 -- Adds unique id nuumbers to each node for identification
-decorateIDs :: Ast.Node Tag c -> Ast.Node Tag Int
+decorateIDs :: Node Tag c -> Node Tag Int
 decorateIDs node = evalState (go node) 0 where
-  go Ast.NilNode = return Ast.NilNode
-  go (Ast.Node t stmts _) = do
+  go NilNode = return NilNode
+  go (Node t stmts _) = do
     i <- get
     modify (+1)
     stmts' <- mapM go stmts
-    return (Ast.Node t stmts' i)
+    return (Node t stmts' i)
 
-data Decl c = Decl String [String] [String] (Ast.Node Tag c) deriving (Show)
+data Decl c = Decl String [String] [String] (Node Tag c) deriving (Show)
 
-getIdent :: Ast.Node Tag c -> String
-getIdent (Ast.Node (Identifier name _) _ _) = name
+-- | Retrieves the identifier from an identifier node
+--
+--   Fails if the node is not a valid identifier
+getIdent :: Node Tag c -> String
+getIdent (Node (Identifier name _) _ _) = name
 getIdent _ = error "Not an identifier..."
 
-getList :: Ast.Node Tag c -> [Ast.Node Tag c]
-getList Ast.NilNode = []
-getList (Ast.Node List stmts _) = stmts
+-- | Retrieves a list of nodes from a list node
+--
+--   Fails if the node is not a valid list node
+getList :: Node Tag c -> [Node Tag c]
+getList NilNode = []
+getList (Node List stmts _) = stmts
 getList _ = error "Not a list..."
 
-asIntegerMaybe :: Ast.Node Tag c -> Maybe Integer
+-- | Retrieves an integer from an AST node
+--
+--   Returns Nothing if the node can not be
+--   normalized to an integer
+asIntegerMaybe :: Node Tag c -> Maybe Integer
 asIntegerMaybe node = case squashInts node of
-  Ast.Node (IntegerLiteral i _) _ _ ->  Just i
+  Node (IntegerLiteral i _) _ _ ->  Just i
   _                                 -> Nothing
 
-asInteger :: Ast.Node Tag c -> Integer
+-- | Retrieves an integer from an AST node
+--
+--   Returns 0 if the node can not be normalized
+--   to an integer
+asInteger :: Node Tag c -> Integer
 asInteger node = case asIntegerMaybe node of
   Nothing -> trace ("Couldn't resolve integer") 0
   Just i  -> i
 
-exprAsQlist :: Ast.Node Tag c -> [Ast.Node Tag c]
+-- | Interprets a node as a list of qubit identifiers
+--
+--   Returns the empty list in the case of failure
+exprAsQlist :: Node Tag c -> [Node Tag c]
 exprAsQlist node = case node of
-  Ast.NilNode -> []
-  (Ast.Node (Identifier name _) _ _) -> [node]
-  (Ast.Node IndexedIdentifier [ident, expr] c) ->
+  NilNode -> []
+  (Node (Identifier name _) _ _) -> [node]
+  (Node IndexedIdentifier [ident, expr] c) ->
     let idxs = resolveExpr expr in
       case idxs of
         []  -> []
-        xs  -> map (\i -> Ast.Node IndexedIdentifier [ident, Ast.Node List [Ast.Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c] c] c) xs
+        xs  -> map (\i -> Node IndexedIdentifier [ident, Node List [Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c] c] c) xs
   _       -> trace ("Couldn't resolve identifier list") []
   where
-    resolveExpr Ast.NilNode = []
-    resolveExpr (Ast.Node List children c) = concatMap resolveExpr children
-    resolveExpr (Ast.Node (IntegerLiteral i _) _ _) = [i]
-    resolveExpr (Ast.Node RangeInitExpr [b,s,e] _) =
+    resolveExpr NilNode = []
+    resolveExpr (Node List children c) = concatMap resolveExpr children
+    resolveExpr (Node (IntegerLiteral i _) _ _) = [i]
+    resolveExpr (Node RangeInitExpr [b,s,e] _) =
       let bInt = asInteger b
           sInt = fromMaybe 1 $ asIntegerMaybe s
           eInt = asInteger e
@@ -72,42 +89,43 @@ exprAsQlist node = case node of
         [bInt,(bInt + sInt)..eInt]
     resolveExpr _ = trace ("Couldn't resolve identifier range") $ []
 
-squashInts :: Ast.Node Tag c -> Ast.Node Tag c
-squashInts Ast.NilNode = Ast.NilNode
-squashInts (Ast.Node tag exprs c) =
+-- | Simple integer constant folding in an expression sub-tree
+squashInts :: Node Tag c -> Node Tag c
+squashInts NilNode = NilNode
+squashInts (Node tag exprs c) =
   let exprs' = map squashInts exprs in
     case (tag, exprs') of
-      (ParenExpr, [Ast.Node (IntegerLiteral i _) _ _]) -> Ast.Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c
-      (UnaryOperatorExpr MinusToken, [Ast.Node (IntegerLiteral i _) _ _]) -> Ast.Node (IntegerLiteral (-i) (DecimalIntegerLiteralToken $ show (-i))) [] c
-      (BinaryOperatorExpr PlusToken, [Ast.Node (IntegerLiteral i _) _ _, Ast.Node (IntegerLiteral j _) _ _]) -> Ast.Node (IntegerLiteral (i+j) (DecimalIntegerLiteralToken (show $ i+j))) [] c
-      (BinaryOperatorExpr MinusToken, [Ast.Node (IntegerLiteral i _) _ _, Ast.Node (IntegerLiteral j _) _ _]) -> Ast.Node (IntegerLiteral (i-j) (DecimalIntegerLiteralToken (show $ i-j))) [] c
-      (BinaryOperatorExpr AsteriskToken, [Ast.Node (IntegerLiteral i _) _ _, Ast.Node (IntegerLiteral j _) _ _]) -> Ast.Node (IntegerLiteral (i*j) (DecimalIntegerLiteralToken (show $ i*j))) [] c
-      _ -> Ast.Node tag exprs' c
+      (ParenExpr, [Node (IntegerLiteral i _) _ _]) -> Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c
+      (UnaryOperatorExpr MinusToken, [Node (IntegerLiteral i _) _ _]) -> Node (IntegerLiteral (-i) (DecimalIntegerLiteralToken $ show (-i))) [] c
+      (BinaryOperatorExpr PlusToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i+j) (DecimalIntegerLiteralToken (show $ i+j))) [] c
+      (BinaryOperatorExpr MinusToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i-j) (DecimalIntegerLiteralToken (show $ i-j))) [] c
+      (BinaryOperatorExpr riskToken, [Node (IntegerLiteral i _) _ _, Node (IntegerLiteral j _) _ _]) -> Node (IntegerLiteral (i*j) (DecimalIntegerLiteralToken (show $ i*j))) [] c
+      _ -> Node tag exprs' c
 
--- Applies substitutions
-subst :: Map String (Ast.Node Tag c) -> Ast.Node Tag c -> Ast.Node Tag c
+-- | Substitutes identifiers within a tree
+subst :: Map String (Node Tag c) -> Node Tag c -> Node Tag c
 subst substs node = case node of
-  Ast.NilNode                                                     -> Ast.NilNode
-  (Ast.Node (Identifier name _) _ _) | Map.member name substs -> substs!name
-  (Ast.Node tag stmts c)                                      -> Ast.Node tag (map (subst substs) stmts) c
+  NilNode                                                 -> NilNode
+  (Node (Identifier name _) _ _) | Map.member name substs -> substs!name
+  (Node tag stmts c)                                      -> Node tag (map (subst substs) stmts) c
 
--- Makes a basic gate call
-makeBasicCall :: String -> [Ast.Node Tag c] -> c -> Ast.Node Tag c
+-- | Constructs a gate call node given a name and body
+makeBasicCall :: String -> [Node Tag c] -> c -> Node Tag c
 makeBasicCall name args c =
-  let target  = Ast.Node (Identifier name (IdentifierToken name)) [] c
-      argList = Ast.Node List args c
+  let target  = Node (Identifier name (IdentifierToken name)) [] c
+      argList = Node List args c
   in
-    Ast.Node GateCallStmt [Ast.NilNode, target, Ast.NilNode, Ast.NilNode, argList] c
+    Node GateCallStmt [NilNode, target, NilNode, NilNode, argList] c
 
--- Inlines all gate declarations
-inlineGateCalls :: Ast.Node Tag c -> Ast.Node Tag c
+-- | Inlines all gate declarations
+inlineGateCalls :: Node Tag c -> Node Tag c
 inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
-  go Ast.NilNode = return Ast.NilNode
-  go node@(Ast.Node GateStmt [ident, params, args, stmts] c) = do
+  go NilNode = return NilNode
+  go node@(Node GateStmt [ident, params, args, stmts] c) = do
     stmts' <- go stmts
     modify (Map.insert (getIdent ident) $ Decl (getIdent ident) (map getIdent $ getList params) (map getIdent $ getList args) stmts')
-    return Ast.NilNode
-  go node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c)
+    return NilNode
+  go node@(Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c)
     | getIdent target == "ccx" = do
         let [x,y,z] = getList gateArgs
         let gateList = [makeBasicCall "h" [z] c,
@@ -126,7 +144,7 @@ inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
                         makeBasicCall "cx" [z,x] c,
                         makeBasicCall "cx" [x,y] c,
                         makeBasicCall "h" [z] c]
-        return $ Ast.Node Scope gateList c
+        return $ Node Scope gateList c
     | otherwise                = do
         ctx <- get
         case Map.lookup (getIdent target) ctx of
@@ -134,51 +152,51 @@ inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
           Just (Decl _ fparams fargs body) ->
             let substs = Map.fromList $ (zip fparams $ getList params) ++ (zip fargs $ getList gateArgs) in
               return $ subst substs body
-  go (Ast.Node tag children c) = do
+  go (Node tag children c) = do
     children' <- mapM go children
-    return $ Ast.Node tag children' c
+    return $ Node tag children' c
 
--- Squashes extra scopes
-squashScopes :: Ast.Node Tag c -> Ast.Node Tag c
-squashScopes Ast.NilNode = Ast.NilNode
-squashScopes (Ast.Node tag children c) =
+-- | Merges nested scopes
+squashScopes :: Node Tag c -> Node Tag c
+squashScopes NilNode = NilNode
+squashScopes (Node tag children c) =
   let children' = map squashScopes children
       squash n  = case n of
-        (Ast.Node Scope xs c) -> xs
+        (Node Scope xs c) -> xs
         _                     -> [n]
   in
     case tag of
-      Scope -> Ast.Node tag (concatMap squash children') c
-      _     -> Ast.Node tag children' c
+      Scope -> Node tag (concatMap squash children') c
+      _     -> Node tag children' c
 
--- Unrolls for loops
-unrollLoops :: Ast.Node Tag c -> Ast.Node Tag c
+-- | Unrolls for loops in a tree
+unrollLoops :: Node Tag c -> Node Tag c
 unrollLoops node = squashScopes $ squashInts $ evalState (go node) Map.empty where
       -- [ScalarTypeSpec, Identifier, (Expression | Range | Set), (Statement | Scope)]
-  go Ast.NilNode = return Ast.NilNode
-  go node@(Ast.Node ForStmt [tyspec, ident, range, stmt] c) = do
+  go NilNode = return NilNode
+  go node@(Node ForStmt [tyspec, ident, range, stmt] c) = do
     let var = getIdent ident
     let rn  = resolveRange range
-    let ur  = map (\i -> subst (Map.fromList [(var, Ast.Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c)]) stmt) rn
-    trace ("Unrolling loop over var " ++ show var ++ " with range " ++ show rn) $ return $ Ast.Node Scope ur c
-  go node@(Ast.Node tag children c) = do
+    let ur  = map (\i -> subst (Map.fromList [(var, Node (IntegerLiteral i (DecimalIntegerLiteralToken $ show i)) [] c)]) stmt) rn
+    trace ("Unrolling loop over var " ++ show var ++ " with range " ++ show rn) $ return $ Node Scope ur c
+  go node@(Node tag children c) = do
     children' <- mapM go children
-    return $ Ast.Node tag children' c
+    return $ Node tag children' c
 
-  resolveRange Ast.NilNode = []
-  resolveRange (Ast.Node RangeInitExpr [b,s,e] c) =
+  resolveRange NilNode = []
+  resolveRange (Node RangeInitExpr [b,s,e] c) =
     let bInt = asInteger b
         sInt = fromMaybe 1 $ asIntegerMaybe s
         eInt = asInteger e
     in
       [bInt,(bInt + sInt)..eInt]
 
--- Builds a model of the program as a non-deterministic WHILE program
-buildModel :: Ast.Node Tag Loc -> WStmt Loc
+-- | Builds a model of a tree as a non-deterministic WHILE program
+buildModel :: Node Tag Loc -> WStmt Loc
 buildModel node = evalState (go node) () where
-  go :: Ast.Node Tag Loc -> State () (WStmt Loc)
-  go Ast.NilNode = return $ WSkip (-1)
-  go (Ast.Node tag children c) = case tag of
+  go :: Node Tag Loc -> State () (WStmt Loc)
+  go NilNode = return $ WSkip (-1)
+  go (Node tag children c) = case tag of
     Program _ _ _ -> mapM go children >>= return . WSeq c
     Statement  -> go (children!!0)
     Scope      -> mapM go children >>= return . WSeq c
@@ -274,24 +292,25 @@ buildModel node = evalState (go node) () where
     _ -> return $ WSkip c
 
 
--- Applies a substitution list generated by phase folding
-applyPFOpt :: Map Loc Angle -> Ast.Node Tag Loc -> Ast.Node Tag Loc
+-- | Applies a list of gate substitutions as generated by phase folding
+applyPFOpt :: Map Loc Angle -> Node Tag Loc -> Node Tag Loc
 applyPFOpt replacements node = go node where
-  go Ast.NilNode = Ast.NilNode
-  go node@(Ast.Node GateCallStmt children l) = case Map.lookup l replacements of
+  go NilNode = NilNode
+  go node@(Node GateCallStmt children l) = case Map.lookup l replacements of
     Nothing    -> node
     Just theta -> makeTheta theta children l
-  go node@(Ast.Node tag children l) =
+  go node@(Node tag children l) =
     let children' = map go children in
-      Ast.Node tag children' l
+      Node tag children' l
 
   makeTheta theta (m:_:args) l =
     let prim = synthesizePhase "-" theta in
       case prim of
-        [] -> Ast.NilNode
-        [x] -> Ast.Node GateCallStmt (m:(makeIdent $ nameOfGate x):args) l
+        []  -> NilNode
+        [x] -> Node GateCallStmt (m:(makeIdent $ nameOfGate x):args) l
+        _   -> Node GateCallStmt (m:(makeIdent $ nameOfGate (Rz theta "x")):args) l
 
-  makeIdent str = Ast.Node (Identifier str (IdentifierToken str)) [] 0
+  makeIdent str = Node (Identifier str (IdentifierToken str)) [] 0
 
   nameOfGate gate = case gate of
     Rz theta _ -> "rz(" ++ show theta ++ ")"
@@ -301,25 +320,33 @@ applyPFOpt replacements node = go node where
     T _        -> "t"
     Tinv _     -> "tdg"
 
--- Applies a While statement optimization to a qasm 3 program
-applyWStmtOpt :: ([ID] -> [ID] -> WStmt Loc -> Map Loc Angle) -> Ast.Node Tag Loc -> Ast.Node Tag Loc
+-- | Applies a While statement optimization to a qasm 3 program
+applyWStmtOpt :: ([ID] -> [ID] -> WStmt Loc -> Map Loc Angle) -> Node Tag Loc -> Node Tag Loc
 applyWStmtOpt opt node = result where
   node'  = decorateIDs node -- recompute to make sure IDs are unique
   wstmt  = simplifyWStmt' $ buildModel node'
   vlst   = idsW wstmt
   result = applyPFOpt (opt vlst vlst wstmt) node'
 
--- Counts qubits
-countQubits :: Ast.Node Tag c -> Int
+-- | Counts the number of qubits declared in a tree
+--
+--   Note that this doesn't account for loops or procedure calls
+--   so is generally unsuitable for resource estimation.
+countQubits :: Node Tag c -> Int
 countQubits node = length vlst where
   vlst = idsW . buildModel . decorateIDs $ node
 
--- Counts gate calls
-countGateCalls :: Ast.Node Tag c -> Map String Int
+-- | Counts the gate call nodes in a tree
+--
+--   Note that this doesn't account for loops or procedure calls
+--   so is generally unsuitable for resource estimation. Should
+--   only be used when the number of *syntactic* gate calls is
+--   a useful metric, e.g. for straightline code
+countGateCalls :: Node Tag c -> Map String Int
 countGateCalls node = go Map.empty node where
-  go counts Ast.NilNode = counts
-  go counts node@(Ast.Node GateStmt _ _) = counts
-  go counts node@(Ast.Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
+  go counts NilNode = counts
+  go counts node@(Node GateStmt _ _) = counts
+  go counts node@(Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c) =
     let id = getIdent target in case id of
       "x"   -> Map.insertWith (+) "X" 1 counts
       "y"   -> Map.insertWith (+) "Y" 1 counts
@@ -332,10 +359,10 @@ countGateCalls node = go Map.empty node where
       "cx"  -> Map.insertWith (+) "cnot" 1 counts
       "ccx" -> Map.unionWith (+) counts $ Map.fromList [("H", 2), ("cnot", 7), ("T", 7)]
       _     -> Map.insertWith (+) id 1 counts
-  go counts (Ast.Node tag children c) = foldl go counts children
+  go counts (Node tag children c) = foldl go counts children
 
--- Print out stats
-showStats :: Ast.Node Tag c -> [String]
+-- | Print out qubit count and gate count metrics
+showStats :: Node Tag c -> [String]
 showStats node = qubitCounts ++ gateCounts where
   qubitCounts = ["Qubits: " ++ show (countQubits node)]
   gateCounts = (map f . Map.toList) $ countGateCalls node

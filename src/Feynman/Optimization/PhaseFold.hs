@@ -15,7 +15,9 @@ affine parity functions can be swapped in a la ML functors
 module Feynman.Optimization.PhaseFold(
   phaseFold,
   phaseFoldFast,
-  phaseFoldAlt
+  phaseFoldAlt,
+  phaseFoldpp,
+  phaseAnalysispp
   ) where
 
 import Data.List
@@ -29,11 +31,12 @@ import Data.Functor.Identity
 import Data.Coerce
 import Data.Bits
 
-import Control.Monad.State.Strict
+import Control.Monad.State.Strict hiding (join)
 
 import Feynman.Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear
+import Feynman.Algebra.AffineRel
 import Feynman.Synthesis.Phase
 
 {-----------------------------------
@@ -42,6 +45,14 @@ import Feynman.Synthesis.Phase
 
 -- | Terms of the phase polynomial
 type Term = (Set (Loc, Bool), Angle)
+
+-- | Adds two terms together
+addTerms :: Term -> Term -> Term
+addTerms (s, t) (s', t') = (Set.union s s', t + t')
+
+-- | Zeros the angle in a term
+zeroAngle :: Term -> Term
+zeroAngle (s, t) = (s, 0)
 
 -- | The type of an analysis with an underlying parity representation
 newtype Analysis repr = Analysis ([ID] -> [ID] -> [Primitive] -> ([Term], Angle))
@@ -71,8 +82,8 @@ instance Parity F2Vec where
   a .+. b    = a + b
   split a    = (zeroExtend (-1) $ shiftR a 1, testBit a 0)
   comb (a,b) = if b then setBit a' 0 else a' where a' = (flip shiftL) 1 $ zeroExtend 1 a
-  nil        = 0
-  var i      = bitI (max 32 (i+1)) i
+  nil        = bitVec 1 0
+  var i      = bitI (i+1) i
 
 -- | Defines an instance where 0 is the affine value
 instance Parity IntSet where
@@ -163,7 +174,8 @@ applyGate (gate, loc) = case gate of
 initialState :: Parity parity => [ID] -> [ID] -> Ctx parity
 initialState vars inputs = Ctx dim (Map.fromList ket) Map.empty [] 0 where
   dim = length inputs
-  ket = (zip inputs [(var x) | x <- [1..]]) ++ (zip (vars \\ inputs) [nil | x <- [1..]])
+  ket = (zip inputs [(var x) | x <- [1..]]) ++
+        (zip (vars \\ inputs) [nil | x <- [1..]])
 
 -- | Run the analysis on a circuit and state
 runCircuit :: Parity parity => [Primitive] -> Ctx parity -> Ctx parity
@@ -272,6 +284,147 @@ phaseAnalysisAlt = Analysis go where
       ((snd . unzip . Map.toList $ terms result) ++ (orphans result), phase result)
 
 {-----------------------------------
+ Phase folding of the quantum WHILE
+ -----------------------------------}
+
+-- | Moves variable sets and parity to where AffineRel expects them
+--
+--   Given a vector of the form [ Parity | Pre | Aux ]
+--   rotates it to the form [ Aux | Pre | Parity ]
+reshapeAs :: Int -> Int -> F2Vec -> F2Vec
+reshapeAs n dim bv = convertForward . zeroExtend (dim - width bv) $ bv
+  where convertForward bv' = case n >= dim-1 of
+          True  -> appends [bv'@@(0,0), bv'@@(n,1)]
+          False -> appends [bv'@@(0,0), bv'@@(n,1), bv'@@(dim,n+1)]
+
+-- | Reshapes after applying composition
+reshapeBack :: Int -> F2Vec -> F2Vec
+reshapeBack n bv = convertBack bv
+  where dim            = width bv
+        convertBack bv = case n >= dim -1 of
+          True  -> appends [bv@@(dim-2,0), bv@@(dim-1, dim-1)]
+          False -> appends [bv@@(n-1,0),
+                            bv@@(dim-2-n,n),
+                            bv@@(dim-2,dim-1-n),
+                            bv@@(dim-1, dim-1)]
+
+-- | Turns a list of bit vectors into an instance of an Affine Relation
+makeARD :: Int -> Int -> [F2Vec] -> AffineRelation
+makeARD n dim = makeExplicit . ARD . fromList . map (reshapeAs n (dim+1)) 
+
+-- | Fast forwards the analysis based on a summary
+fastForward :: AffineRelation -> State (Ctx F2Vec) ()
+fastForward summary = get >>= \ctx ->
+  let n = Map.size $ ket ctx
+      (ids, vecs) = unzip . Map.toList $ ket ctx
+      vecs' = vals $ compose' (makeARD n (dim ctx) vecs) summary
+      ket' = Map.fromList . zip ids . map (reshapeBack n) $ vecs'
+      dim' = (width $ head vecs') - 1
+  in
+    put $ ctx { dim = dim', ket = ket' }
+
+-- | Summarizes a conditional
+branchSummary :: Ctx F2Vec -> Ctx F2Vec -> State (Ctx F2Vec) AffineRelation
+branchSummary ctx' ctx'' =
+  let n   = Map.size $ ket ctx'
+      o1  = orphans ctx' ++ Map.elems (terms ctx')
+      ar1 = makeARD n (dim ctx') . Map.elems $ ket ctx'
+      o2  = orphans ctx'' ++ Map.elems (terms ctx'')
+      ar2 = makeARD n (dim ctx'') . Map.elems $ ket ctx''
+  in do
+    modify (\ctx -> ctx { orphans = orphans ctx ++ o1 ++ o2 } )
+    return $ join ar1 ar2
+
+-- | Summarizes a loop
+loopSummary :: Ctx F2Vec -> Ctx F2Vec -> State (Ctx F2Vec) AffineRelation
+loopSummary ctx' ctx =
+  let n         = Map.size $ ket ctx'
+      loopTrans = makeARD n (dim ctx') . Map.elems $ ket ctx'
+      inTrans   = makeARD n (dim ctx) . Map.elems $ ket ctx
+      summary   = star. projectTemporaries $ loopTrans
+      combTrans = ARD $ compose' inTrans summary
+
+      (t,z)     = Map.partitionWithKey (\bv _ -> bv /= 0) $ reducedTerms where
+        reducedTerms = Map.mapKeysWith addTerms reduce (terms ctx')
+        reduce bv    = case mux bv of
+          Nothing  -> bv
+          Just bv' -> multRow bv' $ unARD combTrans
+        mux bv | width bv >  n = projectOut (width bv, n) bv
+               | width bv == n = Just bv
+               | width bv <  n = Just $ zeroExtend (n - width bv) bv
+
+      terms'    = Map.unionWith addTerms (terms ctx) (Map.map zeroAngle z)
+      orphans'  = orphans ctx ++ orphans ctx' ++ (Map.elems $ t)
+  in do
+    modify (\ctx -> ctx { terms = terms', orphans = orphans' })
+    return summary
+
+-- | Abstract transformers for while statements
+applyStmt :: WStmt Loc -> State (Ctx F2Vec) ()
+applyStmt stmt = case stmt of
+  WSkip _      -> return ()
+  WGate l gate -> applyGate (gate, l)
+  WSeq _ xs    -> mapM_ applyStmt xs
+  WReset _ v   -> getSt v >>= \bv -> setSt v nil
+  WMeasure _ v -> getSt v >> return ()
+  WIf _ s1 s2  -> do
+    ctx <- get
+    let vars  = Map.keys $ ket ctx
+    let ctx'  = execState (applyStmt s1) $ initialState vars vars
+    let ctx'' = execState (applyStmt s2) $ initialState vars vars
+    summary <- branchSummary ctx' ctx''
+    fastForward summary
+  WWhile _ s   -> do
+    ctx <- get
+    let vars = Map.keys $ ket ctx
+    let zrs   = Map.keys $ Map.filter (/= 0) $ ket ctx
+    let ctx' = execState (applyStmt s) $ initialState vars vars
+    summary <- loopSummary ctx' ctx
+    fastForward summary
+
+-- | Generate substitution list
+phaseAnalysispp :: [ID] -> [ID] -> WStmt Loc -> Map Loc Angle
+phaseAnalysispp vars inputs stmt =
+  let result = execState (applyStmt stmt) $ initialState vars inputs
+      phases = (snd . unzip . Map.toList $ terms result) ++ orphans result
+      gphase = phase result
+
+      go (locs, angle) map =
+        let (loc, angle') = case Set.findMin locs of
+              (l, False) -> (l, angle)
+              (l, True)  -> (l, (-angle))
+            update (l,_) = Map.insert l (if loc == l then angle' else 0)
+        in
+          Set.foldr update map locs
+
+  in
+    foldr go Map.empty phases
+
+-- | Apply substitution list
+applyOpt :: Map Loc Angle -> WStmt Loc -> WStmt Loc
+applyOpt opts stmt = go stmt where
+  go stmt = case stmt of
+    WSkip l      -> WSkip l
+    WGate l gate -> case Map.lookup l opts of
+      Nothing    -> WGate l gate
+      Just angle ->
+        let gatelist = synthesizePhase (getTarget gate) angle in
+          WSeq l $ map (WGate l) gatelist
+    WSeq l xs    -> WSeq l (map go xs)
+    WReset l v   -> stmt
+    WMeasure l v -> stmt
+    WIf l s1 s2  -> WIf l (go s1) (go s2)
+    WWhile l s   -> WWhile l (go s)
+
+  getTarget gate = case gate of
+    T x    -> x
+    S x    -> x
+    Z x    -> x
+    Tinv x -> x
+    Sinv x -> x
+    Rz _ x -> x
+
+{-----------------------------------
  Specific instances
  -----------------------------------}
 
@@ -283,3 +436,8 @@ phaseFoldFast = phaseFoldGen (mkAnalyzer :: Analysis F2Vec)
 
 -- | Via minimal-width bitvectors. Slow but best memory usage
 phaseFoldAlt = phaseFoldGen phaseAnalysisAlt
+
+-- | Optimization of the quantum WHILE language
+phaseFoldpp :: [ID] -> [ID] -> WStmt Loc -> WStmt Loc
+phaseFoldpp vars inputs stmt = applyOpt opts stmt where
+  opts = phaseAnalysispp vars inputs stmt

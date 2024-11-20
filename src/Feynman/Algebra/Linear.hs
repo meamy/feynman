@@ -63,6 +63,9 @@ appends = coerce BitVector.concat
 lsb1 :: F2Vec -> Int
 lsb1 = coerce BitVector.lsb1
 
+mirror :: F2Vec -> F2Vec
+mirror = coerce BitVector.reverse
+
 {- Little-endian -}
 instance Show F2Vec where
   show v = map (f . (v @.)) [0..width v - 1]

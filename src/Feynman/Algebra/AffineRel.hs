@@ -96,10 +96,12 @@ insert num i (F2Mat m n vals) = F2Mat m (n+num) vals' where
 -- | Project out a range
 project :: (Int,Int) -> F2Mat -> F2Mat
 project (j,i) mat = fromList $ foldMap go (vals $ rowReduce mat) where
-  go row = let (a,b,c) = (if i == 0 then bitVec 0 0 else row@@(i-1,0),
-                          row@@(j-1,i),
-                          row@@(n mat-1,j)) in
-    if b /= 0 then [] else [append c a]
+  go row =
+    let a = if i == 0 then bitVec 0 0 else row@@(i-1,0)
+        b = row@@(j-1,i)
+        c = if j == n mat then bitVec 0 0 else row@@(n mat-1,j)
+    in
+      if b /= 0 then [] else [append c a]
 
 -- | Canonicalize a relation
 canonicalize :: AffineRelation -> AffineRelation
@@ -133,46 +135,47 @@ eye n = ARD (F2Mat n (n+1) xs) where
 
 -- | Extends the variable set
 addVars :: Int -> AffineRelation -> AffineRelation
-addVars num (ARD (F2Mat m n vals)) = ARD (F2Mat (m+num) n' vals') where
-  n'     = n + num
-  vals'  = map go vals ++ [bitI n' (i-1) | i <- [n..n'-1]]
-  go row = appends [row@@(n-1,n-1), bitVec num 0, row@@(n-2,0)]
+addVars num (ARD (F2Mat m n vals)) = ARD (F2Mat (m+num) n' vals')
+  where n'     = n + num
+        vals'  = map go vals ++ [bitI n' (i-1) | i <- [n..n'-1]]
+        go row = appends [row@@(n-1,n-1), bitVec num 0, row@@(n-2,0)]
 
 -- | Negates the postcondition associated to row /j/ (/j'/ <- /j'/ + 1)
 negatePost :: Int -> AffineRelation -> AffineRelation
-negatePost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
-  go (row,i) = if i == j then complementBit row (n-1) else row
+negatePost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..]))
+  where go (row,i) = if i == j then complementBit row (n-1) else row
 
 -- | Adds /k/ to /j/ (corresp. to the relation /j'/ <- /j'/ + /k'/)
 addPost :: Int -> Int -> AffineRelation -> AffineRelation
-addPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
-  go (row,i) = if i == j then row + vals!!k else row
+addPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..]))
+  where go (row,i) = if i == j then row + vals!!k else row
 
 -- | Swaps /j/ and /k/ in the postcondition (/j'/ <- /k'/, /k'/ <- /j'/)
 swapPost :: Int -> Int -> AffineRelation -> AffineRelation
-swapPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
-  go (row,i)
-    | i == j    = vals!!k
-    | i == k    = vals!!j
-    | otherwise = row
+swapPost j k (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..]))
+  where go (row,i)
+          | i == j    = vals!!k
+          | i == k    = vals!!j
+          | otherwise = row
 
 -- | Resets a variable to 0 (/j'/ <- /0/)
 clearPost :: Int -> AffineRelation -> AffineRelation
-clearPost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..])) where
-  go (row,i) = if i == j then bitVec n 0 else row
+clearPost j (ARD (F2Mat m n vals)) = ARD (F2Mat m n (map go $ zip vals [0..]))
+  where go (row,i) = if i == j then bitVec n 0 else row
 
 -- | Converts an (implicit) two-vocabulary relation to an explicit one
 makeExplicit :: AffineRelation -> AffineRelation
-makeExplicit (ARD (F2Mat m n vals)) = ARD (F2Mat m (n+m) vals') where
-  vals' = [append r (bitI m i) | (r,i) <- zip vals [0..]]
+makeExplicit (ARD (F2Mat m n vals)) = ARD (F2Mat m (n+m) vals')
+  where vals' = [append r (bitI m i) | (r,i) <- zip vals [0..]]
 
 -- | Sets /j/ to a fresh variable (/j'/ <- /x/)
 setFresh :: Int -> AffineRelation -> AffineRelation
-setFresh j (ARD (F2Mat m n vals)) = ARD (F2Mat m n' (map go $ zip vals [0..])) where
-  n'         = n + 1
-  go (row,i) = if i == j
-               then bitI n' (n-1)
-               else (appends [row@@(n-1,n-1), bitVec 1 0, row@@(n-2,0)])
+setFresh j (ARD (F2Mat m n vals)) = ARD (F2Mat m n' (map go $ zip vals [0..]))
+  where n'         = n + 1
+        go (row,i) =
+          if i == j
+          then bitI n' (n-1)
+          else (appends [row@@(n-1,n-1), bitVec 1 0, row@@(n-2,0)])
 
 -- | Projects out temporary variables, needed for loop summarization
 projectTemporaries :: AffineRelation -> AffineRelation
@@ -184,11 +187,12 @@ projectTemporaries ar@(ARD (F2Mat m n vals))
 projectOut :: (Int,Int) -> F2Vec -> Maybe F2Vec
 projectOut (j,i) vec
   | j == i    = Just vec
-  | otherwise = let (a,b,c) = (if i == 0 then bitVec 0 0 else vec@@(i-1,0),
-                               vec@@(j-1,i),
-                               vec@@(width vec-1,j))
-                in
-                  if b /= 0 then Nothing else Just $ append c a
+  | otherwise =
+    let a = if i == 0 then bitVec 0 0 else vec@@(i-1,0)
+        b = vec@@(j-1,i)
+        c = if j == width vec then bitVec 0 0 else vec@@(width vec-1,j)
+    in
+      if b /= 0 then Nothing else Just $ append c a
 
 {--------------------------
  Lattice operations
@@ -210,7 +214,7 @@ meets (x:xs) = canonicalize $ ARD rel where
 -- | Sequential composition
 compose :: AffineRelation -> AffineRelation -> AffineRelation
 compose ar1 ar2
-  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | vars ar1 /= vars ar2 = error $ "AffineRel.compose: variable sets not equal"
   | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
       v = (vars ar1) `div` 2
       mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar2] ++
@@ -219,15 +223,16 @@ compose ar1 ar2
 -- | Union
 join :: AffineRelation -> AffineRelation -> AffineRelation
 join ar1 ar2
-  | vars ar1 /= vars ar2 = error $ "Can't join relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | vars ar1 /= vars ar2 = error $ "AffineRel.join: variable sets not equal"
   | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
       v = vars ar1
-      constraints = [append r r | r <- rows ar1] ++ [append (bitVec (v+1) 0) r | r <- rows ar2]
+      constraints = [append r r | r <- rows ar1] ++
+                    [append (bitVec (v+1) 0) r | r <- rows ar2]
 
 -- | Kleene star (iteration)
 star :: AffineRelation -> AffineRelation
-star ar = if ar' /= ar then star ar' else ar where
-  ar' = join ar (compose ar ar)
+star ar = if ar' /= ar then star ar' else ar
+  where ar' = join ar (compose ar ar)
 
 {--------------------------
  Fast-forward operators
@@ -249,7 +254,7 @@ makeExplicitFF (ARD (F2Mat m n vals))
 -- | Sequential composition in the [X|X'] order
 composeFF :: AffineRelation -> AffineRelation -> AffineRelation
 composeFF ar1 ar2
-  | vars ar1 /= vars ar2 = error $ "Can't compose relations on different sets of variables:\nRel1: " ++ show ar1 ++ "\nRel2: " ++ show ar2
+  | vars ar1 /= vars ar2 = error $ "AffineRel.composeFF: variable sets not equal"
   | otherwise            = ARD (project (2*v,v) $ fromList mat'') where
       v = (vars ar1) `div` 2
       mat'' = [appends [r@@(2*v,2*v), bitVec v 0, r@@(2*v-1,0)] | r <- rows ar1] ++
@@ -258,15 +263,15 @@ composeFF ar1 ar2
 -- | Union in the [X|X'] order
 joinFF :: AffineRelation -> AffineRelation -> AffineRelation
 joinFF ar1 ar2
-  | vars ar1 /= vars ar2 = error "Can't join relations on different sets of variables"
+  | vars ar1 /= vars ar2 = error "AffineRel.joinFF: variable sets not equal" 
   | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
       v = vars ar1
       constraints = [append r r | r <- rows ar1] ++ [append (bitVec (v+1) 0) r | r <- rows ar2]
 
 -- | Kleene star (iteration) in the [X|X'] order
 starFF :: AffineRelation -> AffineRelation
-starFF ar = if ar' /= ar then star ar' else ar where
-  ar' = joinFF ar (composeFF ar ar)
+starFF ar = if ar' /= ar then star ar' else ar
+  where ar' = joinFF ar (composeFF ar ar)
 
 
 -- | Forward-Backward canonicalization operator. Given two domain elements with schemes
@@ -282,10 +287,10 @@ starFF ar = if ar' /= ar then star ar' else ar where
 --   Projecting onto Z' existentially quantifies X, Y, X'=Z and gives a representation,
 --   if it exists, over the variables of Z'
 cOp :: AffineRelation -> AffineRelation -> AffineRelation
-cOp (ARD (F2Mat m n vals)) (ARD (F2Mat m' n' vals')) = ARD (project (vFin,0) $ fromList vals'') where
-  vFin = (n' - 1) `div` 2
-  vals'' = [appends [r@@(n-1,n-1), bitVec vFin 0, r@@(n-2,0)] | r <- vals] ++
-           [appends [r@@(n'-1,vFin), bitVec (n - 1 - vFin) 0, r@@(vFin-1,0)] | r <- vals']
+cOp (ARD (F2Mat m n vals)) (ARD (F2Mat m' n' vals')) = ARD (project (vFin,0) $ fromList vals'')
+  where vFin = (n' - 1) `div` 2
+        vals'' = [appends [r@@(n-1,n-1), bitVec vFin 0, r@@(n-2,0)] | r <- vals] ++
+                 [appends [r@@(n'-1,vFin), bitVec (n-1-vFin) 0, r@@(vFin-1,0)] | r <- vals']
 
 -- | Fast-forward a vector over the pre-conditions to a vector over the postconditions, if such
 --   a vector exists
