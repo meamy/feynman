@@ -460,16 +460,33 @@ optimizeDotQC :: ([ID] -> [ID] -> [Primitive] -> [Primitive]) -> DotQC -> DotQC
 optimizeDotQC f qc = qc { decls = map go $ decls qc }
   where go decl =
           let circuitQubits = qubits qc ++ params decl
-              circuitInputs = (Set.toList $ inputs qc) ++ params decl
+              circuitInputs = Set.toList (inputs qc) ++ params decl
               wrap g        = fromCliffordT . g . toCliffordT
           in
             decl { body = wrap (f circuitQubits circuitInputs) $ body decl }
 
+
 decompileDotQC :: HasFeynmanControl => DotQC -> DotQC
-decompileDotQC qc = qc { decls = map go $ decls qc }
-  where go decl =
+decompileDotQC qc = qc { decls = resynthesizedDecls, qubits = Set.toList (Set.union (inputs qc) usedIDs) }
+  where -- The resynthesis algorithm uses a bunch of ancillae, but doesn't
+        -- bother announcing them. We implicitly pick them out as the mentioned
+        -- qubits which aren't in the original inputs set, and aren't in any
+        -- decl parameters either, and build up a new (full) list of qubits.
+        usedIDs = foldl (\ids d -> Set.union ids (nonParamIDsOfDecl d)) Set.empty resynthesizedDecls
+
+        nonParamIDsOfDecl (Decl {params=paramIDs, body=bodyGates}) =
+          Set.difference allIDsInBodyGates (Set.fromList paramIDs)
+          where allIDsInBodyGates = foldl (flip insertGateIDs) Set.empty bodyGates
+
+        insertGateIDs :: Gate -> Set ID -> Set ID
+        insertGateIDs (Gate _ _ ids) s = foldl (flip Set.insert) s ids
+        insertGateIDs (ParamGate _ _ _ ids) s = foldl (flip Set.insert) s ids
+
+        resynthesizedDecls = map go $ decls qc
+
+        go decl =
           let circuitQubits  = qubits qc ++ params decl
-              circuitInputs  = (Set.toList $ inputs qc) ++ params decl
+              circuitInputs  = Set.toList (inputs qc) ++ params decl
               resynthesize c = Debug.Trace.trace ("decompile, inputs: " ++ show circuitInputs ++ ", qubits: " ++ show circuitQubits) $
                 case doResynthesizeCircuit $ toCliffordT c of
                   Nothing -> if ctlTraceResynthesis

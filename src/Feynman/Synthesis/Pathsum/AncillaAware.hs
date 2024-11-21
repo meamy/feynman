@@ -312,8 +312,7 @@ finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMo
 finalize sop = do
   Debug.Trace.trace ("Finalizing " ++ show sop) (return ())
   AACtx {ctxIDs = outIDs, ctxAncillae = stateAncs} <- gets id
-
-  -- We just assume the ancilla indices will map to [length outIDs ..] because
+  -- We assume the ancilla indices will map to [length outIDs ..] because
   -- indices are always assigned in order in the Pathsum without gaps
   let (_, ancIDIdxRev) =
         foldl
@@ -324,32 +323,36 @@ finalize sop = do
           (Set.fromList outIDs, [])
           [length outIDs .. (length outIDs * 2) - 1]
   let (ancIDs, ancIdx) = unzip (reverse ancIDIdxRev)
-
   let allIDMap = Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
-
   -- mcts is the concatenation of all the circuits synthesized to evaluate the
   -- output ket polynomials
   let mcts = concatMap (uncurry (synthesizeMCTPoly outIDs)) (zip ancIDs (outVals sop))
-  -- From here we just swap the ancillae with their targets, and let the
-  -- ancillae be garbage. If we wanted the ancillae back, we could instead
-  -- CNOT the remainder of the output qubits into their own fresh ancillae,
-  -- and reverse the whole synthesized computation up to this point (except the
-  -- MCTs we just synthesized of course). Sounds expensive to me :shrug:
+  -- We do a little magic here to bring some ancillae into existence which just
+  -- happen to have particular garbage values that match the gates we're about
+  -- synthesize. As we work backwards, they will be uncomputed, and at the end
+  -- they'll have their requisite 0 values and we will annihilate them again.
   let swaps = zipWith Swapper outIDs ancIDs
   let copies = [MCT [outID] ancID | (outID, ancID) <- zip outIDs ancIDs]
+  -- an identity the same bit width as the block of qubits we're concerned
+  -- with, which is also the same as the number of ancillae
   let identitySop = identity (length outIDs)
+  -- fresh as in the fresh ancillae
   let freshSop = ket [constant 0 | _ <- outIDs]
+  -- copy because we copy the original x_0..n qubits out to preserve them
+  -- across whatever transform is happening in sop, that we're synthesizing now
   let copySop = applyExtract allIDMap (tensor identitySop freshSop) copies
-  Debug.Trace.trace ("  copySop: " ++ show copySop) (return ())
-  -- Make a whole pathsum for the ancillae: they will need to be init'ed with
-  -- the logic we synthesize, so that they are back to 0 after we have
-  -- unapplied it (because finalize kind of works backwards in time)
+  traceResynthesis ("  copySop: " ++ show copySop) (return ())
+  -- sopWithAncillae is our magic state with ancillae ready to uncompute
   let sopWithAncillae = times copySop (tensor sop identitySop)
-  Debug.Trace.trace ("  sopWithAncillae: " ++ show sopWithAncillae) (return ())
+  traceResynthesis ("  sopWithAncillae: " ++ show sopWithAncillae) (return ())
   put (AACtx {ctxIDs = outIDs ++ ancIDs, ctxAncillae = Map.union (Map.fromList (zip ancIDs ancIdx)) stateAncs})
   emitGates "Finalize.wastefulSynth" (swaps ++ mcts)
   let sopUndoKetTransform = applyExtract allIDMap sopWithAncillae (swaps ++ mcts)
-  Debug.Trace.trace ("  After finalize synthesis, " ++ show sopUndoKetTransform) (return sopUndoKetTransform)
+  traceResynthesis ("  After undoing the ket transform, " ++ show sopUndoKetTransform) (return ())
+  -- All ancillae should be back to 0 now
+  assert (all ((== constant 0) . (outVals sopUndoKetTransform !!)) ancIdx) return ()
+  let sopAnnihilateAncillae = grind (times sopUndoKetTransform (tensor identitySop (PS.dagger freshSop)))
+  traceResynthesis ("  After annihilating the now-clean ancillae, " ++ show sopAnnihilateAncillae) (return sopAnnihilateAncillae)
   where
     n = inDeg sop
     -- synthesizeAffineOnly :: ExtractionState (Pathsum DMod2)
@@ -532,10 +535,10 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
         else
-          let good = isTrivialUpToGarbage sop' (map snd (Map.toList ancillae))
-           in Debug.Trace.trace
-                (if good then "Resynthesis succeeded" else "Resynthesis failed: sop not trivial")
-                (Debug.Trace.trace ("Trivial up to garbage: " ++ show sop' ++ "; ancillae " ++ show (map snd (Map.toList ancillae))) $ return good)
+          return $
+            traceResynthesisF
+              (\t -> if t then "Resynthesis succeeded" else "Resynthesis failed: sop not trivial")
+              (isTrivial sop')
 
 -- | Resynthesizes a circuit
 resynthesizeCircuit :: (HasFeynmanControl) => [Primitive] -> [ID] -> Maybe [ExtractionGates]
@@ -545,12 +548,10 @@ resynthesizeCircuit xs ancillae =
     (sop, ctx) = runState (computeAction xs) Map.empty
 
 emitGates :: (HasFeynmanControl) => String -> [ExtractionGates] -> ExtractionState ()
-emitGates logDescription gates = traceIf $ tell gates
-  where
-    traceIf x =
-      if ctlTraceResynthesis
-        then Debug.Trace.trace (logDescription ++ ":\n  " ++ intercalate "\n  " (map show gates)) x
-        else x
+emitGates logDescription gates =
+  traceResynthesis
+    (logDescription ++ ":\n  " ++ intercalate "\n  " (map show gates))
+    (tell gates)
 
 {-----------------------------------
  Testing
