@@ -65,15 +65,8 @@ data Options = Options
     verify :: Bool,
     pureCircuit :: Bool,
     useQASM3 :: Bool,
-    featureTraceResynthesis :: Bool,
-    featureUseAncillaSynthesis :: Bool
+    control :: FeynmanControl
   }
-
-makeControl options =
-  FeynmanControl
-    { feynmanControlTraceResynthesis = featureTraceResynthesis options,
-      feynmanControlUseAncillaSynthesis = featureUseAncillaSynthesis options
-    }
 
 -- yuck: typeF is just there to constrain the type of the intermediate representation
 runPasses :: forall a. (ProgramRepresentation a, NFData a) => Options -> (a -> a) -> String -> IO ()
@@ -84,7 +77,7 @@ runPasses options typeF path = do
     Right qprog -> do
       start <- (typeF qprog) `deepseq` getCPUTime
       let qprog' =
-            ( let ?feynmanControl = makeControl options
+            ( let ?feynmanControl = control options
                in foldr (applyPass (pureCircuit options)) qprog (passes options)
             )
       end <- qprog' `deepseq` getCPUTime
@@ -104,7 +97,7 @@ runPasses options typeF path = do
 {- Deprecated transformations for benchmark suites -}
 benchPass :: (ProgramRepresentation a) => Options -> (a -> Either String a)
 benchPass options qc =
-  let ?feynmanControl = makeControl options
+  let ?feynmanControl = control options
    in Right $ foldr (applyPass (pureCircuit options)) qc (passes options)
 
 benchVerif :: Options -> Maybe (DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC)
@@ -168,8 +161,7 @@ defaultOptions =
       verify = False,
       pureCircuit = False,
       useQASM3 = False,
-      featureTraceResynthesis = False,
-      featureUseAncillaSynthesis = False
+      control = FeynmanControl False False False
     }
 
 parseArgs :: Bool -> Options -> [String] -> IO ()
@@ -177,8 +169,12 @@ parseArgs doneSwitches options [] = printHelp
 parseArgs doneSwitches options (x : xs) = case x of
   f | doneSwitches -> runFile f
   "-h" -> printHelp
-  "--feature-trace-resynthesis" -> parseArgs doneSwitches options {featureTraceResynthesis = True} xs
-  "--feature-use-ancilla-synthesis" -> parseArgs doneSwitches options {featureUseAncillaSynthesis = True} xs
+  "--feature-trace-resynthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlTraceResynthesis = True}} xs
+  "--no-feature-trace-resynthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlTraceResynthesis = False}} xs
+  "--feature-use-mct-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseMCTSynthesis = True}} xs
+  "--no-feature-use-mct-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseMCTSynthesis = False}} xs
+  "--feature-use-naive-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseNaiveXAGSynthesis = True}} xs
+  "--no-feature-use-naive-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseNaiveXAGSynthesis = False}} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline" -> parseArgs doneSwitches options {passes = Inline : passes options} xs
   "-unroll" -> parseArgs doneSwitches options {passes = Unroll : passes options} xs

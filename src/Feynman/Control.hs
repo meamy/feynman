@@ -10,7 +10,8 @@ import qualified Debug.Trace
 data FeynmanControl = FeynmanControl
   { -- Log each synthesis step as it occurs
     feynmanControlTraceResynthesis :: Bool,
-    feynmanControlUseAncillaSynthesis :: Bool
+    feynmanControlUseMCTSynthesis :: Bool,
+    feynmanControlUseNaiveXAGSynthesis :: Bool
   }
 
 type HasFeynmanControl = (?feynmanControl :: FeynmanControl)
@@ -19,8 +20,14 @@ type HasFeynmanControl = (?feynmanControl :: FeynmanControl)
 ctlTraceResynthesis :: (HasFeynmanControl) => Bool
 ctlTraceResynthesis = feynmanControlTraceResynthesis ?feynmanControl
 
+ctlUseMCTSynthesis :: (HasFeynmanControl) => Bool
+ctlUseMCTSynthesis = feynmanControlUseMCTSynthesis ?feynmanControl
+
+ctlUseNaiveXAGSynthesis :: (HasFeynmanControl) => Bool
+ctlUseNaiveXAGSynthesis = feynmanControlUseNaiveXAGSynthesis ?feynmanControl
+
 ctlUseAncillaSynthesis :: (HasFeynmanControl) => Bool
-ctlUseAncillaSynthesis = feynmanControlUseAncillaSynthesis ?feynmanControl
+ctlUseAncillaSynthesis = ctlUseMCTSynthesis || ctlUseNaiveXAGSynthesis
 
 traceResynthesis :: (HasFeynmanControl) => String -> a -> a
 traceResynthesis msg x

@@ -1,10 +1,11 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use first" #-}
 
 -- |
 -- Module      : AncillaAware
--- Description : Extraction of unitary path sums to circuits, allowing creation and use of ancillae
+-- Description : Extraction of unitary path sums to circuits, allowing creation and use of ancillas
 -- Copyright   : (c) Matthew Amy, 2021, Joseph Lunderville, 2024
 -- Maintainer  : matt.e.amy@gmail.com
 -- Stability   : experimental
@@ -24,7 +25,6 @@ import Data.Maybe (fromJust, fromMaybe, isJust, isNothing, mapMaybe, maybe)
 import Data.Semigroup ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Debug.Trace
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
@@ -58,48 +58,48 @@ import Test.QuickCheck
  -----------------------------------}
 
 -- idx means IVar index, here
-data AACtx = AACtx {ctxIDs :: [ID], ctxAncillae :: Map ID Int}
+data AACtx = AACtx {ctxIDs :: [ID], ctxAncillas :: Map ID Int}
 
 type ExtractionState a = StateT AACtx (Writer [ExtractionGates]) a
 
 -- | Create a bidirectional context from a mapping from IDs to indices
 fromCtx :: Int -> Map ID Int -> AACtx
-fromCtx expectedOrd = flip (fromCtxWithAncillae expectedOrd) Set.empty
+fromCtx expectedOrd = flip (fromCtxWithAncillas expectedOrd) Set.empty
 
-fromCtxWithAncillae :: Int -> Map ID Int -> Set ID -> AACtx
-fromCtxWithAncillae expectedOrd ctx ancillae =
-  assert (Set.isProperSubsetOf ancillae (Map.keysSet ctx)) $
-    assert (Set.isSubsetOf (Set.union (Map.keysSet ctx) ancillae) (Set.fromList completeListRev)) $
+fromCtxWithAncillas :: Int -> Map ID Int -> Set ID -> AACtx
+fromCtxWithAncillas expectedOrd ctx ancillas =
+  assert (Set.isProperSubsetOf ancillas (Map.keysSet ctx)) $
+    assert (Set.isSubsetOf (Set.union (Map.keysSet ctx) ancillas) (Set.fromList completeListRev)) $
       assert (all (\(k, i) -> if Map.member k ctx then i == ctx ! k else True) (zip (reverse completeListRev) [0 ..])) $
-        AACtx (reverse completeListRev) newAncillae
+        AACtx (reverse completeListRev) newAncillas
   where
-    (completeListRev, newAncillae) =
-      ascListToCompleteListWithAncillae
+    (completeListRev, newAncillas) =
+      ascListToCompleteListWithAncillas
         0
-        (Set.union (Map.keysSet ctx) ancillae)
-        ([], Map.filterWithKey (\k v -> Set.member k ancillae) ctx)
+        (Set.union (Map.keysSet ctx) ancillas)
+        ([], Map.filterWithKey (\k v -> Set.member k ancillas) ctx)
         ((sort . map (\(a, b) -> (b, a))) (Map.toList ctx))
 
-    ascListToCompleteListWithAncillae :: Int -> Set ID -> ([ID], Map ID Int) -> [(Int, ID)] -> ([ID], Map ID Int)
-    ascListToCompleteListWithAncillae nextIdx idsSoFar (listProgressRev, ancillaeProgress) ascList
+    ascListToCompleteListWithAncillas :: Int -> Set ID -> ([ID], Map ID Int) -> [(Int, ID)] -> ([ID], Map ID Int)
+    ascListToCompleteListWithAncillas nextIdx idsSoFar (listProgressRev, ancillasProgress) ascList
       -- Accounted for all variable IDs?
       | assert (nextIdx <= expectedOrd) (nextIdx == expectedOrd) =
-          assert (null ascList) (listProgressRev, ancillaeProgress)
+          assert (null ascList) (listProgressRev, ancillasProgress)
       -- Either no more explicit IDs, or we're convering a gap; generate a new ancilla
       | null ascList || (fst . head) ascList < nextIdx =
           let newID = newAncillaID idsSoFar nextIdx
-           in ascListToCompleteListWithAncillae
+           in ascListToCompleteListWithAncillas
                 (nextIdx + 1)
                 (Set.insert newID idsSoFar)
-                (newID : listProgressRev, Map.insert newID nextIdx ancillaeProgress)
+                (newID : listProgressRev, Map.insert newID nextIdx ancillasProgress)
                 ascList
       -- The only remaining case is an explicit ID, so expect that
       | assert ((fst . head) ascList == nextIdx) otherwise =
           let (idx, qID) : ascListRemain = ascList
-           in ascListToCompleteListWithAncillae
+           in ascListToCompleteListWithAncillas
                 (nextIdx + 1)
                 idsSoFar
-                (qID : listProgressRev, ancillaeProgress)
+                (qID : listProgressRev, ancillasProgress)
                 ascListRemain
 
 newAncillaID :: Set ID -> Int -> ID
@@ -310,107 +310,76 @@ nonlinearSimplifications sop = do
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalize sop = do
-  Debug.Trace.trace ("Finalizing " ++ show sop) (return ())
-  AACtx {ctxIDs = outIDs, ctxAncillae = stateAncs} <- gets id
-  -- We assume the ancilla indices will map to [length outIDs ..] because
-  -- indices are always assigned in order in the Pathsum without gaps
-  let (_, ancIDIdxRev) =
-        foldl
-          ( \(idSoFar, ancSoFarRev) ancIdx ->
-              let ancID = findNewID idSoFar ancIdx
-               in (Set.insert ancID idSoFar, (ancID, ancIdx) : ancSoFarRev)
-          )
-          (Set.fromList outIDs, [])
-          [length outIDs .. (length outIDs * 2) - 1]
-  let (ancIDs, ancIdx) = unzip (reverse ancIDIdxRev)
-  let allIDMap = Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
-  -- mcts is the concatenation of all the circuits synthesized to evaluate the
-  -- output ket polynomials
-  let mcts = concatMap (uncurry (synthesizeMCTPoly outIDs)) (zip ancIDs (outVals sop))
-  -- We do a little magic here to bring some ancillae into existence which just
-  -- happen to have particular garbage values that match the gates we're about
-  -- synthesize. As we work backwards, they will be uncomputed, and at the end
-  -- they'll have their requisite 0 values and we will annihilate them again.
-  let swaps = zipWith Swapper outIDs ancIDs
-  let copies = [MCT [outID] ancID | (outID, ancID) <- zip outIDs ancIDs]
-  -- an identity the same bit width as the block of qubits we're concerned
-  -- with, which is also the same as the number of ancillae
-  let identitySop = identity (length outIDs)
-  -- fresh as in the fresh ancillae
-  let freshSop = ket [constant 0 | _ <- outIDs]
-  -- copy because we copy the original x_0..n qubits out to preserve them
-  -- across whatever transform is happening in sop, that we're synthesizing now
-  let copySop = applyExtract allIDMap (tensor identitySop freshSop) copies
-  traceResynthesis ("  copySop: " ++ show copySop) (return ())
-  -- sopWithAncillae is our magic state with ancillae ready to uncompute
-  let sopWithAncillae = times copySop (tensor sop identitySop)
-  traceResynthesis ("  sopWithAncillae: " ++ show sopWithAncillae) (return ())
-  put (AACtx {ctxIDs = outIDs ++ ancIDs, ctxAncillae = Map.union (Map.fromList (zip ancIDs ancIdx)) stateAncs})
-  emitGates "Finalize.wastefulSynth" (swaps ++ mcts)
-  let sopUndoKetTransform = applyExtract allIDMap sopWithAncillae (swaps ++ mcts)
-  traceResynthesis ("  After undoing the ket transform, " ++ show sopUndoKetTransform) (return ())
-  -- All ancillae should be back to 0 now
-  assert (all ((== constant 0) . (outVals sopUndoKetTransform !!)) ancIdx) return ()
-  let sopAnnihilateAncillae = grind (times sopUndoKetTransform (tensor identitySop (PS.dagger freshSop)))
-  traceResynthesis ("  After annihilating the now-clean ancillae, " ++ show sopAnnihilateAncillae) (return sopAnnihilateAncillae)
+  traceResynthesis ("Finalizing " ++ show sop) (return ())
+  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
+
+  -- Indexes start at "outDeg sop", which will be the index of the
+  -- lowest-indexed bit in the ancillas when they're tensored onto "sop"
+  let ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) (Set.fromList outIDs)
+      ancIDs = map fst ancIDIdxs
+      freshSop = ket (replicate (outDeg sop) (constant 0))
+      unfreshSop = PS.dagger freshSop
+      allIDMap = Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
+      -- The [MCT ...] in copyGates leaves the ancillas bearing the original
+      -- inputs, before the polynomial was computed -- the synthesis is working
+      -- backwards to cancel out "sop", so the state of the ancillas has to
+      -- start out (now) as the garbage that would be left behind by it
+      copyGates = [MCT [outID] ancID | (ancID, outID) <- zip ancIDs outIDs]
+      -- copySop is our magic state with ancillas ready to uncompute
+      copySop = applyExtract allIDMap (tensor (identity (outDeg sop)) freshSop) copyGates
+      -- expandSop is sop, with the (now garbage) ancilla qubits; note copySop
+      -- is added on the *left* because it needs the original input states
+      expandSop = times copySop (tensor sop (identity (outDeg freshSop)))
+      -- Synthesize computation of polynomial terms into ancillas
+      mctGates = concatMap (uncurry $ sboolMcts outIDs) (zip ancIDs (outVals sop))
+      -- Synthesize swapping of computed terms with original inputs (this is
+      -- where our actual garbage lines up with the magic garbage state)
+      swapGates = [Swapper ancID outID | (ancID, outID) <- zip ancIDs outIDs]
+  -- When we emit/apply, we are uncomputing "sop", so the computation order is
+  -- backwards relative to the final program, which will be dagger'd
+  emitGates "Finalize (MCT)" (swapGates ++ mctGates)
+  let applySop = applyExtract allIDMap expandSop (swapGates ++ mctGates)
+  -- All ancillas should be back to 0 now
+  assert (all ((== constant 0) . (outVals applySop !!)) [ancI | (_, ancI) <- ancIDIdxs]) (return ())
+  -- Annihilate the cleared ancillas, otherwise our isTrivial test won't work;
+  -- in general the system expects the inDeg/outDeg of sop not to change, but
+  -- there is code later on that will look for IDs which don't correspond to
+  -- inputs/outputs of the original code, and infer them as ancillas.
+  -- We don't actually want to permanently add the ancillas to the ctxIDs, in fact the only reason to
+  let annihilateSop = grind (times applySop (tensor (identity (outDeg sop)) (PS.dagger freshSop)))
+  traceResynthesis ("  After annihilating the now-clean ancillas, " ++ show annihilateSop) (return ())
+  return annihilateSop
   where
-    n = inDeg sop
-    -- synthesizeAffineOnly :: ExtractionState (Pathsum DMod2)
-    -- synthesizeAffineOnly = do
-    --   ctx <- gets snd
-    --   let input = Map.map (\i -> (bitI n i, False)) ctx
-    --   let output = Map.map (\i -> bitvecOfPoly $ outVals sop !! i) ctx
-    --   let circ = affineSynth input output
-    --   emitGates "Finalize.affineOnly" $ map toMCT circ
-    --   return $ sop .> computeActionInCtx circ ctx
+    sboolMcts outIDs ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms outIDs sbool)
+    termMct ancID (val, termIDs)
+      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
+      | otherwise = [MCT termIDs ancID]
 
-    -- bitvecOfPoly p = (foldr xor (bitI 0 0) . map bitvecOfVar . Set.toList $ vars p, getConstant p == 1)
-    -- bitvecOfVar (IVar i) = bitI n i
-    -- bitvecOfVar (PVar _) = error "Attempting to finalize a proper path-sum!"
-    -- bitvecOfVar (FVar _) = error "Attempting to extract a path-sum with free variables!"
+toSynthesizableTerms :: (HasFeynmanControl) => [ID] -> SBool Var -> [(FF2, [ID])]
+toSynthesizableTerms idList outPoly =
+  -- Get all the monomial var sets as ID lists
+  map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
+  where
+    -- Map each IVar in the monomial through the idList
+    termIDs term = [idList !! i | IVar i <- Set.toList (vars term)]
 
-    -- synthesizeMCTPoly :: [ID] -> ID -> Multilinear Var g r -> [ExtractionGates]
-    synthesizeMCTPoly idList ancID outPoly
-      | Debug.Trace.trace ("wastefulSynth " ++ show outPoly) otherwise =
-          -- This is kind of elegantly awful. We have a list of terms for
-          -- this multilinear, and each term is a list of vars. Eventually
-          -- we want to synthesize an MCT (i.e. multiply) for each term and
-          -- CNOT (i.e. add) them together, because that's what a multilinear
-          -- do. So we go terms -> get monomial -> get vars -> convert to
-          -- list ...
-          let termVars = map (Set.toList . vars . snd) (toTermList outPoly) :: [[Var]]
-           in -- ... -> then within each list of vars: get the index -> map via
-              -- ctx to IDs; and finally -> MCT from each list of IDs.
-              -- The controlled qubit is our clean ancilla.
-              map (flip MCT ancID . map ((idList !!) . unI)) termVars
+findNewIDs :: [Int] -> Set ID -> [(ID, Int)]
+findNewIDs idxs idSet =
+  reverse $ findNewIDsAux [] idSet idxs
+  where
+    findNewIDsAux :: [(ID, Int)] -> Set ID -> [Int] -> [(ID, Int)]
+    findNewIDsAux idIdxsSoFar _ [] = idIdxsSoFar
+    findNewIDsAux idIdxsSoFar idsSoFar (i : idxsRemain) =
+      let newID = findNewID idsSoFar i
+       in findNewIDsAux ((newID, i) : idIdxsSoFar) (Set.insert newID idsSoFar) idxsRemain
 
-    freshAncilla :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2, ID, Int)
-    freshAncilla synthSop = do
-      AACtx {ctxIDs = idList, ctxAncillae = ancillaMap} <- gets id
-      let sopWithAnc = tensor synthSop fresh
-      -- "outDeg synthSop" will be the index of the lowest-indexed bit in the
-      -- renumbered thing (which is our ancilla) on the RHS of the tensor
-      let ancI = outDeg synthSop
-      let ancID = findNewID (Set.fromList idList) ancI
-      -- ancID has to go at the tail, IDs are mapped positionally
-      put (AACtx {ctxIDs = idList ++ [ancID], ctxAncillae = Map.insert ancID ancI ancillaMap})
-      return (sopWithAnc, ancID, ancI)
-
-    -- find an unused ID (not in usedIDs) of the form "@<num>"
-    findNewID usedIDs k =
-      let tryID = '@' : show k
-       in if Set.notMember tryID usedIDs
-            then tryID
-            else findNewID usedIDs (k + 1)
-
-    -- if an output is just added together with other degree 1 terms, the
-    -- output is trivial to generate with 0 or more CNOT -- probably affine
-    -- synthesis should have taken care of these cases already
-    isEasyAffinePoly :: (Ord v) => v -> SBool v -> Bool
-    isEasyAffinePoly outID poly =
-      let (_, terms) = unzip (toTermList poly)
-          termVars = map vars terms
-       in all ((== 1) . Set.size) termVars && any (Set.member outID) termVars
+-- find an unused ID (not in usedIDs) of the form "@<num>"
+findNewID :: (Show t, Num t) => Set ID -> t -> ID
+findNewID usedIDs k =
+  let tryID = '@' : show k
+   in if Set.notMember tryID usedIDs
+        then tryID
+        else findNewID usedIDs (k + 1)
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -504,7 +473,7 @@ pushSwaps = reverse . snd . go (Map.empty, [])
 
 -- | A single pass of the synthesis algorithm
 synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-synthesizeFrontier sop = Debug.Trace.trace ("Synthesizing " ++ show sop) $ go (grind sop)
+synthesizeFrontier sop = traceResynthesis ("Synthesizing " ++ show sop) $ go (grind sop)
   where
     go sop
       | pathVars sop == 0 = synthesisPass sop >>= finalize
@@ -530,7 +499,7 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       _ -> Nothing
     go sop = do
       sop' <- synthesizeFrontier sop
-      ancillae <- gets ctxAncillae
+      ancillas <- gets ctxAncillas
       let pathVarsLeft = pathVars sop'
       if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
@@ -542,8 +511,8 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
 
 -- | Resynthesizes a circuit
 resynthesizeCircuit :: (HasFeynmanControl) => [Primitive] -> [ID] -> Maybe [ExtractionGates]
-resynthesizeCircuit xs ancillae =
-  pushSwaps <$> extractUnitary (fromCtxWithAncillae (outDeg sop) ctx (Set.fromList ancillae)) sop
+resynthesizeCircuit xs ancillas =
+  pushSwaps <$> extractUnitary (fromCtxWithAncillas (outDeg sop) ctx (Set.fromList ancillas)) sop
   where
     (sop, ctx) = runState (computeAction xs) Map.empty
 

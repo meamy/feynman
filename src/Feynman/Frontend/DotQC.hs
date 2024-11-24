@@ -468,7 +468,7 @@ optimizeDotQC f qc = qc { decls = map go $ decls qc }
 
 decompileDotQC :: HasFeynmanControl => DotQC -> DotQC
 decompileDotQC qc = qc { decls = resynthesizedDecls, qubits = Set.toList (Set.union (inputs qc) usedIDs) }
-  where -- The resynthesis algorithm uses a bunch of ancillae, but doesn't
+  where -- The resynthesis algorithm uses a bunch of ancillas, but doesn't
         -- bother announcing them. We implicitly pick them out as the mentioned
         -- qubits which aren't in the original inputs set, and aren't in any
         -- decl parameters either, and build up a new (full) list of qubits.
