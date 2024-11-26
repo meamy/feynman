@@ -38,6 +38,7 @@ import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
+import Feynman.Synthesis.XAG.Util
 import qualified Feynman.Util.Unicode as U
 import Feynman.Verification.Symbolic
 import Test.QuickCheck
@@ -309,20 +310,25 @@ nonlinearSimplifications sop = do
 -- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalize sop = do
-  traceResynthesis ("Finalizing " ++ show sop) (return ())
-  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
+finalize
+  | ctlUseMCTSynthesis = finalizeMCT
+  | ctlUseNaiveXAGSynthesis = finalizeNaiveXAG
 
+finalizeMCT :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeMCT sop = do
+  traceResynthesis ("Finalizing (MCT) " ++ show sop) (return ())
+  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
   -- Indexes start at "outDeg sop", which will be the index of the
-  -- lowest-indexed bit in the ancillas when they're tensored onto "sop"
-  let ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) (Set.fromList outIDs)
+  -- lowest-indexed bit in the ancillas when they're tensored onto sop
+  let allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList outIDs)
+      ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) allIDs
       ancIDs = map fst ancIDIdxs
       freshSop = ket (replicate (outDeg sop) (constant 0))
       unfreshSop = PS.dagger freshSop
-      allIDMap = Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
+      allIDMap = Map.union stateAncs (Map.fromList (zip (outIDs ++ ancIDs) [0 ..]))
       -- The [MCT ...] in copyGates leaves the ancillas bearing the original
       -- inputs, before the polynomial was computed -- the synthesis is working
-      -- backwards to cancel out "sop", so the state of the ancillas has to
+      -- backwards to cancel out sop, so the state of the ancillas has to
       -- start out (now) as the garbage that would be left behind by it
       copyGates = [MCT [outID] ancID | (ancID, outID) <- zip ancIDs outIDs]
       -- copySop is our magic state with ancillas ready to uncompute
@@ -335,7 +341,8 @@ finalize sop = do
       -- Synthesize swapping of computed terms with original inputs (this is
       -- where our actual garbage lines up with the magic garbage state)
       swapGates = [Swapper ancID outID | (ancID, outID) <- zip ancIDs outIDs]
-  -- When we emit/apply, we are uncomputing "sop", so the computation order is
+  put $ AACtx {ctxIDs = outIDs, ctxAncillas = Map.union stateAncs (Map.fromList ancIDIdxs)}
+  -- When we emit/apply, we are uncomputing sop, so the computation order is
   -- backwards relative to the final program, which will be dagger'd
   emitGates "Finalize (MCT)" (swapGates ++ mctGates)
   let applySop = applyExtract allIDMap expandSop (swapGates ++ mctGates)
@@ -345,7 +352,70 @@ finalize sop = do
   -- in general the system expects the inDeg/outDeg of sop not to change, but
   -- there is code later on that will look for IDs which don't correspond to
   -- inputs/outputs of the original code, and infer them as ancillas.
-  -- We don't actually want to permanently add the ancillas to the ctxIDs, in fact the only reason to
+  -- We don't actually want to permanently add the ancillas to the ctxIDs, in
+  -- fact the only reason to track them is to ensure uniqueness in the IDs
+  let annihilateSop = grind (times applySop (tensor (identity (outDeg sop)) (PS.dagger freshSop)))
+  traceResynthesis ("  After annihilating the now-clean ancillas, " ++ show annihilateSop) (return ())
+  return annihilateSop
+  where
+    sboolMcts outIDs ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms outIDs sbool)
+    termMct ancID (val, termIDs)
+      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
+      | otherwise = [MCT termIDs ancID]
+
+-- TODO:
+-- Finish "naive XAG" generation
+-- Restructure so the XAG gen and ancilla allocation are separate functions
+-- Specialize XAG gen into naive vs. optimizing
+-- Consider folding MCT gen into XAG and sharing the ancilla allocation
+
+-- data XAGTree =
+
+finalizeNaiveXAG :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeNaiveXAG sop = do
+  traceResynthesis ("Finalizing (XAG) " ++ show sop) (return ())
+  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
+
+  let xag = fromSBools (inDeg sop) (outVals sop)
+  traceResynthesis ("XAG from sbools: " ++ show xag) (return ())
+  -- Translate to MCTs and allocate ancillas
+
+  -- Indexes start at "outDeg sop", which will be the index of the
+  -- lowest-indexed bit in the ancillas when they're tensored onto sop
+  let allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList outIDs)
+      ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) allIDs
+      ancIDs = map fst ancIDIdxs
+      freshSop = ket (replicate (outDeg sop) (constant 0))
+      unfreshSop = PS.dagger freshSop
+      allIDMap = Map.union stateAncs $ Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
+      -- The [MCT ...] in copyGates leaves the ancillas bearing the original
+      -- inputs, before the polynomial was computed -- the synthesis is working
+      -- backwards to cancel out sop, so the state of the ancillas has to
+      -- start out (now) as the garbage that would be left behind by it
+      copyGates = [MCT [outID] ancID | (ancID, outID) <- zip ancIDs outIDs]
+      -- copySop is our magic state with ancillas ready to uncompute
+      copySop = applyExtract allIDMap (tensor (identity (outDeg sop)) freshSop) copyGates
+      -- expandSop is sop, with the (now garbage) ancilla qubits; note copySop
+      -- is added on the *left* because it needs the original input states
+      expandSop = times copySop (tensor sop (identity (outDeg freshSop)))
+      -- Synthesize computation of polynomial terms into ancillas
+      mctGates = concatMap (uncurry $ sboolMcts outIDs) (zip ancIDs (outVals sop))
+      -- Synthesize swapping of computed terms with original inputs (this is
+      -- where our actual garbage lines up with the magic garbage state)
+      swapGates = [Swapper ancID outID | (ancID, outID) <- zip ancIDs outIDs]
+  put $ AACtx {ctxIDs = outIDs, ctxAncillas = Map.union stateAncs (Map.fromList ancIDIdxs)}
+  -- When we emit/apply, we are uncomputing sop, so the computation order is
+  -- backwards relative to the final program, which will be dagger'd
+  emitGates "Finalize (MCT)" (swapGates ++ mctGates)
+  let applySop = applyExtract allIDMap expandSop (swapGates ++ mctGates)
+  -- All ancillas should be back to 0 now
+  assert (all ((== constant 0) . (outVals applySop !!)) [ancI | (_, ancI) <- ancIDIdxs]) (return ())
+  -- Annihilate the cleared ancillas, otherwise our isTrivial test won't work;
+  -- in general the system expects the inDeg/outDeg of sop not to change, but
+  -- there is code later on that will look for IDs which don't correspond to
+  -- inputs/outputs of the original code, and infer them as ancillas.
+  -- We don't actually want to permanently add the ancillas to the ctxIDs, in
+  -- fact the only reason to track them is to ensure uniqueness in the IDs
   let annihilateSop = grind (times applySop (tensor (identity (outDeg sop)) (PS.dagger freshSop)))
   traceResynthesis ("  After annihilating the now-clean ancillas, " ++ show annihilateSop) (return ())
   return annihilateSop
