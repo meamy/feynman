@@ -64,7 +64,7 @@ data Pass = Triv
           | CT
           | Simplify
           | Phasefold
-          | PauliFold Int
+          | Paulifold Int
           | Statefold Int
           | CNOTMin
           | TPar
@@ -110,7 +110,7 @@ dotQCPass pass = case pass of
   CT          -> DotQC.expandAll
   Simplify    -> DotQC.simplifyDotQC
   Phasefold   -> optimizeDotQC phaseFold
-  PauliFold d -> optimizeDotQC (pauliFold d)
+  Paulifold d -> optimizeDotQC (pauliFold d)
   Statefold d -> optimizeDotQC (stateFold d)
   CNOTMin     -> optimizeDotQC minCNOT
   TPar        -> optimizeDotQC tpar
@@ -178,7 +178,7 @@ qasmPass pureCircuit pass = case pass of
   Simplify    -> id
   Phasefold   -> QASM2.applyOpt phaseFold pureCircuit
   Statefold d -> QASM2.applyOpt (stateFold d) pureCircuit
-  PauliFold d -> QASM2.applyOpt (pauliFold d) pureCircuit
+  Paulifold d -> QASM2.applyOpt (pauliFold d) pureCircuit
   CNOTMin     -> QASM2.applyOpt minCNOT pureCircuit
   TPar        -> QASM2.applyOpt tpar pureCircuit
   Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
@@ -223,8 +223,8 @@ qasm3Pass pureCircuit pass = case pass of
   Phasefold   -> QASM3Utils.applyWStmtOpt phaseAnalysispp
   Statefold 1 -> QASM3Utils.applyWStmtOpt phaseAnalysispp
   Statefold d -> QASM3Utils.applyWStmtOpt (stateAnalysispp d)
-  PauliFold 1 -> QASM3Utils.applyWStmtOpt phaseAnalysispp
-  PauliFold d -> QASM3Utils.applyWStmtOpt (stateAnalysispp d)
+  Paulifold 1 -> QASM3Utils.applyWStmtOpt phaseAnalysispp
+  Paulifold d -> QASM3Utils.applyWStmtOpt (stateAnalysispp d)
   CNOTMin     -> id
   TPar        -> id
   Cliff       -> id
@@ -282,36 +282,41 @@ printHelp = mapM_ putStrLn lines
           "Run with feynopt [passes] (<circuit>.(qc | qasm) | Small | Med | All | -benchmarks <path to folder>)",
           "",
           "Options:",
-          "  -purecircuit\tPerform qasm passes assuming the initial state (of qubits) is unknown",
-          "  -verify\tVerify equivalence of the output to the original circuit (only dotQC)",
-          "  -qasm3\tRun using the openQASM 3 frontend",
+          "  -purecircuit\t\tPerform qasm passes assuming the initial state (of qubits) is unknown",
+          "  -verify\t\tVerify equivalence of the output to the original circuit (only dotQC)",
+          "  -qasm3\t\tRun using the openQASM 3 frontend",
           "",
           "Transformation passes:",
-          "  -inline\tInline all sub-circuits",
-          "  -unroll\tUnroll loops (QASM3 specific)",
-          "  -mctExpand\tExpand all MCT gates using |0>-initialized ancillas",
-          "  -toCliffordT\tExpand all gates to Clifford+T gates",
-          "  -decompile\tDecompiles a Clifford+T circuit into multiply-controlled gates",
+          "  -inline\t\tInline all sub-circuits",
+          "  -unroll\t\tUnroll loops (QASM3 specific)",
+          "  -mctExpand\t\tExpand all MCT gates using |0>-initialized ancillas",
+          "  -toCliffordT\t\tExpand all gates to Clifford+T gates",
+          "  -decompile\t\tDecompiles a Clifford+T circuit into multiply-controlled gates",
+          "  -cxcz\t\t\tReplaces CNOT gates with H and CZ",
+          "  -czcx\t\t\tReplaces CZ gates with H and CNOT",
           "",
           "Optimization passes:",
-          "  -simplify\tBasic gate-cancellation pass",
-          "  -phasefold\tMerges phase gates according to the circuit's phase polynomial",
+          "  -simplify\t\tBasic gate-cancellation pass",
+          "  -phasefold\t\tMerges phase gates according to the circuit's phase polynomial",
           "  -statefold <d>\tPhase folding with state invariants up to degree <d> (or unbounded if d < 1)",
-          "  -tpar\t\tPhase folding + T-parallelization algorithm from [AMM14]",
-          "  -cnotmin\tPhase folding + CNOT-minimization algorithm from [AAM17]",
-          "  -clifford\t\t Re-synthesize Clifford segments",
-          "  -O2\t\t**Standard strategy** Phase folding + simplify",
-          "  -O3\t\tPhase folding + state folding + simplify + CNOT minimization",
-          "  -O4\t\tPhase folding + state folding + simplify + Clifford resynthesis + CNOT minimization",
+          "  -paulifold <d>\tMonotone optimization equivalent to -cxcz -statefold",
+          "  -tpar\t\t\tPhase folding + T-parallelization algorithm from (Amy, Maslov, Mosca, TCAD 2014)",
+          "  -cnotmin\t\tPhase folding + CNOT-minimization algorithm from (Amy, Azimzadeh, Mosca, Q. Sci. Tech. 2017)",
+          "  -clifford\t\tRe-synthesize Clifford segments",
+          "",
+          "  -O2\t\t\t**Standard strategy** Phase folding + simplify",
+          "  -O3\t\t\tPhase folding + state folding + simplify + CNOT minimization",
+          "  -O4\t\t\tPhase folding + state folding + simplify + Clifford resynthesis + CNOT minimization",
+          "",
+          "  -apf\t\t\tAffine phase folding (Amy & Lunderville, POPL 2025)",
+          "  -qpf\t\t\tQuadratic phase folding (Amy & Lunderville, POPL 2025)",
+          "  -ppf\t\t\tPolynomial phase folding (Amy & Lunderville, POPL 2025)",
           "",
           "Benchmarking:",
           "  -benchmark <path>\tRun on all files in <folder> and output statistics",
-          "  -apf\t\tAffine phase folding (Amy & Lunderville, POPL 2025)",
-          "  -qpf\t\tQuadratic phase folding (Amy & Lunderville, POPL 2025)",
-          "  -ppf\t\tPolynomial phase folding (Amy & Lunderville, POPL 2025)",
           "",
           "Misc:",
-          "  -invgen <file>\tGenerates loop transition invariants and prints them",
+          "  -invgen <file>\tGenerates and prints loop invariants",
           "",
           "E.g. \"feyn -verify -inline -cnotmin -simplify circuit.qc\" will first inline the circuit,",
           "       then optimize CNOTs, followed by a gate cancellation pass and finally verify the result",
@@ -342,6 +347,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-simplify"    -> parseArgs doneSwitches options {passes = Simplify:passes options} xs
   "-phasefold"   -> parseArgs doneSwitches options {passes = Phasefold:passes options} xs
   "-statefold"   -> parseArgs doneSwitches options {passes = (Statefold $ read (head xs)):passes options} (tail xs)
+  "-paulifold"   -> parseArgs doneSwitches options {passes = (Paulifold $ read (head xs)):passes options} (tail xs)
   "-cnotmin"     -> parseArgs doneSwitches options {passes = CNOTMin:passes options} xs
   "-tpar"        -> parseArgs doneSwitches options {passes = TPar:passes options} xs
   "-clifford"    -> parseArgs doneSwitches options {passes = Cliff:passes options} xs
@@ -368,10 +374,10 @@ parseArgs doneSwitches options (x:xs) = case x of
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
         o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4  = [CNOTMin,Cliff,PauliFold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Simplify,PauliFold 1,Simplify,Statefold 1,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,PauliFold 1,Simplify,Statefold 2,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,PauliFold 1,Simplify,Statefold 0,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        o4  = [CNOTMin,Cliff,Paulifold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
+        apf = [Simplify,Paulifold 1,Simplify,Statefold 1,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
+        qpf = [Simplify,Paulifold 1,Simplify,Statefold 2,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
+        ppf = [Simplify,Paulifold 1,Simplify,Statefold 0,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
         runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
         runFile f | (drop (length f - 5) f) == ".qasm" =
           if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
