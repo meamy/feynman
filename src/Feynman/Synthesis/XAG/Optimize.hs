@@ -175,13 +175,13 @@ findReducible :: XAG.Graph -> [Int]
 findReducible (XAG.Graph allNodes _ _) = findReducibleNodes allNodes
 
 reduceAndToNotXor :: Int -> XAG.Graph -> Maybe XAG.Graph
-reduceAndToNotXor andID (XAG.Graph allNodes inOrd outOrd) =
+reduceAndToNotXor andID (XAG.Graph allNodes inIDs outIDs) =
   case splitNodes andID allNodes of
     (leftNodes, XAG.And _ xID yID : rightNodes) -> Just (updateGraph leftNodes xID yID rightNodes)
     (_, _) -> Nothing
   where
     updateGraph leftNodes xID yID rightNodes =
-      XAG.Graph updatedNodes inOrd (renumberIDs andID 1 1 outOrd)
+      XAG.Graph updatedNodes inIDs (renumberIDs andID 1 1 outIDs)
       where
         updatedNodes =
           leftNodes

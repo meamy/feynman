@@ -64,7 +64,7 @@ instance Ord Node where
       compareType (Xor {}) _ = LT
       compareType (And {}) _ = undefined
 
-data Graph = Graph {xagNodes :: [Node], inputOrder :: [Int], outputOrder :: [Int]}
+data Graph = Graph {xagNodes :: [Node], inputIDs :: [Int], outputIDs :: [Int]}
   deriving (Eq, Generic, Ord, Read, Show)
 
 -- compute the set of free variables used by this graph
@@ -233,19 +233,19 @@ nodeRefs _ = IntSet.empty
 --     firstTrueConst (_ : nodes) = firstTrueConst nodes
 
 valid :: Graph -> Bool
-valid (Graph {xagNodes = ns, inputOrder = inOrd, outputOrder = outOrd}) =
+valid (Graph {xagNodes = ns, inputIDs = inIDs, outputIDs = outIDs}) =
   -- node list is valid according to those basic rules
   validNodes ns
     -- no dups in the input order (that would mean a double-assignment)
-    && (IntSet.size inOrdSet == length inOrd)
-    -- inputOrder completely specifies the free variables (but inputs may be disconnected)
-    && IntSet.isSubsetOf freeVarSet inOrdSet
-    -- outputOrder may have dups
-    -- outputOrder may only refer to inputOrder and actual outputs
-    && IntSet.isSubsetOf outOrdSet (IntSet.union outSet inOrdSet)
+    && (IntSet.size inIDSet == length inIDs)
+    -- inputIDs completely specifies the free variables (but inputs may be disconnected)
+    && IntSet.isSubsetOf freeVarSet inIDSet
+    -- outputIDs may have dups
+    -- outputIDs may only refer to inputIDs and actual outputs
+    && IntSet.isSubsetOf outIDSet (IntSet.union outSet inIDSet)
   where
-    inOrdSet = IntSet.fromList inOrd
-    outOrdSet = IntSet.fromList outOrd
+    inIDSet = IntSet.fromList inIDs
+    outIDSet = IntSet.fromList outIDs
     freeVarSet = freeVariables ns
     outSet = outputs ns
 
@@ -266,12 +266,12 @@ validNodes = validNodesAux 0
     validInput n x = (x >= 0) && (x < n)
 
 eval :: Graph -> [Bool] -> Maybe [Bool]
-eval g@(Graph nodes inOrd outOrd) inVec
+eval g@(Graph nodes inIDs outIDs) inVec
   | not (valid g) = Nothing
   | not (IntSet.null (freeVariables simNodes)) = Nothing
   | otherwise =
       let resMap = foldl doEval IntMap.empty simNodes
-       in Just $ map (resMap IntMap.!) outOrd
+       in Just $ map (resMap IntMap.!) outIDs
   where
     doEval :: IntMap.IntMap Bool -> Node -> IntMap.IntMap Bool
     doEval res (Const nid val) = IntMap.insert nid val res
@@ -280,7 +280,7 @@ eval g@(Graph nodes inOrd outOrd) inVec
     doEval res (And nid xID yID) = IntMap.insert nid ((res IntMap.! xID) .&. (res IntMap.! yID)) res
 
     simNodes = sort (fixVars ++ nodes)
-    fixVars = zipWith Const inOrd inVec
+    fixVars = zipWith Const inIDs inVec
 
 -- andCost :: (Num b) => Graph a -> b
 -- andCost g = eval g (+) (\x y -> x + y + 1) (const 0)
@@ -299,7 +299,7 @@ instance QC.Arbitrary Graph where
     let allOutputs = map nodeID nodes
     outShuf <- QC.shuffle allOutputs
     randOuts <- QC.sublistOf outShuf
-    return $ Graph {xagNodes = nodes, inputOrder = randIns, outputOrder = randOuts}
+    return $ Graph {xagNodes = nodes, inputIDs = randIns, outputIDs = randOuts}
     where
       genNode n = do
         QC.frequency [(1, genConstNode n), (10, genNotNode n), (20, genXANode n)]

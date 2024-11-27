@@ -15,7 +15,7 @@ module Feynman.Synthesis.Pathsum.AncillaAware where
 import Control.Applicative ((<|>))
 import Control.Exception (assert)
 import Control.Monad (foldM, liftM, mapM, mfilter, msum, when, (>=>))
-import Control.Monad.State.Strict (StateT, evalState, evalStateT, get, gets, put, runState)
+import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, put, runState)
 import Control.Monad.Writer.Lazy (Writer, execWriter, runWriter, tell)
 import Data.Bits (xor)
 import Data.List (elemIndex, find, intercalate, sort, (\\))
@@ -38,6 +38,7 @@ import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
+import qualified Feynman.Synthesis.XAG.Graph as XAG
 import Feynman.Synthesis.XAG.Util
 import qualified Feynman.Util.Unicode as U
 import Feynman.Verification.Symbolic
@@ -371,6 +372,8 @@ finalizeMCT sop = do
 
 -- data XAGTree =
 
+data FNXCtx = FNXCtx {}
+
 finalizeNaiveXAG :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeNaiveXAG sop = do
   traceResynthesis ("Finalizing (XAG) " ++ show sop) (return ())
@@ -378,7 +381,34 @@ finalizeNaiveXAG sop = do
 
   let xag = fromSBools (inDeg sop) (outVals sop)
   traceResynthesis ("XAG from sbools: " ++ show xag) (return ())
+
   -- Translate to MCTs and allocate ancillas
+  let addNodeMapping nID = return "@0" :: State FNXCtx String
+      lookupFalse = return "@0" :: State FNXCtx String
+      lookupTrue = return "@0" :: State FNXCtx String
+      lookupNode nID = return "@0" :: State FNXCtx String
+
+      mctFromXAGNode (XAG.Const nID False) = do
+        tNode  <- lookupFalse
+        return ([], tNode)
+      mctFromXAGNode (XAG.Const nID True) = do
+        tNode  <- lookupTrue
+        return ([], tNode)
+      mctFromXAGNode (XAG.Not nID xID) = do
+        thisNode <- addNodeMapping nID
+        xNode <- lookupNode xID
+        tNode <- lookupTrue
+        return ([MCT [xNode] thisNode, MCT [tNode] thisNode], thisNode)
+      mctFromXAGNode (XAG.And nID xID yID) = do
+        thisNode <- addNodeMapping nID
+        xNode <- lookupNode xID
+        yNode <- lookupNode yID
+        return ([MCT [xNode, yNode] thisNode], thisNode)
+      mctFromXAGNode (XAG.Xor nID xID yID) = do
+        thisNode <- addNodeMapping nID
+        xNode <- lookupNode xID
+        yNode <- lookupNode yID
+        return ([MCT [xNode] thisNode, MCT [yNode] thisNode], thisNode)
 
   -- Indexes start at "outDeg sop", which will be the index of the
   -- lowest-indexed bit in the ancillas when they're tensored onto sop
