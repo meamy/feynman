@@ -1,6 +1,11 @@
 module Feynman.Frontend.DotQC where
 
-import Feynman.Core (ID, Primitive(..), showLst, Angle(..), dyadicPhase, continuousPhase)
+import Feynman.Core (ID,
+                     Primitive(..),
+                     showLst,
+                     Angle(..),
+                     dyadicPhase,
+                     continuousPhase)
 import Feynman.Algebra.Base
 import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..))
 
@@ -13,6 +18,7 @@ import Data.Map.Strict (Map, (!))
 import qualified Data.Map.Strict as Map
 
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
 
 import Text.Parsec hiding (space)
 import Text.Parsec.Char hiding (space)
@@ -424,3 +430,15 @@ parseFile = do
 
 parseDotQC :: ByteString -> Either ParseError DotQC
 parseDotQC = parse parseFile ".qc parser"
+
+{- Utilities for interactive debugging -}
+
+gatelistOfFile :: String -> IO [Primitive]
+gatelistOfFile fname = do
+  s <- B.readFile fname
+  case parseDotQC s of
+    Left err -> putStrLn (show err) >> return []
+    Right c  ->
+      case find (\(Decl n _ _) -> n == "main") (decls c) of
+        Nothing -> putStrLn "No main function!" >> return []
+        Just (Decl _ _ body) -> return $ toCliffordT body
