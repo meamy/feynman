@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 {-# HLINT ignore "Use first" #-}
+{-# HLINT ignore "Use second" #-}
 
 -- |
 -- Module      : AncillaAware
@@ -322,9 +323,9 @@ finalizeMCT sop = do
   -- Indexes start at "outDeg sop", which will be the index of the
   -- lowest-indexed bit in the ancillas when they're tensored onto sop
   let allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList outIDs)
-      ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) allIDs
+      ancIDIdxs = findNewIDs "@M" (take (outDeg sop) [outDeg sop ..]) allIDs
       ancIDs = map fst ancIDIdxs
-      freshSop = ket (replicate (outDeg sop) (constant 0))
+      freshSop = ket [0 | _ <- [1 .. outDeg sop]]
       unfreshSop = PS.dagger freshSop
       allIDMap = Map.union stateAncs (Map.fromList (zip (outIDs ++ ancIDs) [0 ..]))
       -- The [MCT ...] in copyGates leaves the ancillas bearing the original
@@ -364,96 +365,106 @@ finalizeMCT sop = do
       | val == 0 = [MCT termIDs ancID, MCT [] ancID]
       | otherwise = [MCT termIDs ancID]
 
--- TODO:
--- Finish "naive XAG" generation
--- Restructure so the XAG gen and ancilla allocation are separate functions
--- Specialize XAG gen into naive vs. optimizing
--- Consider folding MCT gen into XAG and sharing the ancilla allocation
-
--- data XAGTree =
-
-data FNXCtx = FNXCtx {}
+-- TODO: rename inIDs, outIDs, to qIDs. Because they are all inouts.
 
 finalizeNaiveXAG :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeNaiveXAG sop = do
-  traceResynthesis ("Finalizing (XAG) " ++ show sop) (return ())
-  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
+  traceResynthesis ("Finalizing (XAG) " ++ show sop) $ return ()
+  AACtx {ctxIDs = qIDs, ctxAncillas = stateAncs} <- gets id
 
+  -- Indexes start at "outDeg sop", after they're tensored onto sop
   let xag = fromSBools (inDeg sop) (outVals sop)
-  traceResynthesis ("XAG from sbools: " ++ show xag) (return ())
+  assert (length (XAG.outputIDs xag) == length qIDs) $ return ()
+  traceResynthesis ("XAG from sbools: " ++ show xag) $ return ()
 
-  -- Translate to MCTs and allocate ancillas
-  let addNodeMapping nID = return "@0" :: State FNXCtx String
-      lookupFalse = return "@0" :: State FNXCtx String
-      lookupTrue = return "@0" :: State FNXCtx String
-      lookupNode nID = return "@0" :: State FNXCtx String
+  let -- Translate to MCTs and allocate ancillas
+      allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList qIDs)
+      -- inputVars = Set.toList (Set.unions (vars (phasePoly sop) : map vars (outVals sop)))
+      -- xagToMCTs converts the graph to an extracted program; most of the
+      -- work here is mapping between numeric graph nodeID and ancilla ID
+      (xagExtractRaw, xagOutIDs, xagUsedIDs) = xagToMCTs xag (take (inDeg sop) qIDs) allIDs
+  assert (Set.size (Set.fromList qIDs) == length qIDs) $ return () -- outputs should be distinct
+  assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ return () -- outputs should be distinct
+  let -- We don't have a guarantee about which ID the output ends up in, so
+      -- generate swaps to fix up any issues -- because outputs must be distinct
+      -- within each set, by swapping one output, we won't disturb any other
+      xagExtract =
+        xagExtractRaw
+          ++ [ Swapper qID xagOutID
+               | (qID, xagOutID) <- zip qIDs xagOutIDs,
+                 qID /= xagOutID
+             ]
+      -- applyExtract wants all our IDs to have an index in the outVals of the
+      -- Pathsum it's operating on, so start by making this mapping, and
+      -- assigning IDs to all the ancillas whose existence we just implied
+      synthSopWithGarbage =
+        applyExtract
+          -- The qubit labels assigned to the Pathsum inputs
+          (Map.fromList (take (inDeg sop) (zip qIDs [0 ..])))
+          -- The initial Pathsum -- pass inputs through, init ancillas to 0
+          (tensor (identity (inDeg sop)) (ket [0 | _ <- [1 .. outDeg sop - inDeg sop]]))
+          xagExtract
+      -- Steal just the garbage output polynomials from sop, dropping the
+      -- actual outputs
+      garbageSBools =
+        [ofVar (IVar i) | i <- [0 .. (inDeg sop - 1)]]
+          ++ drop (outDeg sop) (outVals synthSopWithGarbage)
+      -- What I want here is sort-of "compute garbageSBools", except I have
+      -- SBool Var, not SBool ID, so that doesn't quite work. It's simpler to
+      -- construct the Pathsum directly for now, but this isn't fantastically
+      -- well-factored.
+      -- Note we tweak inDeg/outDeg so it implicitly includes ancilla creation
+      garbage =
+        assert ((pathVars sop == 0) && (phasePoly sop == 0)) $
+          Pathsum 0 (inDeg sop) (outDeg synthSopWithGarbage) 0 0 garbageSBools
+      -- Glom (prepend) the garbage onto sop
+      sopWithGarbage = times (tensor sop (identity (outDeg garbage - inDeg sop))) garbage
+      result = grind (times (PS.dagger synthSopWithGarbage) sopWithGarbage)
+  emitGates "Finalize (naive XAG)" (reverse xagExtract)
+  traceResynthesis ("  Garbage pathsum: " ++ show garbage) $ return ()
+  traceResynthesis ("  sop-with-garbage pathsum: " ++ show sopWithGarbage) $ return ()
+  traceResynthesis ("  Result pathsum: " ++ show result) $ return ()
+  return result
 
-      mctFromXAGNode (XAG.Const nID False) = do
-        tNode  <- lookupFalse
-        return ([], tNode)
-      mctFromXAGNode (XAG.Const nID True) = do
-        tNode  <- lookupTrue
-        return ([], tNode)
-      mctFromXAGNode (XAG.Not nID xID) = do
-        thisNode <- addNodeMapping nID
-        xNode <- lookupNode xID
-        tNode <- lookupTrue
-        return ([MCT [xNode] thisNode, MCT [tNode] thisNode], thisNode)
-      mctFromXAGNode (XAG.And nID xID yID) = do
-        thisNode <- addNodeMapping nID
-        xNode <- lookupNode xID
-        yNode <- lookupNode yID
-        return ([MCT [xNode, yNode] thisNode], thisNode)
-      mctFromXAGNode (XAG.Xor nID xID yID) = do
-        thisNode <- addNodeMapping nID
-        xNode <- lookupNode xID
-        yNode <- lookupNode yID
-        return ([MCT [xNode] thisNode, MCT [yNode] thisNode], thisNode)
-
-  -- Indexes start at "outDeg sop", which will be the index of the
-  -- lowest-indexed bit in the ancillas when they're tensored onto sop
-  let allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList outIDs)
-      ancIDIdxs = findNewIDs (take (outDeg sop) [outDeg sop ..]) allIDs
-      ancIDs = map fst ancIDIdxs
-      freshSop = ket (replicate (outDeg sop) (constant 0))
-      unfreshSop = PS.dagger freshSop
-      allIDMap = Map.union stateAncs $ Map.fromList (zip (outIDs ++ ancIDs) [0 ..])
-      -- The [MCT ...] in copyGates leaves the ancillas bearing the original
-      -- inputs, before the polynomial was computed -- the synthesis is working
-      -- backwards to cancel out sop, so the state of the ancillas has to
-      -- start out (now) as the garbage that would be left behind by it
-      copyGates = [MCT [outID] ancID | (ancID, outID) <- zip ancIDs outIDs]
-      -- copySop is our magic state with ancillas ready to uncompute
-      copySop = applyExtract allIDMap (tensor (identity (outDeg sop)) freshSop) copyGates
-      -- expandSop is sop, with the (now garbage) ancilla qubits; note copySop
-      -- is added on the *left* because it needs the original input states
-      expandSop = times copySop (tensor sop (identity (outDeg freshSop)))
-      -- Synthesize computation of polynomial terms into ancillas
-      mctGates = concatMap (uncurry $ sboolMcts outIDs) (zip ancIDs (outVals sop))
-      -- Synthesize swapping of computed terms with original inputs (this is
-      -- where our actual garbage lines up with the magic garbage state)
-      swapGates = [Swapper ancID outID | (ancID, outID) <- zip ancIDs outIDs]
-  put $ AACtx {ctxIDs = outIDs, ctxAncillas = Map.union stateAncs (Map.fromList ancIDIdxs)}
-  -- When we emit/apply, we are uncomputing sop, so the computation order is
-  -- backwards relative to the final program, which will be dagger'd
-  emitGates "Finalize (MCT)" (swapGates ++ mctGates)
-  let applySop = applyExtract allIDMap expandSop (swapGates ++ mctGates)
-  -- All ancillas should be back to 0 now
-  assert (all ((== constant 0) . (outVals applySop !!)) [ancI | (_, ancI) <- ancIDIdxs]) (return ())
-  -- Annihilate the cleared ancillas, otherwise our isTrivial test won't work;
-  -- in general the system expects the inDeg/outDeg of sop not to change, but
-  -- there is code later on that will look for IDs which don't correspond to
-  -- inputs/outputs of the original code, and infer them as ancillas.
-  -- We don't actually want to permanently add the ancillas to the ctxIDs, in
-  -- fact the only reason to track them is to ensure uniqueness in the IDs
-  let annihilateSop = grind (times applySop (tensor (identity (outDeg sop)) (PS.dagger freshSop)))
-  traceResynthesis ("  After annihilating the now-clean ancillas, " ++ show annihilateSop) (return ())
-  return annihilateSop
+xagToMCTs :: XAG.Graph -> [ID] -> Set ID -> ([ExtractionGates], [ID], Set ID)
+xagToMCTs g qIDs inUseIDSet =
+  assert (all (not . (flip Set.member (Set.fromList qIDs))) outIDs) $ -- qIDs, outIDs disjoint
+    assert (length (XAG.inputIDs g) == length qIDs) $ -- qIDs labels every graph input
+      (gates, outIDs, Set.fromList (map (\(MCT _ tID) -> tID) gates))
   where
-    sboolMcts outIDs ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms outIDs sbool)
-    termMct ancID (val, termIDs)
-      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
-      | otherwise = [MCT termIDs ancID]
+    outIDs = map (idMap !) (XAG.outputIDs g)
+
+    gates = MCT [] (idMap ! 1) : concat (map nodeToMCTs (XAG.xagNodes g))
+
+    nodeToMCTs :: XAG.Node -> [ExtractionGates]
+    nodeToMCTs (XAG.Const nID _) = []
+    nodeToMCTs (XAG.Not nID xID) = do
+      let thisNode = idMap ! nID
+          xNode = idMap ! xID
+       in [MCT [xNode] thisNode, MCT [] thisNode]
+    nodeToMCTs (XAG.And nID xID yID) = do
+      let thisNode = idMap ! nID
+          xNode = idMap ! xID
+          yNode = idMap ! yID
+       in [MCT [xNode, yNode] thisNode]
+    nodeToMCTs (XAG.Xor nID xID yID) =
+      let thisNode = idMap ! nID
+          xNode = idMap ! xID
+          yNode = idMap ! yID
+       in [MCT [xNode] thisNode, MCT [yNode] thisNode]
+
+    idMap =
+      Map.fromList
+        ( (zip (XAG.inputIDs g) qIDs)
+            ++ (zip (XAG.outputIDs g) outIDs)
+            ++ ancillaNodeIDs
+        )
+    ancillaNodeIDs =
+      [(nID, ancID) | (ancID, nID) <- findNewIDs "@X" ([0, 1] ++ internalNodeIDs) inUseIDSet]
+
+    internalNodeIDs = [XAG.nodeID n | n <- XAG.xagNodes g, isInternalNode n]
+    isInternalNode n = not (Set.member (XAG.nodeID n) outputRawNodeIDs)
+    outputRawNodeIDs = Set.fromList (XAG.outputIDs g)
 
 toSynthesizableTerms :: (HasFeynmanControl) => [ID] -> SBool Var -> [(FF2, [ID])]
 toSynthesizableTerms idList outPoly =
@@ -463,23 +474,23 @@ toSynthesizableTerms idList outPoly =
     -- Map each IVar in the monomial through the idList
     termIDs term = [idList !! i | IVar i <- Set.toList (vars term)]
 
-findNewIDs :: [Int] -> Set ID -> [(ID, Int)]
-findNewIDs idxs idSet =
+findNewIDs :: String -> [Int] -> Set ID -> [(ID, Int)]
+findNewIDs prefix idxs idSet =
   reverse $ findNewIDsAux [] idSet idxs
   where
     findNewIDsAux :: [(ID, Int)] -> Set ID -> [Int] -> [(ID, Int)]
     findNewIDsAux idIdxsSoFar _ [] = idIdxsSoFar
     findNewIDsAux idIdxsSoFar idsSoFar (i : idxsRemain) =
-      let newID = findNewID idsSoFar i
+      let newID = findNewID prefix idsSoFar i
        in findNewIDsAux ((newID, i) : idIdxsSoFar) (Set.insert newID idsSoFar) idxsRemain
 
 -- find an unused ID (not in usedIDs) of the form "@<num>"
-findNewID :: (Show t, Num t) => Set ID -> t -> ID
-findNewID usedIDs k =
-  let tryID = '@' : show k
+findNewID :: (Show t, Num t) => String -> Set ID -> t -> ID
+findNewID prefix usedIDs k =
+  let tryID = prefix ++ show k
    in if Set.notMember tryID usedIDs
         then tryID
-        else findNewID usedIDs (k + 1)
+        else findNewID prefix usedIDs (k + 1)
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -716,18 +727,18 @@ harderCase =
     .> ccxgate
     .> hgate
     <> identity 2
-      .> swapgate
+    .> swapgate
     <> identity 1
-      .> identity 1
+    .> identity 1
     <> tgate
     <> tgate
-      .> identity 1
+    .> identity 1
     <> cxgate
-      .> identity 2
+    .> identity 2
     <> tdggate
-      .> identity 1
+    .> identity 1
     <> cxgate
-      .> swapgate
+    .> swapgate
     <> identity 1
 
 -- Need linear substitutions that un-normalize the output ket.
