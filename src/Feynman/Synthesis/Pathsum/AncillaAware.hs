@@ -382,7 +382,8 @@ finalizeNaiveXAG sop = do
       -- inputVars = Set.toList (Set.unions (vars (phasePoly sop) : map vars (outVals sop)))
       -- xagToMCTs converts the graph to an extracted program; most of the
       -- work here is mapping between numeric graph nodeID and ancilla ID
-      (xagExtractRaw, xagOutIDs, xagUsedIDs) = xagToMCTs xag (take (inDeg sop) qIDs) allIDs
+      (xagExtractRaw, xagOutIDs) = xagToMCTs xag (take (inDeg sop) qIDs) allIDs
+  traceResynthesis ("  xagExtractRaw: " ++ show xagExtractRaw) $ return ()
   assert (Set.size (Set.fromList qIDs) == length qIDs) $ return () -- outputs should be distinct
   assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ return () -- outputs should be distinct
   let -- We don't have a guarantee about which ID the output ends up in, so
@@ -394,21 +395,35 @@ finalizeNaiveXAG sop = do
                | (qID, xagOutID) <- zip qIDs xagOutIDs,
                  qID /= xagOutID
              ]
+  emitGates "Finalize (naive XAG)" (reverse xagExtract)
+  let mctIDs (MCT _ tID) = [tID]
+      mctIDs _ = []
+
+      dropRepeats xs = head xs : [y | (x, y) <- zip xs (tail xs), x /= y]
+
       -- applyExtract wants all our IDs to have an index in the outVals of the
       -- Pathsum it's operating on, so start by making this mapping, and
       -- assigning IDs to all the ancillas whose existence we just implied
+      synthQIDs = (take (inDeg sop) qIDs) ++ dropRepeats (concatMap mctIDs xagExtract)
+
+      -- Apply the actual synthesized gates to a (blank) pathsum
       synthSopWithGarbage =
-        applyExtract
-          -- The qubit labels assigned to the Pathsum inputs
-          (Map.fromList (take (inDeg sop) (zip qIDs [0 ..])))
-          -- The initial Pathsum -- pass inputs through, init ancillas to 0
-          (tensor (identity (inDeg sop)) (ket [0 | _ <- [1 .. outDeg sop - inDeg sop]]))
-          xagExtract
+        times
+          (tensor (identity (inDeg sop)) (ket [0 | _ <- [1 .. length synthQIDs - inDeg sop]]))
+          ( applyExtract
+              -- The qubit labels assigned to the Pathsum inputs
+              (Map.fromList (zip synthQIDs [0 ..]))
+              -- The initial Pathsum -- pass inputs through, init ancillas to 0
+              (identity (length synthQIDs))
+              xagExtract
+          )
+
       -- Steal just the garbage output polynomials from sop, dropping the
       -- actual outputs
       garbageSBools =
         [ofVar (IVar i) | i <- [0 .. (inDeg sop - 1)]]
           ++ drop (outDeg sop) (outVals synthSopWithGarbage)
+
       -- What I want here is sort-of "compute garbageSBools", except I have
       -- SBool Var, not SBool ID, so that doesn't quite work. It's simpler to
       -- construct the Pathsum directly for now, but this isn't fantastically
@@ -417,27 +432,26 @@ finalizeNaiveXAG sop = do
       garbage =
         assert ((pathVars sop == 0) && (phasePoly sop == 0)) $
           Pathsum 0 (inDeg sop) (outDeg synthSopWithGarbage) 0 0 garbageSBools
+
       -- Glom (prepend) the garbage onto sop
-      sopWithGarbage = times (tensor sop (identity (outDeg garbage - inDeg sop))) garbage
-      result = grind (times (PS.dagger synthSopWithGarbage) sopWithGarbage)
-  emitGates "Finalize (naive XAG)" (reverse xagExtract)
-  traceResynthesis ("  Garbage pathsum: " ++ show garbage) $ return ()
-  traceResynthesis ("  sop-with-garbage pathsum: " ++ show sopWithGarbage) $ return ()
-  traceResynthesis ("  Result pathsum: " ++ show result) $ return ()
+      sopAwaitingGarbage = (tensor sop (identity (outDeg garbage - inDeg sop)))
+      sopWithGarbage = times garbage sopAwaitingGarbage
+      result = grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
   return result
 
-xagToMCTs :: XAG.Graph -> [ID] -> Set ID -> ([ExtractionGates], [ID], Set ID)
+xagToMCTs :: (HasFeynmanControl) => XAG.Graph -> [ID] -> Set ID -> ([ExtractionGates], [ID])
 xagToMCTs g qIDs inUseIDSet =
   assert (all (not . (flip Set.member (Set.fromList qIDs))) outIDs) $ -- qIDs, outIDs disjoint
     assert (length (XAG.inputIDs g) == length qIDs) $ -- qIDs labels every graph input
-      (gates, outIDs, Set.fromList (map (\(MCT _ tID) -> tID) gates))
+      (gates, outIDs)
   where
     outIDs = map (idMap !) (XAG.outputIDs g)
 
-    gates = MCT [] (idMap ! 1) : concat (map nodeToMCTs (XAG.xagNodes g))
+    gates = concat (map nodeToMCTs (XAG.xagNodes g))
 
     nodeToMCTs :: XAG.Node -> [ExtractionGates]
-    nodeToMCTs (XAG.Const nID _) = []
+    nodeToMCTs (XAG.Const nID False) = []
+    nodeToMCTs (XAG.Const nID True) = [MCT [] (idMap ! nID)]
     nodeToMCTs (XAG.Not nID xID) = do
       let thisNode = idMap ! nID
           xNode = idMap ! xID
@@ -453,18 +467,9 @@ xagToMCTs g qIDs inUseIDSet =
           yNode = idMap ! yID
        in [MCT [xNode] thisNode, MCT [yNode] thisNode]
 
-    idMap =
-      Map.fromList
-        ( (zip (XAG.inputIDs g) qIDs)
-            ++ (zip (XAG.outputIDs g) outIDs)
-            ++ ancillaNodeIDs
-        )
+    idMap = Map.fromList ((zip (XAG.inputIDs g) qIDs) ++ ancillaNodeIDs)
     ancillaNodeIDs =
-      [(nID, ancID) | (ancID, nID) <- findNewIDs "@X" ([0, 1] ++ internalNodeIDs) inUseIDSet]
-
-    internalNodeIDs = [XAG.nodeID n | n <- XAG.xagNodes g, isInternalNode n]
-    isInternalNode n = not (Set.member (XAG.nodeID n) outputRawNodeIDs)
-    outputRawNodeIDs = Set.fromList (XAG.outputIDs g)
+      [(nID, ancID) | (ancID, nID) <- findNewIDs "@X" [XAG.nodeID n | n <- XAG.xagNodes g] inUseIDSet]
 
 toSynthesizableTerms :: (HasFeynmanControl) => [ID] -> SBool Var -> [(FF2, [ID])]
 toSynthesizableTerms idList outPoly =
