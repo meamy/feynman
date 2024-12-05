@@ -16,10 +16,10 @@ module Feynman.Synthesis.Pathsum.AncillaAware where
 import Control.Applicative ((<|>))
 import Control.Exception (assert)
 import Control.Monad (foldM, liftM, mapM, mfilter, msum, when, (>=>))
-import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, put, runState)
+import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, modify, put, runState)
 import Control.Monad.Writer.Lazy (Writer, execWriter, runWriter, tell)
 import Data.Bits (xor)
-import Data.List (elemIndex, find, intercalate, sort, (\\))
+import Data.List (elemIndex, find, intercalate, isPrefixOf, sort, (\\))
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
 import Data.Maybe (fromJust, fromMaybe, isJust, isNothing, mapMaybe, maybe)
@@ -60,57 +60,78 @@ import Test.QuickCheck
  Types
  -----------------------------------}
 
--- idx means IVar index, here
-data AACtx = AACtx {ctxIDs :: [ID], ctxAncillas :: Map ID Int}
+-- The ctxPrefixGen gives you a guaranteed-unique prefix (assuming you stick to
+-- the system) to generate new ancilla names with. Every time you need a
+-- prefix, take head from it and put tail back in the context monad for the
+-- next function. nextGenPrefix is a great way to do this.
+data AACtx = AACtx {ctxIDs :: [ID], ctxPrefixGen :: [ID]}
 
 type ExtractionState a = StateT AACtx (Writer [ExtractionGates]) a
 
--- | Create a bidirectional context from a mapping from IDs to indices
+nextGenPrefix :: ExtractionState (String)
+nextGenPrefix = do
+  prefixGen <- gets ctxPrefixGen
+  case prefixGen of
+    (prefix : remainingPrefixes) ->
+      ( do
+          modify (\m -> m {ctxPrefixGen = remainingPrefixes})
+          return prefix
+      )
+    [] -> error "Infinite prefix source ran out????"
+
+-- fromCtx is needed to convert the map of qubit names for a circuit to a list,
+-- i.e. [ID], which is the internal format used by AACtx
 fromCtx :: Int -> Map ID Int -> AACtx
-fromCtx expectedOrd = flip (fromCtxWithAncillas expectedOrd) Set.empty
+fromCtx nQubits ctx = fromCtxWithAncillas nQubits ctx Set.empty
 
+-- fromCtxWithAncillas additionally includes a set of ancillas, which here are just treated as extra names
 fromCtxWithAncillas :: Int -> Map ID Int -> Set ID -> AACtx
-fromCtxWithAncillas expectedOrd ctx ancillas =
-  assert (Set.isProperSubsetOf ancillas (Map.keysSet ctx)) $
-    assert (Set.isSubsetOf (Set.union (Map.keysSet ctx) ancillas) (Set.fromList completeListRev)) $
+fromCtxWithAncillas nQubits ctx ancillas =
+  assert (Set.isSubsetOf ancillas (Map.keysSet ctx)) $
+    assert (Set.isSubsetOf allGivenIDs (Set.fromList completeListRev)) $
       assert (all (\(k, i) -> if Map.member k ctx then i == ctx ! k else True) (zip (reverse completeListRev) [0 ..])) $
-        AACtx (reverse completeListRev) newAncillas
+        AACtx (reverse completeListRev) prefixGen
   where
-    (completeListRev, newAncillas) =
-      ascListToCompleteListWithAncillas
-        0
-        (Set.union (Map.keysSet ctx) ancillas)
-        ([], Map.filterWithKey (\k v -> Set.member k ancillas) ctx)
-        ((sort . map (\(a, b) -> (b, a))) (Map.toList ctx))
+    completeListRev =
+      fillListGaps 0 [] ((sort . map (\(a, b) -> (b, a))) (Map.toList ctx))
 
-    ascListToCompleteListWithAncillas :: Int -> Set ID -> ([ID], Map ID Int) -> [(Int, ID)] -> ([ID], Map ID Int)
-    ascListToCompleteListWithAncillas nextIdx idsSoFar (listProgressRev, ancillasProgress) ascList
+    -- Checks all qubit indexes to make sure there's a name assigned for each one
+    fillListGaps :: Int -> [ID] -> [(Int, ID)] -> [ID]
+    fillListGaps nextIdx listProgressRev ascList
       -- Accounted for all variable IDs?
-      | assert (nextIdx <= expectedOrd) (nextIdx == expectedOrd) =
-          assert (null ascList) (listProgressRev, ancillasProgress)
-      -- Either no more explicit IDs, or we're convering a gap; generate a new ancilla
+      | assert (nextIdx <= nQubits) (nextIdx == nQubits) =
+          assert (null ascList) listProgressRev
+      -- Either no more explicit IDs, or we're convering a gap; generate a new name
       | null ascList || (fst . head) ascList < nextIdx =
-          let newID = newAncillaID idsSoFar nextIdx
-           in ascListToCompleteListWithAncillas
-                (nextIdx + 1)
-                (Set.insert newID idsSoFar)
-                (newID : listProgressRev, Map.insert newID nextIdx ancillasProgress)
-                ascList
-      -- The only remaining case is an explicit ID, so expect that
+          let newID = prefix ++ show nextIdx
+           in fillListGaps (nextIdx + 1) (newID : listProgressRev) ascList
+      -- The only remaining case is an explicit ID, assert that condition
       | assert ((fst . head) ascList == nextIdx) otherwise =
           let (idx, qID) : ascListRemain = ascList
-           in ascListToCompleteListWithAncillas
-                (nextIdx + 1)
-                idsSoFar
-                (qID : listProgressRev, ancillasProgress)
-                ascListRemain
+           in fillListGaps (nextIdx + 1) (qID : listProgressRev) ascListRemain
 
-newAncillaID :: Set ID -> Int -> ID
-newAncillaID usedIDs searchIndex
-  | Set.notMember tryID usedIDs = tryID
-  | otherwise = newAncillaID usedIDs (searchIndex + 1)
-  where
-    tryID = "@" ++ show searchIndex
+    -- The generator for unique prefixes -- we need a prefix right away
+    prefix : prefixGen = uniquePrefixes
+
+    uniquePrefixes = filterCollisions nonUniquePrefixes plausibleCollisions []
+      where
+        filterCollisions (prefix : remainingPrefixes) [] checked =
+          -- No collision! Return this and continue the list with checked
+          -- swapping back to unchecked
+          prefix : filterCollisions remainingPrefixes checked []
+        filterCollisions prefixes@(prefix : remainingPrefixes) (checking : unchecked) checked
+          -- Collision! Skip this prefix and keep looking, and since we won't
+          -- generate this prefix again we can leave the collision we found off
+          -- the list for the future
+          | isPrefixOf prefix checking = filterCollisions remainingPrefixes (unchecked ++ checked) []
+          -- No collision yet, but we need to keep looking -- just move the one
+          -- we checked to the checked list
+          | otherwise = filterCollisions prefixes unchecked (checking : checked)
+
+        plausibleCollisions = [s | s <- Set.toList allGivenIDs, isPrefixOf "@" s]
+        nonUniquePrefixes = ["@" ++ show i ++ "_" | i <- [0 ..]]
+
+    allGivenIDs = Set.union (Map.keysSet ctx) ancillas
 
 toIDMap :: AACtx -> Map ID Int
 toIDMap (AACtx {ctxIDs = idList}) = Map.fromList (zip idList [0 ..])
@@ -312,90 +333,15 @@ nonlinearSimplifications sop = do
 -- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalize
-  | ctlUseMCTSynthesis = finalizeMCT
-  | ctlUseNaiveXAGSynthesis = finalizeNaiveXAG
-
-finalizeMCT :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalizeMCT sop = do
-  traceResynthesis ("Finalizing (MCT) " ++ show sop) (return ())
-  AACtx {ctxIDs = outIDs, ctxAncillas = stateAncs} <- gets id
-  -- Indexes start at "outDeg sop", which will be the index of the
-  -- lowest-indexed bit in the ancillas when they're tensored onto sop
-  let allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList outIDs)
-      ancIDIdxs = findNewIDs "@M" (take (outDeg sop) [outDeg sop ..]) allIDs
-      ancIDs = map fst ancIDIdxs
-      freshSop = ket [0 | _ <- [1 .. outDeg sop]]
-      unfreshSop = PS.dagger freshSop
-      allIDMap = Map.union stateAncs (Map.fromList (zip (outIDs ++ ancIDs) [0 ..]))
-      -- The [MCT ...] in copyGates leaves the ancillas bearing the original
-      -- inputs, before the polynomial was computed -- the synthesis is working
-      -- backwards to cancel out sop, so the state of the ancillas has to
-      -- start out (now) as the garbage that would be left behind by it
-      copyGates = [MCT [outID] ancID | (ancID, outID) <- zip ancIDs outIDs]
-      -- copySop is our magic state with ancillas ready to uncompute
-      copySop = applyExtract allIDMap (tensor (identity (outDeg sop)) freshSop) copyGates
-      -- expandSop is sop, with the (now garbage) ancilla qubits; note copySop
-      -- is added on the *left* because it needs the original input states
-      expandSop = times copySop (tensor sop (identity (outDeg freshSop)))
-      -- Synthesize computation of polynomial terms into ancillas
-      mctGates = concatMap (uncurry $ sboolMcts outIDs) (zip ancIDs (outVals sop))
-      -- Synthesize swapping of computed terms with original inputs (this is
-      -- where our actual garbage lines up with the magic garbage state)
-      swapGates = [Swapper ancID outID | (ancID, outID) <- zip ancIDs outIDs]
-  put $ AACtx {ctxIDs = outIDs, ctxAncillas = Map.union stateAncs (Map.fromList ancIDIdxs)}
-  -- When we emit/apply, we are uncomputing sop, so the computation order is
-  -- backwards relative to the final program, which will be dagger'd
-  emitGates "Finalize (MCT)" (swapGates ++ mctGates)
-  let applySop = applyExtract allIDMap expandSop (swapGates ++ mctGates)
-  -- All ancillas should be back to 0 now
-  assert (all ((== constant 0) . (outVals applySop !!)) [ancI | (_, ancI) <- ancIDIdxs]) (return ())
-  -- Annihilate the cleared ancillas, otherwise our isTrivial test won't work;
-  -- in general the system expects the inDeg/outDeg of sop not to change, but
-  -- there is code later on that will look for IDs which don't correspond to
-  -- inputs/outputs of the original code, and infer them as ancillas.
-  -- We don't actually want to permanently add the ancillas to the ctxIDs, in
-  -- fact the only reason to track them is to ensure uniqueness in the IDs
-  let annihilateSop = grind (times applySop (tensor (identity (outDeg sop)) (PS.dagger freshSop)))
-  traceResynthesis ("  After annihilating the now-clean ancillas, " ++ show annihilateSop) (return ())
-  return annihilateSop
-  where
-    sboolMcts outIDs ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms outIDs sbool)
-    termMct ancID (val, termIDs)
-      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
-      | otherwise = [MCT termIDs ancID]
-
--- TODO: rename inIDs, outIDs, to qIDs. Because they are all inouts.
-
-finalizeNaiveXAG :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalizeNaiveXAG sop = do
+finalize sop = do
   traceResynthesis ("Finalizing (XAG) " ++ show sop) $ return ()
-  AACtx {ctxIDs = qIDs, ctxAncillas = stateAncs} <- gets id
+  qIDs <- gets ctxIDs
+  prefix <- nextGenPrefix
 
-  -- Indexes start at "outDeg sop", after they're tensored onto sop
-  let xag = fromSBools (inDeg sop) (outVals sop)
-  assert (length (XAG.outputIDs xag) == length qIDs) $ return ()
-  traceResynthesis ("XAG from sbools: " ++ show xag) $ return ()
+  let synthGates = synthesizeSBools prefix qIDs (inDeg sop) (outVals sop)
 
-  let -- Translate to MCTs and allocate ancillas
-      allIDs = Set.union (Map.keysSet stateAncs) (Set.fromList qIDs)
-      -- inputVars = Set.toList (Set.unions (vars (phasePoly sop) : map vars (outVals sop)))
-      -- xagToMCTs converts the graph to an extracted program; most of the
-      -- work here is mapping between numeric graph nodeID and ancilla ID
-      (xagExtractRaw, xagOutIDs) = xagToMCTs xag (take (inDeg sop) qIDs) allIDs
-  traceResynthesis ("  xagExtractRaw: " ++ show xagExtractRaw) $ return ()
-  assert (Set.size (Set.fromList qIDs) == length qIDs) $ return () -- outputs should be distinct
-  assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ return () -- outputs should be distinct
-  let -- We don't have a guarantee about which ID the output ends up in, so
-      -- generate swaps to fix up any issues -- because outputs must be distinct
-      -- within each set, by swapping one output, we won't disturb any other
-      xagExtract =
-        xagExtractRaw
-          ++ [ Swapper qID xagOutID
-               | (qID, xagOutID) <- zip qIDs xagOutIDs,
-                 qID /= xagOutID
-             ]
-  emitGates "Finalize (naive XAG)" (reverse xagExtract)
+  emitGates "Finalize " (reverse synthGates)
+
   let mctIDs (MCT _ tID) = [tID]
       mctIDs _ = []
 
@@ -404,18 +350,21 @@ finalizeNaiveXAG sop = do
       -- applyExtract wants all our IDs to have an index in the outVals of the
       -- Pathsum it's operating on, so start by making this mapping, and
       -- assigning IDs to all the ancillas whose existence we just implied
-      synthQIDs = (take (inDeg sop) qIDs) ++ dropRepeats (concatMap mctIDs xagExtract)
+      synthQIDs =
+        -- intermediate values should not overlap qubits
+        assert (Set.disjoint (Set.fromList qIDs) (Set.fromList (concatMap mctIDs synthGates))) $
+          (take (inDeg sop) qIDs) ++ dropRepeats (concatMap mctIDs synthGates)
 
       -- Apply the actual synthesized gates to a (blank) pathsum
       synthSopWithGarbage =
         times
           (tensor (identity (inDeg sop)) (ket [0 | _ <- [1 .. length synthQIDs - inDeg sop]]))
           ( applyExtract
-              -- The qubit labels assigned to the Pathsum inputs
+              -- The labels assigned to the Pathsum qubits
               (Map.fromList (zip synthQIDs [0 ..]))
               -- The initial Pathsum -- pass inputs through, init ancillas to 0
               (identity (length synthQIDs))
-              xagExtract
+              synthGates
           )
 
       -- Steal just the garbage output polynomials from sop, dropping the
@@ -439,8 +388,58 @@ finalizeNaiveXAG sop = do
       result = grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
   return result
 
-xagToMCTs :: (HasFeynmanControl) => XAG.Graph -> [ID] -> Set ID -> ([ExtractionGates], [ID])
-xagToMCTs g qIDs inUseIDSet =
+synthesizeSBools :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
+synthesizeSBools
+  | ctlUseMCTSynthesis = synthesizeSBoolsMCT
+  | ctlUseNaiveXAGSynthesis = synthesizeSBoolsNaiveXag
+
+synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
+synthesizeSBoolsMCT prefix qIDs nInputs sbools =
+  -- Synthesize computation of polynomial terms into ancillas
+  concatMap (uncurry sboolMcts) (zip ancIDs sbools)
+    ++ [Swapper ancID qID | (ancID, qID) <- zip ancIDs qIDs]
+  where
+    sboolMcts ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms sbool)
+    termMct ancID (val, termIDs)
+      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
+      | otherwise = [MCT termIDs ancID]
+
+    ancIDs = [prefix ++ "M" ++ qID | qID <- qIDs]
+
+    toSynthesizableTerms :: SBool Var -> [(FF2, [ID])]
+    toSynthesizableTerms outPoly =
+      -- Get all the monomial var sets as ID lists
+      map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
+      where
+        -- Map each IVar in the monomial through the qIDs
+        termIDs term = [qIDs !! i | IVar i <- Set.toList (vars term)]
+
+synthesizeSBoolsNaiveXag :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
+synthesizeSBoolsNaiveXag prefix qIDs nInputs sbools =
+  -- We don't have a guarantee about which ID the output ends up in, so
+  -- generate swaps to fix up any issues -- because outputs must be distinct
+  -- within each set, by swapping one output, we won't disturb any other
+  traceResynthesis ("xagSynthRaw: " ++ show xagSynthRaw) $
+    assert (Set.size (Set.fromList qIDs) == length qIDs) $ -- qubits should be distinct
+      assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ -- outputs should be distinct
+        xagSynthRaw
+          ++ [ Swapper qID xagOutID
+               | (qID, xagOutID) <- zip qIDs xagOutIDs,
+                 qID /= xagOutID
+             ]
+  where
+    -- xagToMCTs converts the graph to an extracted program; most of the
+    -- work here is mapping between numeric graph nodeID and ancilla ID
+    (xagSynthRaw, xagOutIDs) =
+      assert (length (XAG.outputIDs xag) == length qIDs) $
+        traceResynthesis ("XAG from sbools: " ++ show xag) $
+          xagToMCTs prefix xag (take nInputs qIDs)
+
+    -- Indexes start at "outDeg sop", after they're tensored onto sop
+    xag = fromSBools nInputs sbools
+
+xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
+xagToMCTs prefix g qIDs =
   assert (all (not . (flip Set.member (Set.fromList qIDs))) outIDs) $ -- qIDs, outIDs disjoint
     assert (length (XAG.inputIDs g) == length qIDs) $ -- qIDs labels every graph input
       (gates, outIDs)
@@ -469,33 +468,7 @@ xagToMCTs g qIDs inUseIDSet =
 
     idMap = Map.fromList ((zip (XAG.inputIDs g) qIDs) ++ ancillaNodeIDs)
     ancillaNodeIDs =
-      [(nID, ancID) | (ancID, nID) <- findNewIDs "@X" [XAG.nodeID n | n <- XAG.xagNodes g] inUseIDSet]
-
-toSynthesizableTerms :: (HasFeynmanControl) => [ID] -> SBool Var -> [(FF2, [ID])]
-toSynthesizableTerms idList outPoly =
-  -- Get all the monomial var sets as ID lists
-  map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
-  where
-    -- Map each IVar in the monomial through the idList
-    termIDs term = [idList !! i | IVar i <- Set.toList (vars term)]
-
-findNewIDs :: String -> [Int] -> Set ID -> [(ID, Int)]
-findNewIDs prefix idxs idSet =
-  reverse $ findNewIDsAux [] idSet idxs
-  where
-    findNewIDsAux :: [(ID, Int)] -> Set ID -> [Int] -> [(ID, Int)]
-    findNewIDsAux idIdxsSoFar _ [] = idIdxsSoFar
-    findNewIDsAux idIdxsSoFar idsSoFar (i : idxsRemain) =
-      let newID = findNewID prefix idsSoFar i
-       in findNewIDsAux ((newID, i) : idIdxsSoFar) (Set.insert newID idsSoFar) idxsRemain
-
--- find an unused ID (not in usedIDs) of the form "@<num>"
-findNewID :: (Show t, Num t) => String -> Set ID -> t -> ID
-findNewID prefix usedIDs k =
-  let tryID = prefix ++ show k
-   in if Set.notMember tryID usedIDs
-        then tryID
-        else findNewID prefix usedIDs (k + 1)
+      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.xagNodes g)]
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -615,7 +588,6 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       _ -> Nothing
     go sop = do
       sop' <- synthesizeFrontier sop
-      ancillas <- gets ctxAncillas
       let pathVarsLeft = pathVars sop'
       if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
