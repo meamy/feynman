@@ -48,7 +48,8 @@ library
                        Feynman.Synthesis.Pathsum.Util,
                        Feynman.Synthesis.XAG,
                        Feynman.Synthesis.XAG.Graph,
-                       Feynman.Synthesis.XAG.Optimize,
+                       Feynman.Synthesis.XAG.SDCODC,
+                       Feynman.Synthesis.XAG.Simplify,
                        Feynman.Synthesis.XAG.Util,
 
                        Feynman.Optimization.Swaps,

@@ -1,11 +1,12 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 
-module Feynman.Synthesis.XAG.Optimize
+module Feynman.Synthesis.XAG.SDCODC
   ( canReduce,
     findAndIDs,
     findReducible,
     findReducibleNodes,
     reduceAndToNotXor,
+    sdcodcOptimize,
   )
 where
 
@@ -15,6 +16,9 @@ import Data.List (sort)
 import Data.Maybe (isNothing, mapMaybe)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import SAT.MiniSat
+
+sdcodcOptimize :: XAG.Graph -> XAG.Graph
+sdcodcOptimize g = foldr reduceAndToNotXor g (findReducible g)
 
 canReduce :: Int -> [XAG.Node] -> Bool
 canReduce reduceID allNodes =
@@ -174,11 +178,11 @@ splitNodes atID allNodes = (take atIndex allNodes, rightNodes)
 findReducible :: XAG.Graph -> [Int]
 findReducible (XAG.Graph allNodes _ _) = findReducibleNodes allNodes
 
-reduceAndToNotXor :: Int -> XAG.Graph -> Maybe XAG.Graph
+reduceAndToNotXor :: Int -> XAG.Graph -> XAG.Graph
 reduceAndToNotXor andID (XAG.Graph allNodes inIDs outIDs) =
   case splitNodes andID allNodes of
-    (leftNodes, XAG.And _ xID yID : rightNodes) -> Just (updateGraph leftNodes xID yID rightNodes)
-    (_, _) -> Nothing
+    (leftNodes, XAG.And _ xID yID : rightNodes) -> updateGraph leftNodes xID yID rightNodes
+    (_, _) -> error "andID does not refer to an And node in this graph"
   where
     updateGraph leftNodes xID yID rightNodes =
       XAG.Graph updatedNodes inIDs (renumberIDs andID 1 1 outIDs)

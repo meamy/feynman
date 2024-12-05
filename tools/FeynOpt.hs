@@ -161,7 +161,7 @@ defaultOptions =
       verify = False,
       pureCircuit = False,
       useQASM3 = False,
-      control = FeynmanControl False False False
+      control = FeynmanControl False False False False
     }
 
 parseArgs :: Bool -> Options -> [String] -> IO ()
@@ -175,6 +175,8 @@ parseArgs doneSwitches options (x : xs) = case x of
   "--no-feature-use-mct-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseMCTSynthesis = False}} xs
   "--feature-use-naive-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseNaiveXAGSynthesis = True}} xs
   "--no-feature-use-naive-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseNaiveXAGSynthesis = False}} xs
+  "--feature-use-basic-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseBasicXAGSynthesis = True}} xs
+  "--no-feature-use-basic-xag-poly-synthesis" -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseBasicXAGSynthesis = False}} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline" -> parseArgs doneSwitches options {passes = Inline : passes options} xs
   "-unroll" -> parseArgs doneSwitches options {passes = Unroll : passes options} xs

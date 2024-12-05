@@ -40,6 +40,8 @@ import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import qualified Feynman.Synthesis.XAG.Graph as XAG
+import qualified Feynman.Synthesis.XAG.SDCODC as XAG
+import qualified Feynman.Synthesis.XAG.Simplify as XAG
 import Feynman.Synthesis.XAG.Util
 import qualified Feynman.Util.Unicode as U
 import Feynman.Verification.Symbolic
@@ -391,7 +393,8 @@ finalize sop = do
 synthesizeSBools :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBools
   | ctlUseMCTSynthesis = synthesizeSBoolsMCT
-  | ctlUseNaiveXAGSynthesis = synthesizeSBoolsNaiveXag
+  | ctlUseNaiveXAGSynthesis = synthesizeSBoolsXAG naiveXAGTransformers
+  | ctlUseBasicXAGSynthesis = synthesizeSBoolsXAG basicXAGTransformers
 
 synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsMCT prefix qIDs nInputs sbools =
@@ -414,29 +417,41 @@ synthesizeSBoolsMCT prefix qIDs nInputs sbools =
         -- Map each IVar in the monomial through the qIDs
         termIDs term = [qIDs !! i | IVar i <- Set.toList (vars term)]
 
-synthesizeSBoolsNaiveXag :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
-synthesizeSBoolsNaiveXag prefix qIDs nInputs sbools =
+naiveXAGTransformers = []
+
+basicXAGTransformers = [XAG.mergeStructuralDuplicates]
+
+synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
+synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
   -- We don't have a guarantee about which ID the output ends up in, so
   -- generate swaps to fix up any issues -- because outputs must be distinct
   -- within each set, by swapping one output, we won't disturb any other
-  traceResynthesis ("xagSynthRaw: " ++ show xagSynthRaw) $
-    assert (Set.size (Set.fromList qIDs) == length qIDs) $ -- qubits should be distinct
-      assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ -- outputs should be distinct
-        xagSynthRaw
-          ++ [ Swapper qID xagOutID
-               | (qID, xagOutID) <- zip qIDs xagOutIDs,
-                 qID /= xagOutID
-             ]
+  assert (Set.size (Set.fromList qIDs) == length qIDs) $ -- qubits should be distinct
+    assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ -- outputs should be distinct
+      xagSynthRaw
+        ++ [ Swapper qID xagOutID
+             | (qID, xagOutID) <- zip qIDs xagOutIDs,
+               qID /= xagOutID
+           ]
   where
     -- xagToMCTs converts the graph to an extracted program; most of the
     -- work here is mapping between numeric graph nodeID and ancilla ID
     (xagSynthRaw, xagOutIDs) =
       assert (length (XAG.outputIDs xag) == length qIDs) $
-        traceResynthesis ("XAG from sbools: " ++ show xag) $
-          xagToMCTs prefix xag (take nInputs qIDs)
+        xagToMCTs prefix xag (take nInputs qIDs)
 
     -- Indexes start at "outDeg sop", after they're tensored onto sop
-    xag = fromSBools nInputs sbools
+    xag =
+      traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
+        foldl transformXAG rawXAG transformers
+      where
+        transformXAG x t =
+          traceResynthesis ("XAG transformed: " ++ show transformedXAG) $
+            transformedXAG
+          where
+            transformedXAG = t x
+
+        rawXAG = fromSBools nInputs sbools
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qIDs =
