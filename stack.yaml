@@ -1,0 +1,22 @@
+snapshot: lts-21.25
+
+packages:
+- .
+
+extra-deps:
+- fast-digits-0.3.2.0
+- parsec3-numbers-0.1.0
+- mockturtle-logic-0.1.0.0.tar.gz
+
+# Override default flag values for project packages and extra-deps
+# flags: {}
+#
+# Control whether we use the GHC we find on the path
+# system-ghc: true
+#
+# Extra directories used by Stack for building
+# extra-include-dirs: [/path/to/dir]
+# extra-lib-dirs: [/path/to/dir]
+#
+# Allow a newer minor version of GHC than the snapshot specifies
+# compiler-check: newer-minor

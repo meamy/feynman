@@ -47,10 +47,6 @@ library
                        Feynman.Synthesis.Pathsum.Unitary,
                        Feynman.Synthesis.Pathsum.Util,
                        Feynman.Synthesis.XAG,
-                       Feynman.Synthesis.XAG.Graph,
-                       Feynman.Synthesis.XAG.SDCODC,
-                       Feynman.Synthesis.XAG.Simplify,
-                       Feynman.Synthesis.XAG.Util,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
@@ -91,6 +87,7 @@ library
                        ghc-prim >= 0.5.0.0,
                        integer-gmp >= 1.0.0.1,
                        minisat-solver >= 0.1,
+                       mockturtle-logic >= 0.1,
                        mtl,
                        parsec >= 3.0,
                        parsec3-numbers,

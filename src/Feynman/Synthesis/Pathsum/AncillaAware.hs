@@ -39,10 +39,7 @@ import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
-import qualified Feynman.Synthesis.XAG.Graph as XAG
-import qualified Feynman.Synthesis.XAG.SDCODC as XAG
-import qualified Feynman.Synthesis.XAG.Simplify as XAG
-import Feynman.Synthesis.XAG.Util
+import qualified Feynman.Synthesis.XAG as XAG
 import qualified Feynman.Util.Unicode as U
 import Feynman.Verification.Symbolic
 import Test.QuickCheck
@@ -419,7 +416,7 @@ synthesizeSBoolsMCT prefix qIDs nInputs sbools =
 
 naiveXAGTransformers = []
 
-basicXAGTransformers = [XAG.mergeStructuralDuplicates]
+basicXAGTransformers = [XAG.optimize]
 
 synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
@@ -451,7 +448,7 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
           where
             transformedXAG = t x
 
-        rawXAG = fromSBools nInputs sbools
+        rawXAG = XAG.fromSBools nInputs sbools
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qIDs =
@@ -461,7 +458,7 @@ xagToMCTs prefix g qIDs =
   where
     outIDs = map (idMap !) (XAG.outputIDs g)
 
-    gates = concat (map nodeToMCTs (XAG.xagNodes g))
+    gates = concat (map nodeToMCTs (XAG.nodes g))
 
     nodeToMCTs :: XAG.Node -> [ExtractionGates]
     nodeToMCTs (XAG.Const nID False) = []
@@ -483,7 +480,7 @@ xagToMCTs prefix g qIDs =
 
     idMap = Map.fromList ((zip (XAG.inputIDs g) qIDs) ++ ancillaNodeIDs)
     ancillaNodeIDs =
-      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.xagNodes g)]
+      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.nodes g)]
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
