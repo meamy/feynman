@@ -47,3 +47,4 @@ cabal.project.local~
 
 .vscode/
 /tmp/
+/stack.yaml.lock
