@@ -6,7 +6,7 @@ packages:
 extra-deps:
 - fast-digits-0.3.2.0
 - parsec3-numbers-0.1.0
-- mockturtle-logic-0.1.0.0.tar.gz
+#- mockturtle-logic-0.1.0.0.tar.gz
 
 # Override default flag values for project packages and extra-deps
 # flags: {}
