@@ -112,33 +112,23 @@ void xag_optimize(xag_wrap_t *xag_p) {
   assert(xag_p);
   assert(xag_p->magic == xag_wrap_t_magic);
 
+  // xag_p->xag = exact_linear_resynthesis_optimization(xag_p->xag); // kaboom
+  xag_p->xag = xag_constant_fanin_optimization(xag_p->xag);
   xag_p->xag = cleanup_dangling(xag_p->xag);
-  for (int i = 0; i < 5; ++i) {
-    // xag_p->xag = exact_linear_resynthesis_optimization(xag_p->xag);
-    // xag_p->xag = xag_constant_fanin_optimization(xag_p->xag);
-    // xag_p->xag = xag_dont_cares_optimization(xag_p->xag);
 
-    resubstitution_params ps;
+  resubstitution_params ps{.max_divisors = 10000,
+                           .max_inserts = 1000,
+                           .verbose = true,
+                           .use_dont_cares = true};
 
-    using view_t = depth_view<fanout_view<xag_network>>;
-    fanout_view<xag_network> fanout_view{xag_p->xag};
-    view_t resub_view{fanout_view};
-    xag_resubstitution(resub_view, ps);
-    // resubstitution_params ps;
-    // resubstitution_stats st;
-    // ps.max_pis = 8u;
-    // ps.max_inserts = 1u;
-    // ps.progress = false;
+  using view_t = depth_view<fanout_view<xag_network>>;
+  fanout_view<xag_network> fanout_view{xag_p->xag};
+  view_t resub_view{fanout_view};
+  // xag_resubstitution(resub_view, ps);
+  resubstitution_minmc_withDC(resub_view, ps);
 
-    // depth_view depth_xag{xag_p->xag};
-    // fanout_view fanout_xag{depth_xag};
-
-    // uint32_t const size_before = fanout_xag.num_gates();
-    // xag_resubstitution(fanout_xag, ps, &st);
-
-    // xag_p->xag = exact_linear_resynthesis_optimization(xag_p->xag);
-    xag_p->xag = cleanup_dangling(xag_p->xag);
-  }
+  // xag_p->xag = exact_linear_resynthesis_optimization(xag_p->xag);
+  xag_p->xag = cleanup_dangling(xag_p->xag);
 }
 
 xag_builder_wrap_t *xag_builder_alloc(xag_wrap_t *xag_p) {
