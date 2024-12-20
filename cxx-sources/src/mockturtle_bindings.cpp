@@ -116,6 +116,16 @@ void xag_optimize(xag_wrap_t *xag_p) {
   xag_p->xag = xag_constant_fanin_optimization(xag_p->xag);
   xag_p->xag = cleanup_dangling(xag_p->xag);
 
+  xag_p->xag.foreach_node([&xag = xag_p->xag](auto n) {
+    char type_c = xag.is_and(n)   ? 'A'
+                  : xag.is_xor(n) ? 'X'
+                  : xag.is_pi(n)  ? 'I'
+                                  : '?';
+    fprintf(stderr, "  X0 %c%d:", type_c, (int)n);
+    xag.foreach_fanin(n, [](auto s) { fprintf(stderr, " %d", (int)s.data); });
+    fprintf(stderr, "\n");
+  });
+
   resubstitution_params ps{.max_divisors = 10000,
                            .max_inserts = 1000,
                            .verbose = true,
@@ -127,8 +137,28 @@ void xag_optimize(xag_wrap_t *xag_p) {
   // xag_resubstitution(resub_view, ps);
   resubstitution_minmc_withDC(resub_view, ps);
 
+  resub_view.foreach_node([&xag = resub_view](auto n) {
+    char type_c = xag.is_and(n)   ? 'A'
+                  : xag.is_xor(n) ? 'X'
+                  : xag.is_pi(n)  ? 'I'
+                                  : '?';
+    fprintf(stderr, "  V %c%d:", type_c, (int)n);
+    xag.foreach_fanin(n, [](auto s) { fprintf(stderr, " %d", (int)s.data); });
+    fprintf(stderr, "\n");
+  });
+
   // xag_p->xag = exact_linear_resynthesis_optimization(xag_p->xag);
   xag_p->xag = cleanup_dangling(xag_p->xag);
+
+  xag_p->xag.foreach_node([&xag = xag_p->xag](auto n) {
+    char type_c = xag.is_and(n)   ? 'A'
+                  : xag.is_xor(n) ? 'X'
+                  : xag.is_pi(n)  ? 'I'
+                                  : '?';
+    fprintf(stderr, "  X1 %c%d:", type_c, (int)n);
+    xag.foreach_fanin(n, [](auto s) { fprintf(stderr, " %d", (int)s.data); });
+    fprintf(stderr, "\n");
+  });
 }
 
 xag_builder_wrap_t *xag_builder_alloc(xag_wrap_t *xag_p) {

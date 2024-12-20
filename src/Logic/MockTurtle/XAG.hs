@@ -3,6 +3,7 @@
 module Logic.MockTurtle.XAG where
 
 import GHC.Generics (Generic)
+import Data.List (intercalate)
 
 -- Nodes are in topological order in the graph:
 -- for each node, nodeID > xIn, nodeID > yIn
@@ -36,3 +37,7 @@ instance Ord Node where
       compareType (Not {}) _ = LT
       compareType (Xor {}) _ = LT
       compareType (And {}) _ = undefined
+
+pretty :: Graph -> String
+pretty (Graph ns inIDs outIDs) =
+  "Graph " ++ show inIDs ++ " -> " ++ show outIDs ++ " [" ++ intercalate "," (map (("\n  " ++) . show) ns) ++ " ]"

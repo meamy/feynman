@@ -439,11 +439,11 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
 
     -- Indexes start at "outDeg sop", after they're tensored onto sop
     xag =
-      traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
+      traceResynthesis ("XAG before transformation: " ++ XAG.pretty rawXAG) $
         foldl transformXAG rawXAG transformers
       where
         transformXAG x t =
-          traceResynthesis ("XAG transformed: " ++ show transformedXAG) $
+          traceResynthesis ("XAG transformed: " ++ XAG.pretty transformedXAG) $
             transformedXAG
           where
             transformedXAG = t x

@@ -1,4 +1,4 @@
-module Feynman.Synthesis.XAG (Graph(..), Node(..), fromSBools, optimize, valid) where
+module Feynman.Synthesis.XAG (Graph(..), Node(..), fromSBools, optimize, pretty, valid) where
 
 import Control.Exception (assert)
 import Control.Monad

@@ -438,8 +438,10 @@ public:
     else
       care = kitty::extend_to( care, tt.num_vars() );
 
+    std::cerr << "checking " << root * 2 << " ~ false" << std::endl;
     if ( binary_and( tt, care ) == sim.get_tt( ntk.get_constant( false ) ) )
     {
+      std::cerr << "Match!" << std::endl;
       return sim.get_phase( root ) ? ntk.get_constant( true ) : ntk.get_constant( false );
     }
     return std::nullopt;
@@ -457,8 +459,10 @@ public:
     {
       auto const d = divs.at( i );
 
+      std::cerr << "checking " << root * 2 << " ~ " << (d * 2) << std::endl;
       if ( binary_and( tt, care ) != binary_and( sim.get_tt( ntk.make_signal( d ) ), care ) )
         continue;
+      std::cerr << "  match!" << std::endl;
       return ( sim.get_phase( d ) ^ sim.get_phase( root ) ) ? !ntk.make_signal( d ) : ntk.make_signal( d );
     }
     return std::nullopt;
@@ -483,14 +487,17 @@ public:
         auto const& tt_s0 = sim.get_tt( ntk.make_signal( s0 ) );
         auto const& tt_s1 = sim.get_tt( ntk.make_signal( s1 ) );
 
+        std::cerr << "checking " << root * 2 << " ~ " << s0 * 2 << " ^ " << s1 * 2 << std::endl;
         if ( binary_and( ( tt_s0 ^ tt_s1 ), care ) == binary_and( tt, care ) )
         {
+          std::cerr << "  match!" << std::endl;
           auto const l = sim.get_phase( s0 ) ? !ntk.make_signal( s0 ) : ntk.make_signal( s0 );
           auto const r = sim.get_phase( s1 ) ? !ntk.make_signal( s1 ) : ntk.make_signal( s1 );
           return sim.get_phase( root ) ? !ntk.create_xor( l, r ) : ntk.create_xor( l, r );
         }
         else if ( binary_and( ( tt_s0 ^ tt_s1 ), care ) == binary_and( kitty::unary_not( tt ), care ) )
         {
+          std::cerr << "  -match!" << std::endl;
           auto const l = sim.get_phase( s0 ) ? !ntk.make_signal( s0 ) : ntk.make_signal( s0 );
           auto const r = sim.get_phase( s1 ) ? !ntk.make_signal( s1 ) : ntk.make_signal( s1 );
           return sim.get_phase( root ) ? ntk.create_xor( l, r ) : !ntk.create_xor( l, r );
@@ -525,8 +532,16 @@ public:
           auto const& tt_s1 = sim.get_tt( ntk.make_signal( s1 ) );
           auto const& tt_s2 = sim.get_tt( ntk.make_signal( s2 ) );
 
+          std::cerr << "checking " << root * 2 << " ~ " << s0 * 2 << " ^ " << s1 * 2 << " ^ " << s2 * 2 << std::endl;
+          std::cerr << "truth tables: ?" << to_binary(care) << std::endl;
+          std::cerr << "truth tables: =" << to_binary(tt) << std::endl;
+          std::cerr << "              ~" << to_binary(tt_s0 ^ tt_s1 ^ tt_s2) << std::endl;
+          std::cerr << "              ^" << to_binary(tt_s0) << std::endl;
+          std::cerr << "              ^" << to_binary(tt_s1) << std::endl;
+          std::cerr << "              ^" << to_binary(tt_s2) << std::endl;
           if ( binary_and( ( tt_s0 ^ tt_s1 ^ tt_s2 ), care ) == binary_and( tt, care ) )
           {
+            std::cerr << "  match!" << std::endl;
             auto const max_level = std::max( { ntk.level( s0 ),
                                                ntk.level( s1 ),
                                                ntk.level( s2 ) } );
@@ -556,6 +571,7 @@ public:
           }
           else if ( binary_and( ( tt_s0 ^ tt_s1 ^ tt_s2 ), care ) == binary_and( kitty::unary_not( tt ), care ) )
           {
+            std::cerr << "  -match!" << std::endl;
             auto const max_level = std::max( { ntk.level( s0 ),
                                                ntk.level( s1 ),
                                                ntk.level( s2 ) } );
@@ -606,6 +622,7 @@ public:
       /* check positive containment */
       if ( kitty::implies( tt_d, tt ) )
       {
+        std::cerr << "adding divisor " << d * 2 << " -> " << root * 2 << std::endl;
         udivs.positive_divisors.emplace_back( ntk.make_signal( d ) );
         continue;
       }
@@ -613,6 +630,7 @@ public:
       /* check negative containment */
       if ( kitty::implies( tt, tt_d ) )
       {
+        std::cerr << "adding divisor " << root * 2 << " -> " << d * 2 << std::endl;
         udivs.negative_divisors.emplace_back( ntk.make_signal( d ) );
         continue;
       }
@@ -642,8 +660,10 @@ public:
         auto const& tt_s0 = sim.get_tt( s0 );
         auto const& tt_s1 = sim.get_tt( s1 );
 
+        std::cerr << "checking " << root * 2 << " = " << s0.data << " | " << s1.data << std::endl;
         if ( binary_and( ( tt_s0 | tt_s1 ), care ) == binary_and( tt, care ) )
         {
+          std::cerr << "  match!" << std::endl;
           auto const l = sim.get_phase( ntk.get_node( s0 ) ) ? !s0 : s0;
           auto const r = sim.get_phase( ntk.get_node( s1 ) ) ? !s1 : s1;
           return sim.get_phase( root ) ? !ntk.create_or( l, r ) : ntk.create_or( l, r );
@@ -662,8 +682,10 @@ public:
         auto const& tt_s0 = sim.get_tt( s0 );
         auto const& tt_s1 = sim.get_tt( s1 );
 
+        std::cerr << "checking " << root * 2 << " = " << s0.data << " & " << s1.data << std::endl;
         if ( binary_and( ( tt_s0 & tt_s1 ), care ) == binary_and( tt, care ) )
         {
+          std::cerr << "  match!" << std::endl;
           auto const l = sim.get_phase( ntk.get_node( s0 ) ) ? !s0 : s0;
           auto const r = sim.get_phase( ntk.get_node( s1 ) ) ? !s1 : s1;
           return sim.get_phase( root ) ? !ntk.create_and( l, r ) : ntk.create_and( l, r );
@@ -701,6 +723,7 @@ public:
           auto const& tt_s1 = sim.get_tt( s1 );
           auto const& tt_s2 = sim.get_tt( s2 );
 
+          std::cerr << "checking " << root * 2 << " = " << s0.data << " | " << s1.data << " | " << s2.data << std::endl;
           if ( binary_and( ( tt_s0 | tt_s1 | tt_s2 ), care ) == binary_and( tt, care ) )
           {
             auto const max_level = std::max( { ntk.level( ntk.get_node( s0 ) ),
@@ -751,6 +774,7 @@ public:
           auto const& tt_s1 = sim.get_tt( s1 );
           auto const& tt_s2 = sim.get_tt( s2 );
 
+          std::cerr << "checking " << root * 2 << " = " << s0.data << " & " << s1.data << " & " << s2.data << std::endl;
           if ( binary_and( ( tt_s0 & tt_s1 & tt_s2 ), care ) == binary_and( tt, care ) )
           {
             auto const max_level = std::max( { ntk.level( ntk.get_node( s0 ) ),
@@ -810,24 +834,28 @@ public:
           auto const& tt_s1 = sim.get_tt( s1 );
           if ( kitty::implies( tt_s0 & tt_s1, tt ) )
           {
+            std::cerr << "adding divisor " << s0.data << " & " << s1.data << " -> " << root * 2 << std::endl;
             bdivs.positive_divisors0.emplace_back( s0 );
             bdivs.positive_divisors1.emplace_back( s1 );
           }
 
           if ( kitty::implies( ~tt_s0 & tt_s1, tt ) )
           {
+            std::cerr << "adding divisor -" << s0.data << " & " << s1.data << " -> " << root * 2 << std::endl;
             bdivs.positive_divisors0.emplace_back( !s0 );
             bdivs.positive_divisors1.emplace_back( s1 );
           }
 
           if ( kitty::implies( tt_s0 & ~tt_s1, tt ) )
           {
+            std::cerr << "adding divisor " << s0.data << " & -" << s1.data << " -> " << root * 2 << std::endl;
             bdivs.positive_divisors0.emplace_back( s0 );
             bdivs.positive_divisors1.emplace_back( !s1 );
           }
 
           if ( kitty::implies( ~tt_s0 & ~tt_s1, tt ) )
           {
+            std::cerr << "adding divisor -" << s0.data << " & -" << s1.data << " -> " << root * 2 << std::endl;
             bdivs.positive_divisors0.emplace_back( !s0 );
             bdivs.positive_divisors1.emplace_back( !s1 );
           }
@@ -839,24 +867,28 @@ public:
           auto const& tt_s1 = sim.get_tt( s1 );
           if ( kitty::implies( tt, tt_s0 & tt_s1 ) )
           {
+            std::cerr << "adding divisor " << root * 2 << " -> " << s0.data << " & " << s1.data << std::endl;
             bdivs.negative_divisors0.emplace_back( s0 );
             bdivs.negative_divisors1.emplace_back( s1 );
           }
 
           if ( kitty::implies( tt, ~tt_s0 & tt_s1 ) )
           {
+            std::cerr << "adding divisor " << root * 2 << " -> -" << s0.data << " & " << s1.data << std::endl;
             bdivs.negative_divisors0.emplace_back( !s0 );
             bdivs.negative_divisors1.emplace_back( s1 );
           }
 
           if ( kitty::implies( tt, tt_s0 & ~tt_s1 ) )
           {
+            std::cerr << "adding divisor " << root * 2 << " -> " << s0.data << " & -" << s1.data << std::endl;
             bdivs.negative_divisors0.emplace_back( s0 );
             bdivs.negative_divisors1.emplace_back( !s1 );
           }
 
           if ( kitty::implies( tt, ~tt_s0 & ~tt_s1 ) )
           {
+            std::cerr << "adding divisor " << root * 2 << " -> -" << s0.data << " & -" << s1.data << std::endl;
             bdivs.negative_divisors0.emplace_back( !s0 );
             bdivs.negative_divisors1.emplace_back( !s1 );
           }
@@ -892,6 +924,7 @@ public:
         auto const b = sim.get_phase( ntk.get_node( s1 ) ) ? !s1 : s1;
         auto const c = sim.get_phase( ntk.get_node( s2 ) ) ? !s2 : s2;
 
+        std::cerr << "checking " << root * 2 << " = " << s0.data << " | (" << s1.data << " & " << s2.data << ")" << std::endl;
         if ( binary_and( ( tt_s0 | ( tt_s1 & tt_s2 ) ), care ) == binary_and( tt, care ) )
         {
           return sim.get_phase( root ) ? !ntk.create_or( a, ntk.create_and( b, c ) ) : ntk.create_or( a, ntk.create_and( b, c ) );
@@ -916,6 +949,7 @@ public:
         auto const b = sim.get_phase( ntk.get_node( s1 ) ) ? !s1 : s1;
         auto const c = sim.get_phase( ntk.get_node( s2 ) ) ? !s2 : s2;
 
+        std::cerr << "checking " << root * 2 << " = " << s0.data << " | (" << s1.data << " & " << s2.data << ")" << std::endl;
         if ( binary_and( ( tt_s0 | ( tt_s1 & tt_s2 ) ), care ) == binary_and( tt, care ) )
         {
           return sim.get_phase( root ) ? !ntk.create_and( a, ntk.create_or( b, c ) ) : ntk.create_and( a, ntk.create_or( b, c ) );
