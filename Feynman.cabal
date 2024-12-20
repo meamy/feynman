@@ -522,7 +522,7 @@ library
   other-modules:       Logic.MockTurtle.LowLevel
 
   cxx-sources:         cxx-sources/src/mockturtle_bindings.cpp
-  cxx-options:         -g -std=c++17 "-Wp,-w" -DFMT_HEADER_ONLY
+  cxx-options:         -g -O0 -fno-inline -std=c++17 "-Wp,-w" -DFMT_HEADER_ONLY
   include-dirs:
     cxx-sources/mockturtle/include cxx-sources/mockturtle/lib/abcesop
     cxx-sources/mockturtle/lib/abcsat cxx-sources/mockturtle/lib/bill
