@@ -37,7 +37,7 @@ mergeStructuralDuplicates inputGraph =
       { mergeNodesRev = finalNodesRev,
         mergeMapping = finalMapping
       } =
-        foldl checkAndMergeNode emptyMerge (XAG.xagNodes inputGraph)
+        foldl checkAndMergeNode emptyMerge (XAG.nodes inputGraph)
 
     checkAndMergeNode :: MergeState -> XAG.Node -> MergeState
     checkAndMergeNode s@(MergeState {mergeFalse = Nothing}) n@(XAG.Const nID False) =

@@ -461,7 +461,7 @@ xagToMCTs prefix g qIDs =
   where
     outIDs = map (idMap !) (XAG.outputIDs g)
 
-    gates = concat (map nodeToMCTs (XAG.xagNodes g))
+    gates = concat (map nodeToMCTs (XAG.nodes g))
 
     nodeToMCTs :: XAG.Node -> [ExtractionGates]
     nodeToMCTs (XAG.Const nID False) = []
@@ -483,7 +483,7 @@ xagToMCTs prefix g qIDs =
 
     idMap = Map.fromList ((zip (XAG.inputIDs g) qIDs) ++ ancillaNodeIDs)
     ancillaNodeIDs =
-      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.xagNodes g)]
+      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.nodes g)]
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --

@@ -64,7 +64,7 @@ instance Ord Node where
       compareType (Xor {}) _ = LT
       compareType (And {}) _ = undefined
 
-data Graph = Graph {xagNodes :: [Node], inputIDs :: [Int], outputIDs :: [Int]}
+data Graph = Graph {nodes :: [Node], inputIDs :: [Int], outputIDs :: [Int]}
   deriving (Eq, Generic, Ord, Read, Show)
 
 -- compute the set of free variables used by this graph
@@ -233,7 +233,7 @@ nodeRefs _ = IntSet.empty
 --     firstTrueConst (_ : nodes) = firstTrueConst nodes
 
 valid :: Graph -> Bool
-valid (Graph {xagNodes = ns, inputIDs = inIDs, outputIDs = outIDs}) =
+valid (Graph {nodes = ns, inputIDs = inIDs, outputIDs = outIDs}) =
   -- node list is valid according to those basic rules
   validNodes ns
     -- no dups in the input order (that would mean a double-assignment)
@@ -299,7 +299,7 @@ instance QC.Arbitrary Graph where
     let allOutputs = map nodeID nodes
     outShuf <- QC.shuffle allOutputs
     randOuts <- QC.sublistOf outShuf
-    return $ Graph {xagNodes = nodes, inputIDs = randIns, outputIDs = randOuts}
+    return $ Graph {nodes = nodes, inputIDs = randIns, outputIDs = randOuts}
     where
       genNode n = do
         QC.frequency [(1, genConstNode n), (10, genNotNode n), (20, genXANode n)]
