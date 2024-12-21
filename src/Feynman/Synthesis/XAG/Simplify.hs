@@ -24,7 +24,8 @@ data MergeState = MergeState
 
 -- Within a graph, merge nodes to canonical nodes preforming the same
 -- computation. This is fairly light and only merges by structure, graphs with
--- predictable structure may benefit most
+-- predictable structure may benefit most -- should be equivalent to ABC's
+-- structural hashing, AKA "strash"
 mergeStructuralDuplicates :: XAG.Graph -> XAG.Graph
 mergeStructuralDuplicates inputGraph =
   XAG.Graph
@@ -58,23 +59,29 @@ mergeStructuralDuplicates inputGraph =
         Just mID -> mergeNode nID mID s
       where
         canonXID = IntMap.findWithDefault xID xID (mergeMapping s)
-    checkAndMergeNode s n@(XAG.Xor nID xID yID) =
-      case (Map.lookup (canonXID, canonYID) (mergeXor s)) of
-        Nothing ->
-          (keepNode (XAG.Xor nID canonXID canonYID) s)
-            { mergeXor = Map.insert (canonXID, canonYID) nID (mergeXor s)
-            }
-        Just mID -> mergeNode nID mID s
+    checkAndMergeNode s n@(XAG.Xor nID xID yID)
+      | canonXID == canonYID = checkAndMergeNode s (XAG.Const nID False)
+      | canonXID > canonYID = checkAndMergeNode s (XAG.Xor nID canonYID canonXID)
+      | otherwise = 
+          case (Map.lookup (canonXID, canonYID) (mergeXor s)) of
+            Nothing ->
+              (keepNode (XAG.Xor nID canonXID canonYID) s)
+                { mergeXor = Map.insert (canonXID, canonYID) nID (mergeXor s)
+                }
+            Just mID -> mergeNode nID mID s
       where
         canonXID = IntMap.findWithDefault xID xID (mergeMapping s)
         canonYID = IntMap.findWithDefault yID yID (mergeMapping s)
-    checkAndMergeNode s n@(XAG.And nID xID yID) =
-      case (Map.lookup (canonXID, canonYID) (mergeAnd s)) of
-        Nothing ->
-          (keepNode (XAG.And nID canonXID canonYID) s)
-            { mergeAnd = Map.insert (canonXID, canonYID) nID (mergeAnd s)
-            }
-        Just mID -> mergeNode nID mID s
+    checkAndMergeNode s n@(XAG.And nID xID yID)
+      | canonXID == canonYID = mergeNode nID canonXID s
+      | canonXID > canonYID = checkAndMergeNode s (XAG.And nID canonYID canonXID)
+      | otherwise = 
+          case (Map.lookup (canonXID, canonYID) (mergeAnd s)) of
+            Nothing ->
+              (keepNode (XAG.And nID canonXID canonYID) s)
+                { mergeAnd = Map.insert (canonXID, canonYID) nID (mergeAnd s)
+                }
+            Just mID -> mergeNode nID mID s
       where
         canonXID = IntMap.findWithDefault xID xID (mergeMapping s)
         canonYID = IntMap.findWithDefault yID yID (mergeMapping s)

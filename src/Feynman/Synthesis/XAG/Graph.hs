@@ -27,8 +27,8 @@ import Test.QuickCheck qualified as QC
 
 -- The Graph is a list of Node; each node has a nodeID, uniquely identifying it.
 -- Nodes are ordered by increasing nodeID, and the graph should be acyclic, with
--- each Node referring only to prior XagNodes via its inputs. References to
--- nodeIDs not in the list are free variables.
+-- each Node referring only to prior XagNodes via its inputs i.e. topologically
+-- sorted. References to nodeIDs not in the list are free variables.
 
 -- Although we include Const nodes for flexibility, you can eliminate them from
 -- any graph by transforming to a graph that applies Not to free variables
