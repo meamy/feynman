@@ -48,6 +48,7 @@ library
                        Feynman.Synthesis.Pathsum.Util,
                        Feynman.Synthesis.XAG,
                        Feynman.Synthesis.XAG.Graph,
+                       Feynman.Synthesis.XAG.MinMultSat,
                        Feynman.Synthesis.XAG.SDCODC,
                        Feynman.Synthesis.XAG.Simplify,
                        Feynman.Synthesis.XAG.Util,
