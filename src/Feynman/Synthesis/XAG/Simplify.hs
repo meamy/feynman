@@ -101,3 +101,95 @@ mergeStructuralDuplicates inputGraph =
           mergeMapping = IntMap.empty,
           mergeNodesRev = []
         }
+
+
+-- Do the most trivial operations required to reduce the complexity of an XAG
+-- normalize :: Graph -> Graph
+-- normalize (Graph allNodes) =
+--   case firstTrueConst allNodes of
+--     Nothing -> Graph $ filterNodes IntSet.empty allNodes
+--       where
+--         -- If no constant true is present in the graph, there must also not be
+--         -- any trivial true outputs. This arises because you can't get a true
+--         -- output from an XOR or AND gate without a true input, therefore any
+--         -- true outputs must be nontrivial. This is a convenient fact for us
+--         -- in that the constant will always be there if we need it, but then
+--         -- we still need to special-case the reduction when that happens.
+--         filterNodes :: IntSet.IntSet -> [Node] -> [Node]
+--         filterNodes _ [] = []
+--         -- Add constant false to the trivial set
+--         filterNodes trivialFalse (Const nid False : nodes) =
+--           filterNodes (IntSet.insert nid trivialFalse) nodes
+--         filterNodes _ (Const _ True : _) = undefined
+--         -- Xor:
+--         -- Remove trivial false inputs;
+--         -- Remove inputs that appear an even number of times;
+--         -- Remap trivial true inputs to the first constant true found.
+--         filterNodes trivialFalse (Xor nid x y : nodes) =
+--           Xor nid gatheredInputs : filterNodes trivialFalse nodes
+--           where
+--             gatheredInputs = IntSet.foldr xorGather IntSet.empty (IntSet.fromList [x, y])
+
+--             xorGather inp gathered
+--               -- Ignore trivial false inputs
+--               | IntSet.member inp trivialFalse = gathered
+--               -- Track whether inputs have canceled themselves out
+--               | otherwise = invertMembership inp gathered
+
+--             invertMembership n s
+--               | IntSet.member n s = IntSet.delete n s
+--               | otherwise = IntSet.insert n s
+
+--         -- And:
+--         -- If any input is trivial false, add this to the trivial false set;
+--         -- Otherwise include it with repeated inputs removed.
+--         filterNodes trivialFalse (And nid andInputs : nodes) =
+--           if not (IntSet.disjoint trivialFalse andInputs)
+--             then filterNodes (IntSet.insert nid trivialFalse) nodes
+--             else And nid andInputs : filterNodes trivialFalse nodes
+--     Just trueID -> Graph $ Const trueID True : filterNodes IntSet.empty IntSet.empty allNodes
+--       where
+--         filterNodes :: IntSet.IntSet -> IntSet.IntSet -> [Node] -> [Node]
+--         filterNodes _ _ [] = []
+--         -- Add constant true/false to the trivial set
+--         filterNodes trivialFalse trivialTrue (Const nid False : nodes) =
+--           filterNodes (IntSet.insert nid trivialFalse) trivialTrue nodes
+--         filterNodes trivialFalse trivialTrue (Const nid True : nodes) =
+--           filterNodes trivialFalse (IntSet.insert nid trivialTrue) nodes
+--         -- Xor:
+--         -- Remove trivial false inputs;
+--         -- Remove inputs that appear an even number of times;
+--         -- Remap trivial true inputs to the first constant true found.
+--         filterNodes trivialFalse trivialTrue (Xor nid x y : nodes) =
+--           Xor nid gatheredInputs : filterNodes trivialFalse trivialTrue nodes
+--           where
+--             gatheredInputs = IntSet.foldr xorGather IntSet.empty (IntSet.fromList [x, y])
+
+--             xorGather inp gathered
+--               -- Ignore trivial false inputs
+--               | IntSet.member inp trivialFalse = gathered
+--               -- Map trivial true to the one true ID (canceling it out if needed)
+--               | IntSet.member inp trivialTrue = invertMembership trueID gathered
+--               | otherwise = IntSet.insert inp gathered
+
+--             invertMembership n s
+--               | IntSet.member n s = IntSet.delete n s
+--               | otherwise = IntSet.insert n s
+
+--         -- And:
+--         -- If any input is trivial false, add it to the trivial false set;
+--         -- Remove any trivial true inputs;
+--         --   If no inputs remain, add it to the trivial true set;
+--         --   Otherwise include it with nontrivial inputs only.
+--         filterNodes trivialFalse trivialTrue (And nid x y : nodes)
+--           | not (IntSet.disjoint (IntSet.fromList [x, y]) trivialFalse) =
+--               filterNodes (IntSet.insert nid trivialFalse) trivialTrue nodes
+--           | IntSet.isSubsetOf (IntSet.fromList [x, y]) trivialTrue =
+--               filterNodes (IntSet.insert nid trivialFalse) trivialTrue nodes
+--           | otherwise =
+--               And nid (IntSet.difference (IntSet.fromList [x, y]) trivialTrue)
+--                 : filterNodes trivialFalse trivialTrue nodes
+--   where
+--     firstTrueConst [] = Nothing
+--     firstTrueConst (Const nid True : _) = Just nid
+--     firstTrueConst (_ : nodes) = firstTrueConst nodes
