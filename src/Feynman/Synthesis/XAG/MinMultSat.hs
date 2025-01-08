@@ -1,4 +1,5 @@
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Feynman.Synthesis.XAG.MinMultSat
   ( synthesizeFromFormulas,
@@ -70,7 +71,7 @@ synthesizeFromFormulas inputVars outputFormulas varsStart =
       case solve fullFormula of
         -- Found a working solution!
         Just assignments ->
-          let (s, outputIDs) =
+          let (outputIDs :: [Int], s :: XAGBuilder) =
                 runState
                   (fullXAGFunc assignments originalInputIDs)
                   (XAGBuilder [] (length inputVars + 1))
@@ -81,21 +82,22 @@ synthesizeFromFormulas inputVars outputFormulas varsStart =
         originalInputIDs = [1 .. length inputVars]
         (fullFormula, fullXAGFunc) =
           evalState
-            (FormulaAlloc varsStart)
             ( do
                 (equivFmls, expandedInputFmls, intermedXAGFunc) <- ofComplexityFormula m (map Var inputVars)
                 (outputEquivFmls, outputXAGFunc) <- finalAffineFormulas expandedInputFmls outputFormulas
-                let xagFunc assignments inputIDs = do
+                let xagFunc :: Map Int Bool -> [Int] -> XAGState [Int]
+                    xagFunc assignments inputIDs = do
                       expandedInputIDs <- intermedXAGFunc assignments inputIDs
                       outputXAGFunc assignments expandedInputIDs
                 return (All (equivFmls ++ outputEquivFmls), xagFunc)
             )
+            (FormulaAlloc varsStart)
 
     inputs = map Var inputVars
 
     finalAffineFormulas :: [Formula Int] -> [Formula Int] -> FormulaState ([Formula Int], Map Int Bool -> [Int] -> XAGState [Int])
     finalAffineFormulas expandedInputFmls outputFmls = do
-      affineFormulaXAGFuncs <- mapM (const (affineFunctionFormula [expandedInputFmls])) outputFmls
+      affineFormulaXAGFuncs <- mapM (const (affineFunctionFormula expandedInputFmls)) outputFmls
       let (affineFmls, affineXAGFuncs) = unzip affineFormulaXAGFuncs
       let xagFunc assignments inputIDs = do
             outputNodeIDs <- mapM (\f -> f assignments inputIDs) affineXAGFuncs
@@ -104,30 +106,30 @@ synthesizeFromFormulas inputVars outputFormulas varsStart =
 
     -- Unlike the below (andFormula, affineFunctionFormula), this function also
     -- returns a list of formulas for the inputs including all the intermediate
-    -- multiplicative (And) outputs, so they can be together combined by
+    -- multiplicative (i.e. And) outputs, so they can be together combined by
     -- different affine functions producing each of multiple overall outputs
     ofComplexityFormula :: Int -> [Formula Int] -> FormulaState ([Formula Int], [Formula Int], Map Int Bool -> [Int] -> XAGState [Int])
     ofComplexityFormula 0 inputFmls = do
       return ([], inputFmls, (\assignments inputIDs -> return inputIDs))
     ofComplexityFormula k inputFmls = do
-      let (kLess1EquivFmls, kLess1ExpandedInputFmls, kLess1XAGFunc) =
-            ofComplexityFormula (k - 1) inputFmls
+      (kLess1EquivFmls, kLess1ExpandedInputFmls, kLess1XAGFunc) <-
+        ofComplexityFormula (k - 1) inputFmls
       (andFml, andXAGFunc) <- andFormula kLess1ExpandedInputFmls
       andVar <- freshVar
       let expandedInputFmls = Var andVar : inputFmls
       let xagFunc assignments inputIDs = do
-            kLess1IDs <- kLess1XAGFunc inputIDs
+            kLess1IDs <- kLess1XAGFunc assignments inputIDs
             -- returned IDs and also the expanded IDs put into andXAGFunc here
             -- should match the order in the ofComplexityFormula return and the
             -- call to andFormula above, respectively
-            andID <- andXAGFunc kLess1IDs
+            andID <- andXAGFunc assignments kLess1IDs
             return (andID : kLess1IDs)
-      return ((andFml :<->: andVar) : kLess1EquivFmls, andVar : kLess1ExpandedInputFmls, xagFunc)
+      return ((andFml :<->: Var andVar) : kLess1EquivFmls, Var andVar : kLess1ExpandedInputFmls, xagFunc)
 
     andFormula :: [Formula Int] -> FormulaState (Formula Int, Map Int Bool -> [Int] -> XAGState Int)
     andFormula inputFmls = do
-      (leftFormula, leftXAGFunc) <- affineFunctionFormula [inputFmls]
-      (rightFormula, rightXAGFunc) <- affineFunctionFormula [inputFmls]
+      (leftFormula, leftXAGFunc) <- affineFunctionFormula inputFmls
+      (rightFormula, rightXAGFunc) <- affineFunctionFormula inputFmls
       let xagFunc assignments inputIDs = do
             leftNodeID <- leftXAGFunc assignments inputIDs
             rightNodeID <- rightXAGFunc assignments inputIDs
@@ -145,15 +147,16 @@ synthesizeFromFormulas inputVars outputFormulas varsStart =
       let xagFunc assignments inputIDs = do
             foldM buildXorNode (head usedInputIDs) (tail usedInputIDs)
             where
-              usedInputIDs = ((map snd) . (filter (assignments Map.!))) (zip ctlVars inputIDs)
+              usedInputIDs = ((map snd) . (filter ((assignments Map.!) . fst))) (zip ctlVars inputIDs)
       return (foldTerms terms, xagFunc)
 
-truthTableFormula :: (Ord v) => Formula v -> [Bool] -> Formula v
+truthTableFormula :: (Ord v) => Formula v -> [Bool] -> [Formula v] -> Formula v
 truthTableFormula outputVar truthTable inputVars =
   All (zipWith rowClause [0 ..] truthTable)
   where
     rowClause i True = All (bitsToFormulas i inputVars) :->: outputVar
     rowClause i False = All (bitsToFormulas i inputVars) :->: Not outputVar
 
+    bitsToFormulas :: Int -> [Formula v] -> [Formula v]
     bitsToFormulas i vars =
       zipWith (\t v -> if i .&. t /= 0 then v else Not v) [1 `shiftL` k | k <- [0 ..]] vars
