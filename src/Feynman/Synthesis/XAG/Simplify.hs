@@ -22,7 +22,7 @@ data MergeState = MergeState
     mergeNodesRev :: [XAG.Node]
   }
 
--- Within a graph, merge nodes to canonical nodes preforming the same
+-- Within a graph, merge nodes to canonical nodes performing the same
 -- computation. This is fairly light and only merges by structure, graphs with
 -- predictable structure may benefit most -- should be equivalent to ABC's
 -- structural hashing, AKA "strash"
@@ -62,7 +62,7 @@ mergeStructuralDuplicates inputGraph =
     checkAndMergeNode s n@(XAG.Xor nID xID yID)
       | canonXID == canonYID = checkAndMergeNode s (XAG.Const nID False)
       | canonXID > canonYID = checkAndMergeNode s (XAG.Xor nID canonYID canonXID)
-      | otherwise = 
+      | otherwise =
           case (Map.lookup (canonXID, canonYID) (mergeXor s)) of
             Nothing ->
               (keepNode (XAG.Xor nID canonXID canonYID) s)
@@ -75,7 +75,7 @@ mergeStructuralDuplicates inputGraph =
     checkAndMergeNode s n@(XAG.And nID xID yID)
       | canonXID == canonYID = mergeNode nID canonXID s
       | canonXID > canonYID = checkAndMergeNode s (XAG.And nID canonYID canonXID)
-      | otherwise = 
+      | otherwise =
           case (Map.lookup (canonXID, canonYID) (mergeAnd s)) of
             Nothing ->
               (keepNode (XAG.And nID canonXID canonYID) s)
@@ -101,7 +101,6 @@ mergeStructuralDuplicates inputGraph =
           mergeMapping = IntMap.empty,
           mergeNodesRev = []
         }
-
 
 -- Do the most trivial operations required to reduce the complexity of an XAG
 -- normalize :: Graph -> Graph

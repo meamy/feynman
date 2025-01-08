@@ -64,28 +64,28 @@ instance Ord Node where
       compareType (Xor {}) _ = LT
       compareType (And {}) _ = undefined
 
-class Graph g where
-  inputIDs :: g -> [Int]
-  inputIDSet :: g -> IntSet.IntSet
-  inputIDSet = IntSet.fromList . inputIDs
-  outputIDs :: g -> [Int]
-  outputIDSet :: g -> IntSet.IntSet
-  outputIDSet = IntSet.fromList . outputIDs
-  nodes :: g -> [Node]
-  nodeIDs :: g -> [Int]
-  nodeIDs = map nodeID nodes
-  nodeIDSet :: g -> IntSet.IntSet
-  nodeIDSet = IntSet.fromList . nodeIDs
-  valid :: g -> Bool
-  topologicalIDs :: g -> [Int]
-  topologicalIDs = (map nodeID) . topologicalNodes
-  topologicalNodes :: g -> [Node]
-  freeVariables :: g -> IntSet.IntSet
-  internal :: g -> IntSet.IntSet
-  coverIDs :: IntSet.IntSet -> g -> IntSet.IntSet
-  coverIDs ids = (map nodeID) . (coverNodes ids)
-  coverNodes :: IntSet.IntSet -> g -> [Node]
-  substitute :: Graph h => g -> [Int] -> h -> g
+-- class Graph g where
+--   inputIDs :: g -> [Int]
+--   inputIDSet :: g -> IntSet.IntSet
+--   inputIDSet = IntSet.fromList . inputIDs
+--   outputIDs :: g -> [Int]
+--   outputIDSet :: g -> IntSet.IntSet
+--   outputIDSet = IntSet.fromList . outputIDs
+--   nodes :: g -> [Node]
+--   nodeIDs :: g -> [Int]
+--   nodeIDs = map nodeID nodes
+--   nodeIDSet :: g -> IntSet.IntSet
+--   nodeIDSet = IntSet.fromList . nodeIDs
+--   valid :: g -> Bool
+--   topologicalIDs :: g -> [Int]
+--   topologicalIDs = (map nodeID) . topologicalNodes
+--   topologicalNodes :: g -> [Node]
+--   freeVariables :: g -> IntSet.IntSet
+--   internal :: g -> IntSet.IntSet
+--   coverIDs :: IntSet.IntSet -> g -> IntSet.IntSet
+--   coverIDs ids = (map nodeID) . (coverNodes ids)
+--   coverNodes :: IntSet.IntSet -> g -> [Node]
+--   substitute :: (Graph h) => g -> [Int] -> h -> g
 
 data Graph = Graph {nodes :: [Node], inputIDs :: [Int], outputIDs :: [Int]}
   deriving (Eq, Generic, Ord, Read, Show)

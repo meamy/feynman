@@ -35,7 +35,7 @@ fromSBools nvars sbools
       assert (valid completeGraph) otherwise =
       completeGraph
   where
-    completeGraph = Graph (reverse completeNodesRev) [0 .. nvars - 1] completeOutIDs 
+    completeGraph = Graph (reverse completeNodesRev) [0 .. nvars - 1] completeOutIDs
 
     (completeOutIDs, GenState {gsNodes = completeNodesRev}) =
       runState fullGen (GenState nvars [])
