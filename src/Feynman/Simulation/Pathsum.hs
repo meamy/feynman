@@ -534,7 +534,7 @@ sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover 
           TypeQubit -> [id]
 
 bitBlast :: ID -> Int -> Exp
-bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo (n-i-1)) | i <- [0..n-1]]
+bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo i) | i <- [0..n-1]]
   where powertwo 0 = IntExp 1
         powertwo j = BOpExp (IntExp 2) TimesOp (powertwo $ j-1)
 
