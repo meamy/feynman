@@ -40,6 +40,7 @@ import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import qualified Feynman.Synthesis.XAG.Graph as XAG
+import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
 import qualified Feynman.Synthesis.XAG.SDCODC as XAG
 import qualified Feynman.Synthesis.XAG.Simplify as XAG
 import Feynman.Synthesis.XAG.Util
@@ -395,6 +396,7 @@ synthesizeSBools
   | ctlUseMCTSynthesis = synthesizeSBoolsMCT
   | ctlUseNaiveXAGSynthesis = synthesizeSBoolsXAG naiveXAGTransformers
   | ctlUseBasicXAGSynthesis = synthesizeSBoolsXAG basicXAGTransformers
+  | ctlUseMinMultSatXAGSynthesis = synthesizeSBoolsXAG minMultSatXAGTransformers
 
 synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsMCT prefix qIDs nInputs sbools =
@@ -418,8 +420,12 @@ synthesizeSBoolsMCT prefix qIDs nInputs sbools =
         termIDs term = [qIDs !! i | IVar i <- Set.toList (vars term)]
 
 naiveXAGTransformers = []
-
 basicXAGTransformers = [XAG.mergeStructuralDuplicates]
+minMultSatXAGTransformers = [
+    XAG.mergeStructuralDuplicates,
+    (\g -> fromMaybe g (XAG.resynthesizeMinMultSat g))
+  ]
+
 
 synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =

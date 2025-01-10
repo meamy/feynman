@@ -12,7 +12,8 @@ data FeynmanControl = FeynmanControl
     feynmanControlTraceResynthesis :: Bool,
     feynmanControlUseMCTSynthesis :: Bool,
     feynmanControlUseNaiveXAGSynthesis :: Bool,
-    feynmanControlUseBasicXAGSynthesis :: Bool
+    feynmanControlUseBasicXAGSynthesis :: Bool,
+    feynmanControlUseMinMultSatXAGSynthesis :: Bool
   }
 
 type HasFeynmanControl = (?feynmanControl :: FeynmanControl)
@@ -30,8 +31,11 @@ ctlUseNaiveXAGSynthesis = feynmanControlUseNaiveXAGSynthesis ?feynmanControl
 ctlUseBasicXAGSynthesis :: (HasFeynmanControl) => Bool
 ctlUseBasicXAGSynthesis = feynmanControlUseBasicXAGSynthesis ?feynmanControl
 
+ctlUseMinMultSatXAGSynthesis :: (HasFeynmanControl) => Bool
+ctlUseMinMultSatXAGSynthesis = feynmanControlUseMinMultSatXAGSynthesis ?feynmanControl
+
 ctlUseAncillaSynthesis :: (HasFeynmanControl) => Bool
-ctlUseAncillaSynthesis = ctlUseMCTSynthesis || ctlUseNaiveXAGSynthesis || ctlUseBasicXAGSynthesis
+ctlUseAncillaSynthesis = ctlUseMCTSynthesis || ctlUseNaiveXAGSynthesis || ctlUseBasicXAGSynthesis || ctlUseMinMultSatXAGSynthesis
 
 traceResynthesis :: (HasFeynmanControl) => String -> a -> a
 traceResynthesis msg x
