@@ -13,6 +13,8 @@ where
 import Control.Exception (assert)
 import Control.Monad (foldM, replicateM)
 import Control.Monad.State.Strict (State, gets, modify, runState)
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Map qualified as Map
@@ -94,7 +96,12 @@ fixFormula fixingInputs compInputs fmlFunc = do
 
     withComputedInputFormula ctx input fml = ctx {inputFormulas = Map.insert input fml (inputFormulas ctx)}
 
-data XAGBuilder = XAGBuilder {xagNodesRev :: [XAG.Node], nextNodeID :: Int, paramAssignmentsMap :: Map Param Bool, inputNodeIDsMap :: Map Input Int}
+data XAGBuilder = XAGBuilder
+  { xagNodesRev :: [XAG.Node],
+    nextNodeID :: Int,
+    paramAssignmentsMap :: Map Param Bool,
+    inputNodeIDsMap :: Map Input Int
+  }
 
 type XAGState a = State XAGBuilder a
 
@@ -130,22 +137,37 @@ mapComputedInputNode input nodeID = do
 -- variables to output values
 synthesizeFromTruthTable :: Int -> Int -> [([Bool], [Bool])] -> Maybe XAG.Graph
 synthesizeFromTruthTable nInputs nOutputs truthTable =
-  solveMultComplexityAtLeast 0
+  trace ("affine outputs: " ++ show (IntMap.keys affineOutputGraphs)) $
+    trace ("non-affine outputs: " ++ show nonAffineOutputs) $
+      trace ("affine graphs:\n" ++ intercalate "\n" (map (("  " ++) . show) (IntMap.elems affineOutputGraphs))) $
+        if null nonAffineOutputs
+          then Just (mergeAffineGraphs (XAG.Graph [] [] []) (IntMap.toAscList affineOutputGraphs))
+          else case solveNonAffine 1 of
+            Just g -> Just (mergeAffineGraphs g (IntMap.toAscList affineOutputGraphs))
+            Nothing -> Nothing
   where
-    solveMultComplexityAtLeast :: Int -> Maybe XAG.Graph
-    solveMultComplexityAtLeast m =
-      case solve fullFormula of
-        -- Found a working solution!
-        Just assignments ->
-          trace "Solved, building XAG" $
-            let (outputIDs, s) = runState fullXAGFunc (emptyXAGBuilder assignments)
-             in Just $ XAG.Graph (reverse (xagNodesRev s)) freeInputIDs outputIDs
-        -- Can't do, expand search?
-        Nothing ->
-          trace ("Expanding search to MC " ++ show (m + 1)) $
-            if m >= 12
-              then trace "Giving up." Nothing
-              else solveMultComplexityAtLeast (m + 1)
+    mergeAffineGraphs :: XAG.Graph -> [(Int, XAG.Graph)] -> XAG.Graph
+    mergeAffineGraphs g [] = g
+    mergeAffineGraphs g ((i, gAffine) : remain) =
+      mergeAffineGraphs merged remain
+      where
+        merged = XAG.mergeAt freeInputIDs g freeInputIDs i gAffine freeInputIDs
+
+    solveNonAffine :: Int -> Maybe XAG.Graph
+    solveNonAffine multComplexity =
+      trace ("Searching MC " ++ show multComplexity) $
+        trace ("non-affine truth table [0]: " ++ show (nonAffineTruthTable !! 0)) $
+          case solve fullFormula of
+            -- Found a working solution!
+            Just assignments ->
+              trace "Solved, building XAG" $
+                let (outputIDs, s) = runState fullXAGFunc (emptyXAGBuilder assignments)
+                 in Just $ XAG.Graph (reverse (xagNodesRev s)) freeInputIDs outputIDs
+            -- Can't do, expand search?
+            Nothing ->
+              if multComplexity >= 12
+                then trace "Giving up." Nothing
+                else solveNonAffine (multComplexity + 1)
       where
         fullXAGFunc :: XAGState [Int]
         fullXAGFunc = do
@@ -156,14 +178,13 @@ synthesizeFromTruthTable nInputs nOutputs truthTable =
         emptyXAGBuilder assignments = XAGBuilder [XAG.Const 1 True] (nInputs + 2) assignments freeInputMap
 
         freeInputMap = Map.fromList (zip [Input (negate i) | i <- [1 .. nInputs]] freeInputIDs)
-        freeInputIDs = [2 .. nInputs + 1]
 
         fullFormula :: ParamFormula
         fullFormula =
           trace ("Full formula has " ++ show (length fullFormulaClauses) ++ " clauses") $
             All fullFormulaClauses
 
-        fullFormulaClauses = concatMap (uncurry ttRowClauses) truthTable
+        fullFormulaClauses = concatMap (uncurry ttRowClauses) nonAffineTruthTable
 
         ttRowClauses :: [Bool] -> [Bool] -> [ParamFormula]
         ttRowClauses inputBools outputBools =
@@ -179,25 +200,77 @@ synthesizeFromTruthTable nInputs nOutputs truthTable =
         -- The first function is the common k-complexity one, which is not
         -- really an output to the caller
         outputFuncPairs = drop 1 funcPairs
-        (funcPairs, builder) = runState outputAffineFormulas (emptyFormulaBuilder nInputs)
+        (funcPairs, builder) = runState outputFormulas (emptyFormulaBuilder nInputs)
 
-        outputAffineFormulas :: FormulaState [(FormulaFunc, XAGFunc)]
-        outputAffineFormulas = do
-          kcFuncs <- addKComplexityInputs m
-          affineFuncs <- replicateM nOutputs affineFormula
-          return $ kcFuncs : affineFuncs
+        outputFormulas :: FormulaState [(FormulaFunc, XAGFunc)]
+        outputFormulas = do
+          kcFuncs <- addKComplexityInputs multComplexity
+          outputFuncs <- replicateM (length nonAffineOutputs) affineFormula
+          return $ kcFuncs : outputFuncs
 
-    addKComplexityInputs :: Int -> FormulaState (FormulaFunc, XAGFunc)
-    addKComplexityInputs 0 = return (return No, buildConstNode False)
-    addKComplexityInputs k = do
-      _ <- addKComplexityInputs (k - 1)
-      (andFmlFunc, andXAGFunc) <- andFormula
-      input <- addComputedInput andFmlFunc andXAGFunc
-      let xagFunc = do
-            nodeID <- andXAGFunc
-            mapComputedInputNode input nodeID
-            return nodeID
-      return (andFmlFunc, xagFunc)
+        addKComplexityInputs :: Int -> FormulaState (FormulaFunc, XAGFunc)
+        addKComplexityInputs 0 = return (return No, buildConstNode False)
+        addKComplexityInputs k = do
+          _ <- addKComplexityInputs (k - 1)
+          (andFmlFunc, andXAGFunc) <- andFormula
+          input <- addComputedInput andFmlFunc andXAGFunc
+          let xagFunc = do
+                nodeID <- andXAGFunc
+                mapComputedInputNode input nodeID
+                return nodeID
+          return (andFmlFunc, xagFunc)
+
+    freeInputIDs = [2 .. nInputs + 1]
+
+    nonAffineTruthTable :: [([Bool], [Bool])]
+    nonAffineTruthTable =
+      if null affineOutputGraphs
+        then truthTable
+        else map (\(ins, outs) -> (ins, map (outs !!) nonAffineOutputs)) truthTable
+    nonAffineOutputs = [i | i <- [0 .. nOutputs - 1], IntMap.notMember i affineOutputGraphs]
+    affineOutputGraphs :: IntMap XAG.Graph
+    affineOutputGraphs = synthesizeAffineFromTruthTable nInputs nOutputs truthTable
+
+    -- Synthesize any outputs that are pure affine functions, to declutter the
+    -- problem
+    synthesizeAffineFromTruthTable :: Int -> Int -> [([Bool], [Bool])] -> IntMap XAG.Graph
+    synthesizeAffineFromTruthTable nInputs nOutputs truthTable =
+      foldl
+        (\m i -> maybeInsertAffineSolution m i [(ins, outs !! i) | (ins, outs) <- truthTable])
+        IntMap.empty
+        [0 .. nOutputs - 1]
+      where
+        maybeInsertAffineSolution :: IntMap XAG.Graph -> Int -> [([Bool], Bool)] -> IntMap XAG.Graph
+        maybeInsertAffineSolution m i singleTT =
+          case solveAffine singleTT of
+            Just g -> IntMap.insert i g m
+            Nothing -> m
+
+        solveAffine :: [([Bool], Bool)] -> Maybe XAG.Graph
+        solveAffine singleTT =
+          case solve fullFormula of
+            Just assignments ->
+              trace "Solved, building XAG" $
+                let (outputID, s) = runState xagFunc (emptyXAGBuilder assignments)
+                 in Just $ XAG.Graph (reverse (xagNodesRev s)) freeInputIDs [outputID]
+            Nothing -> Nothing
+          where
+            -- Const 0 would be False by convention, but that's never going to be needed
+            emptyXAGBuilder assignments = XAGBuilder [XAG.Const 1 True] (nInputs + 2) assignments freeInputMap
+
+            freeInputMap = Map.fromList (zip [Input (negate i) | i <- [1 .. nInputs]] freeInputIDs)
+            freeInputIDs = [2 .. nInputs + 1]
+
+            fullFormula = All (map (uncurry ttRowClause) singleTT)
+
+            ttRowClause :: [Bool] -> Bool -> ParamFormula
+            ttRowClause inputBools outputBool =
+              if outputBool then fixedFormula else Not fixedFormula
+              where
+                fixedFormula = fixFormula fixingInputs (reverse (computedInputsRev builder)) formulaFunc
+                fixingInputs = Map.fromList [(input, if b then Yes else No) | (input, b) <- zip (freeInputs builder) inputBools]
+
+            ((formulaFunc, xagFunc), builder) = runState affineFormula (emptyFormulaBuilder nInputs)
 
 -- The following formula generators produce two functions, one to construct a
 -- formula that represents the parameterized output of this function, and the
