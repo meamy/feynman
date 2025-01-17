@@ -95,8 +95,8 @@ data Graph = Graph {nodes :: [Node], inputIDs :: [Int], outputIDs :: [Int]}
   deriving (Eq, Generic, Ord, Read, Show)
 
 -- compute the set of free variables used by this graph
-freeVariables :: [Node] -> IntSet
-freeVariables allNodes = freeVariablesRev (reverse allNodes) IntSet.empty
+freeVariables :: [Node] -> IntSet -> IntSet
+freeVariables allNodes refs = freeVariablesRev (reverse allNodes) refs
   where
     freeVariablesRev [] freeSoFar = freeSoFar
     freeVariablesRev (node : nodes) freeSoFar =
@@ -133,7 +133,7 @@ mergeAt newInputIDs leftG leftInputIDs outIndex rightG rightInputIDs =
   where
     newNodes = cover (IntSet.fromList newOutputIDs) (leftRenumberedNodes ++ rightRenumberedNodes)
 
-    newOutputIDs = (map (leftNodesMap IntMap.!) (outputIDs leftG) ++ map (rightNodesMap IntMap.!) (outputIDs rightG))
+    newOutputIDs = map (leftNodesMap IntMap.!) (outputIDs leftG) ++ map (rightNodesMap IntMap.!) (outputIDs rightG)
 
     (rightRenumberedNodes, _, rightNodesMap) =
       renumberNodes rightInputsMap leftNextID (nodes rightG)
@@ -216,7 +216,7 @@ valid (Graph {nodes = ns, inputIDs = inIDs, outputIDs = outIDs}) =
   where
     inIDSet = IntSet.fromList inIDs
     outIDSet = IntSet.fromList outIDs
-    freeVarSet = freeVariables ns
+    freeVarSet = freeVariables ns (IntSet.fromList outIDs)
     outSet = outputs ns
 
 -- checks properties of nodeID order and uniqueness, and acyclic refs
@@ -235,14 +235,14 @@ validNodes = validNodesAux 0
     validInput :: Int -> Int -> Bool
     validInput n x = (x >= 0) && (x < n)
 
-eval :: Graph -> [Bool] -> Maybe [Bool]
+eval :: Graph -> [Bool] -> [Bool]
 eval g@(Graph nodes inIDs outIDs) inVec
-  | not (valid g) = Nothing
-  | not (IntSet.null (freeVariables simNodes)) = Nothing
-  | otherwise =
-      let resMap = foldl doEval IntMap.empty simNodes
-       in Just $ map (resMap IntMap.!) outIDs
+  | not (valid g) = error "eval graph not valid"
+  | not (IntSet.null (freeVariables simNodes (IntSet.fromList outIDs))) = []
+  | otherwise = map (resMap IntMap.!) outIDs
   where
+    resMap = foldl doEval IntMap.empty simNodes
+  
     doEval :: IntMap Bool -> Node -> IntMap Bool
     doEval res (Const nid val) = IntMap.insert nid val res
     doEval res (Not nid xID) = IntMap.insert nid (not $ res IntMap.! xID) res

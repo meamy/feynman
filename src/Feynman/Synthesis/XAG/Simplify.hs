@@ -2,6 +2,7 @@
 
 module Feynman.Synthesis.XAG.Simplify
   ( mergeStructuralDuplicates,
+    mergeStructuralDuplicateNodes,
   )
 where
 
@@ -28,16 +29,21 @@ data MergeState = MergeState
 -- structural hashing, AKA "strash"
 mergeStructuralDuplicates :: XAG.Graph -> XAG.Graph
 mergeStructuralDuplicates inputGraph =
-  XAG.Graph
-    (reverse finalNodesRev)
-    (XAG.inputIDs inputGraph)
-    (map (\nID -> IntMap.findWithDefault nID nID finalMapping) (XAG.outputIDs inputGraph))
+  XAG.Graph finalNodes (XAG.inputIDs inputGraph) finalOutputIDs
+  where
+    finalOutputIDs =
+      map (\nID -> IntMap.findWithDefault nID nID finalMapping) (XAG.outputIDs inputGraph)
+    (finalNodes, finalMapping) = mergeStructuralDuplicateNodes (XAG.nodes inputGraph)
+
+mergeStructuralDuplicateNodes :: [XAG.Node] -> ([XAG.Node], IntMap Int)
+mergeStructuralDuplicateNodes inputNodes =
+  (reverse finalNodesRev, finalMapping)
   where
     MergeState
       { mergeNodesRev = finalNodesRev,
         mergeMapping = finalMapping
       } =
-        foldl checkAndMergeNode emptyMerge (XAG.nodes inputGraph)
+        foldl checkAndMergeNode emptyMerge inputNodes
 
     checkAndMergeNode :: MergeState -> XAG.Node -> MergeState
     checkAndMergeNode s@(MergeState {mergeFalse = Nothing}) n@(XAG.Const nID False) =
@@ -49,7 +55,7 @@ mergeStructuralDuplicates inputGraph =
     checkAndMergeNode s@(MergeState {mergeTrue = Just mID}) n@(XAG.Const nID True) =
       mergeNode nID mID s
     checkAndMergeNode s n@(XAG.Not nID xID) =
-      case (IntMap.lookup canonXID (mergeNot s)) of
+      case IntMap.lookup canonXID (mergeNot s) of
         -- If it's not in the "not" map, add it. Add the original source as the
         -- negation of this not, too, in case anyone goes looking for that
         Nothing ->
@@ -63,7 +69,7 @@ mergeStructuralDuplicates inputGraph =
       | canonXID == canonYID = checkAndMergeNode s (XAG.Const nID False)
       | canonXID > canonYID = checkAndMergeNode s (XAG.Xor nID canonYID canonXID)
       | otherwise =
-          case (Map.lookup (canonXID, canonYID) (mergeXor s)) of
+          case Map.lookup (canonXID, canonYID) (mergeXor s) of
             Nothing ->
               (keepNode (XAG.Xor nID canonXID canonYID) s)
                 { mergeXor = Map.insert (canonXID, canonYID) nID (mergeXor s)
@@ -76,7 +82,7 @@ mergeStructuralDuplicates inputGraph =
       | canonXID == canonYID = mergeNode nID canonXID s
       | canonXID > canonYID = checkAndMergeNode s (XAG.And nID canonYID canonXID)
       | otherwise =
-          case (Map.lookup (canonXID, canonYID) (mergeAnd s)) of
+          case Map.lookup (canonXID, canonYID) (mergeAnd s) of
             Nothing ->
               (keepNode (XAG.And nID canonXID canonYID) s)
                 { mergeAnd = Map.insert (canonXID, canonYID) nID (mergeAnd s)

@@ -15,14 +15,6 @@ import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Synthesis.XAG.Graph
 
--- Merge graphs using the given input mappings. Output will return a merged
--- input mapping, with outputs list [the first graph outputs] ++ [the second
--- graph outputs]
-merge :: (Ord a) => [a] -> Graph -> [a] -> Graph -> ([a], Graph)
-merge mapA graphA mapB graphB = undefined
-  where
-    foo = undefined
-
 data GenState = GenState
   { gsNextID :: Int,
     gsNodes :: [Node]

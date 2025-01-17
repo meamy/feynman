@@ -51,6 +51,7 @@ library
                        Feynman.Synthesis.XAG.MinMultSat,
                        Feynman.Synthesis.XAG.SDCODC,
                        Feynman.Synthesis.XAG.Simplify,
+                       Feynman.Synthesis.XAG.Subgraph,
                        Feynman.Synthesis.XAG.Util,
 
                        Feynman.Optimization.Swaps,
