@@ -242,7 +242,7 @@ eval g@(Graph nodes inIDs outIDs) inVec
   | otherwise = map (resMap IntMap.!) outIDs
   where
     resMap = foldl doEval IntMap.empty simNodes
-  
+
     doEval :: IntMap Bool -> Node -> IntMap Bool
     doEval res (Const nid val) = IntMap.insert nid val res
     doEval res (Not nid xID) = IntMap.insert nid (not $ res IntMap.! xID) res

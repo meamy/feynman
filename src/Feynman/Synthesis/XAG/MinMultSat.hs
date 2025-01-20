@@ -48,7 +48,17 @@ resynthesizeMinMultSat g =
     fullSubG = XAG.subgraphFromGraph g
 
     resynthesize :: XAG.Subgraph -> Maybe XAG.Subgraph
-    resynthesize = Just
+    resynthesize subG =
+      resynthesizeAux 1
+      where
+        resynthesizeAux :: Int -> Maybe XAG.Subgraph
+        resynthesizeAux multComplexity =
+          case tryResynthesize multComplexity subG of
+            Just minSubG -> Just minSubG
+            Nothing ->
+              if multComplexity < (IntMap.size (XAG.subInputIDs subG) + 1)
+                then resynthesizeAux (multComplexity + 1)
+                else Nothing
 
     partitionSeparable :: XAG.Subgraph -> [XAG.Subgraph]
     partitionSeparable subG = [subG]
@@ -64,23 +74,22 @@ resynthesizeMinMultSat g =
                 (IntSet.fromList (concatMap (IntMap.keys . XAG.subOutputIDs) affineSubgraphs))
             )
 
-        affineSubgraphs = mapMaybe trySynthesizeOutput (IntMap.keys (XAG.subOutputIDs subG))
+        affineSubgraphs = mapMaybe tryResynthesizeAffineOutput (IntMap.keys (XAG.subOutputIDs subG))
+        tryResynthesizeAffineOutput outIdx = tryResynthesize 0 (XAG.coverSubgraph subG [outIdx])
 
-        trySynthesizeOutput outIdx =
-          reconstituteSubgraph
-            <$> synthesizeFromTruthTable 0 nInputs 1 (truthTableFromSubgraph subSlice)
-          where
-            reconstituteSubgraph g =
-              -- XAG.outputIDs = outIDs
-              XAG.Subgraph
-                { XAG.subNodes = XAG.nodes g,
-                  XAG.subInputIDs =
-                    IntMap.fromList
-                      (zip (IntMap.keys (XAG.subInputIDs subSlice)) (XAG.inputIDs g)),
-                  XAG.subOutputIDs = IntMap.singleton outIdx (head (XAG.outputIDs g))
-                }
-            nInputs = IntMap.size (XAG.subInputIDs subSlice)
-            subSlice = XAG.coverSubgraph subG [outIdx]
+    tryResynthesize :: Int -> XAG.Subgraph -> Maybe XAG.Subgraph
+    tryResynthesize multComplexity subG =
+      reconstituteSubgraph
+        <$> synthesizeFromTruthTable multComplexity (length inIdxs) (length outIdxs) tt
+      where
+        reconstituteSubgraph g =
+          -- XAG.outputIDs = outIDs
+          XAG.Subgraph
+            { XAG.subNodes = XAG.nodes g,
+              XAG.subInputIDs = IntMap.fromList (zip inIdxs (XAG.inputIDs g)),
+              XAG.subOutputIDs = IntMap.fromList (zip outIdxs (XAG.outputIDs g))
+            }
+        (tt, inIdxs, outIdxs) = truthTableFromSubgraph subG
 
     separateTrivialAffine :: XAG.Subgraph -> ([XAG.Subgraph], XAG.Subgraph)
     separateTrivialAffine subG =
@@ -98,11 +107,14 @@ resynthesizeMinMultSat g =
 
         allOutIdxs = IntMap.keys (XAG.subOutputIDs subG)
 
-truthTableFromSubgraph :: XAG.Subgraph -> [([Bool], [Bool])]
+truthTableFromSubgraph :: XAG.Subgraph -> ([([Bool], [Bool])], [Int], [Int])
 truthTableFromSubgraph subG =
-  [ (inputs, XAG.evalSubgraphPackedInOut subG inputs)
-    | inputs <- ttInputs (IntMap.size (XAG.subInputIDs subG))
-  ]
+  ( [ (inputs, XAG.evalSubgraphPackedInOut subG inputs)
+      | inputs <- ttInputs (IntMap.size (XAG.subInputIDs subG))
+    ],
+    IntMap.keys (XAG.subInputIDs subG),
+    IntMap.keys (XAG.subOutputIDs subG)
+  )
 
 truthTableFromGraph :: XAG.Graph -> [([Bool], [Bool])]
 truthTableFromGraph g =

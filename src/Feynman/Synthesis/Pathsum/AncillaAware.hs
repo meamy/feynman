@@ -420,12 +420,13 @@ synthesizeSBoolsMCT prefix qIDs nInputs sbools =
         termIDs term = [qIDs !! i | IVar i <- Set.toList (vars term)]
 
 naiveXAGTransformers = []
+
 basicXAGTransformers = [XAG.mergeStructuralDuplicates]
-minMultSatXAGTransformers = [
-    XAG.mergeStructuralDuplicates,
+
+minMultSatXAGTransformers =
+  [ XAG.mergeStructuralDuplicates,
     (\g -> fromMaybe g (XAG.resynthesizeMinMultSat g))
   ]
-
 
 synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
