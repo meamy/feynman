@@ -217,10 +217,11 @@ expandToffolis circ =
       f (maxlength, decls) decl@(Decl _ _ body) =
         let (maxlength', body') = foldl g (maxlength, []) body in
           (maxlength', decls ++ [decl { body = body' }])
-      g (maxlength, gates) gate@(Gate name i p) =
-        let res = case (name, p) of
-              ("tof", xs) | length xs > 3 -> concatMap (\_ -> mct xs) [1..i]
-              _                           -> [gate]
+      g (maxlength, gates) gate =
+        let (res, p) = case gate of
+              Gate "tof" i xs | length xs > 3 -> (concatMap (\_ -> mct xs) [1..i], xs)
+              Gate _ _ xs                     -> ([gate], xs)
+              ParamGate _ _ _ xs              -> ([gate], xs)
         in
           (max maxlength (length p), gates ++ res)
       ancillas = ["anc" ++ show i | i <- [0..maxlength-4]]
