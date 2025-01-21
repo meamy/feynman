@@ -39,7 +39,6 @@ import Control.DeepSeq (NFData)
 import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Debug.Trace (trace)
 import Feynman.Frontend.OpenQASM3.Ast
 import GHC.Generics (Generic)
 import Numeric (readDec, readFloat, readHex, readOct)

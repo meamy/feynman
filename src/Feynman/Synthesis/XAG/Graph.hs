@@ -24,7 +24,6 @@ import Data.IntMap.Strict qualified as IntMap
 import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
 import Data.List (sort)
-import Debug.Trace (trace)
 import GHC.Float (sqrtFloat)
 import GHC.Generics (Generic)
 import Test.QuickCheck qualified as QC
@@ -126,10 +125,7 @@ cover initialIDs allNodes = reverse (coverRev initialIDs (reverse allNodes))
 
 mergeAt :: [Int] -> Graph -> [Int] -> Int -> Graph -> [Int] -> Graph
 mergeAt newInputIDs leftG leftInputIDs outIndex rightG rightInputIDs =
-  trace ("mergeAt:\n  leftG: " ++ show leftG ++ "\n  rightG: " ++ show rightG) $
-    trace ("  leftRenumberedNodes: " ++ show leftRenumberedNodes) $
-      trace ("  rightRenumberedNodes: " ++ show rightRenumberedNodes) $
-        Graph newNodes newInputIDs newOutputIDs
+  Graph newNodes newInputIDs newOutputIDs
   where
     newNodes = cover (IntSet.fromList newOutputIDs) (leftRenumberedNodes ++ rightRenumberedNodes)
 

@@ -22,18 +22,18 @@ import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust, fromMaybe, mapMaybe)
-import Debug.Trace (trace)
+import Feynman.Control (HasFeynmanControl, traceResynthesis)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import Feynman.Synthesis.XAG.Simplify qualified as XAG
 import Feynman.Synthesis.XAG.Subgraph qualified as XAG
 import SAT.MiniSat
 
-resynthesizeMinMultSat :: XAG.Graph -> Maybe XAG.Graph
+resynthesizeMinMultSat :: (HasFeynmanControl) => XAG.Graph -> Maybe XAG.Graph
 resynthesizeMinMultSat g =
-  trace ("Resynthesizing " ++ show g) $
+  traceResynthesis ("Resynthesizing " ++ show g) $
     -- trace ("Truth table:\n  " ++ intercalate "\n  " (map show truthTable)) $
-    trace ("  fullSubG = " ++ show fullSubG) $
-      trace ("  trivAffine = " ++ show trivAffineSubGs) $
+    traceResynthesis ("  fullSubG = " ++ show fullSubG) $
+      traceResynthesis ("  trivAffine = " ++ show trivAffineSubGs) $
         (Just . XAG.subgraphToGraph)
           =<< foldr (liftA2 XAG.mergeSubgraphs) (Just affineSubG) minMultSubGs
   where
@@ -220,13 +220,13 @@ mapComputedInputNode input nodeID = do
 
 -- The output formulas should relate all possible assignments of input
 -- variables to output values
-synthesizeFromTruthTable :: Int -> Int -> Int -> [([Bool], [Bool])] -> Maybe XAG.Graph
+synthesizeFromTruthTable :: (HasFeynmanControl) => Int -> Int -> Int -> [([Bool], [Bool])] -> Maybe XAG.Graph
 synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
-  trace ("Searching MC " ++ show multComplexity) $
+  traceResynthesis ("Searching MC " ++ show multComplexity) $
     case solve fullFormula of
       -- Found a working solution!
       Just assignments ->
-        trace "Solved, building XAG" $
+        traceResynthesis "Solved, building XAG" $
           let (outputIDs, s) = runState fullXAGFunc (emptyXAGBuilder assignments)
            in Just $ XAG.Graph (reverse (xagNodesRev s)) freeInputIDs outputIDs
       -- Can't do, expand search?
@@ -244,7 +244,7 @@ synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
 
     fullFormula :: ParamFormula
     fullFormula =
-      trace ("Full formula has " ++ show (length fullFormulaClauses) ++ " clauses") $
+      traceResynthesis ("Full formula has " ++ show (length fullFormulaClauses) ++ " clauses") $
         All fullFormulaClauses
 
     fullFormulaClauses = concatMap (uncurry ttRowClauses) truthTable
@@ -328,7 +328,7 @@ synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
 -- optimize a little by specializing the clauses output if you spot a "Yes" or
 -- "No", but just don't depend on that being the only thing you encounter.
 
-andFormula :: FormulaState (FormulaFunc, XAGFunc)
+andFormula :: (HasFeynmanControl) => FormulaState (FormulaFunc, XAGFunc)
 andFormula = do
   (leftFmlFunc, leftXAGFunc) <- affineFormula
   (rightFmlFunc, rightXAGFunc) <- affineFormula
@@ -339,11 +339,11 @@ andFormula = do
         buildAndNode leftOutputID rightOutputID
   return (formulaFunc, xagFunc)
 
-affineFormula :: FormulaState (FormulaFunc, XAGFunc)
+affineFormula :: (HasFeynmanControl) => FormulaState (FormulaFunc, XAGFunc)
 affineFormula = do
   inputs <- gets allInputs
   params <- freshParams (length inputs)
-  trace ("Allocated params " ++ show params) $ return ()
+  traceResynthesis ("Allocated params " ++ show params) $ return ()
   let formulaFunc ctx =
         formulaFuncAux (filter (\(_, i) -> i /= No) (zip params (map (inputFormula ctx) inputs)))
         where

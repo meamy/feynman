@@ -20,7 +20,6 @@ import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
 import Data.List (sort, sortOn)
 import Data.Maybe (isNothing)
-import Debug.Trace (trace)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import Feynman.Synthesis.XAG.Simplify qualified as XAG
 
@@ -54,9 +53,7 @@ subgraphToGraph subG
 
 coverSubgraph :: Subgraph -> [Int] -> Subgraph
 coverSubgraph subG outIdxs =
-  trace ("Cover subgraph for " ++ show outIdxs ++ " in " ++ show (subOutputIDs subG) ++ ":") $
-    trace ("  nodes = " ++ show coverNodes) $
-      Subgraph coverNodes coverInIDs coverOutIDs
+  Subgraph coverNodes coverInIDs coverOutIDs
   where
     coverInIDs =
       IntMap.fromList
@@ -115,18 +112,7 @@ mergeSubgraphs leftG rightG
   | not (validSubgraph leftG) = error "Left subgraph not valid"
   | not (validSubgraph rightG) = error "Right subgraph not valid"
   | outputCollision = error "Outputs overlap"
-  | otherwise =
-      trace
-        ( "Merging:\n  left = "
-            ++ show leftG
-            ++ "\n  right = "
-            ++ show rightG
-            ++ "\n  result = "
-            ++ show (Subgraph newNodes newInputIDs newOutputIDs)
-            ++ "\n  strashed = "
-            ++ show strashMerged
-        )
-        $ strashMerged
+  | otherwise = strashMerged
   where
     strashMerged = mergeStructuralDuplicatesSub (Subgraph newNodes newInputIDs newOutputIDs)
 

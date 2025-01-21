@@ -423,6 +423,7 @@ naiveXAGTransformers = []
 
 basicXAGTransformers = [XAG.mergeStructuralDuplicates]
 
+minMultSatXAGTransformers :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph]
 minMultSatXAGTransformers =
   [ XAG.mergeStructuralDuplicates,
     (\g -> fromMaybe g (XAG.resynthesizeMinMultSat g))
