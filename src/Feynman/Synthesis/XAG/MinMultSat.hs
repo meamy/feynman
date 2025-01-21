@@ -40,9 +40,8 @@ resynthesizeMinMultSat g =
     -- If we wanted to minimize the affine portions (particularly any
     -- redundancy), it would make sense to combine everything here and simplify
 
-    minMultSubGs = map resynthesize (partitionSeparable trivAffineRemainSubG) -- synthesizeFromTruthTable nInputs nOutputs truthTable
-    affineSubG = foldr XAG.mergeSubgraphs XAG.emptySubgraph (trivAffineSubGs ++ nontrivAffineSubGs)
-    (nontrivAffineSubGs, nontrivAffineRemainSubG) = separateNontrivialAffine trivAffineRemainSubG
+    minMultSubGs = map resynthesize (partitionSeparable trivAffineRemainSubG)
+    affineSubG = foldr XAG.mergeSubgraphs XAG.emptySubgraph trivAffineSubGs
     (trivAffineSubGs, trivAffineRemainSubG) = separateTrivialAffine fullSubG
 
     fullSubG = XAG.subgraphFromGraph g
@@ -62,20 +61,6 @@ resynthesizeMinMultSat g =
 
     partitionSeparable :: XAG.Subgraph -> [XAG.Subgraph]
     partitionSeparable subG = [subG]
-
-    separateNontrivialAffine :: XAG.Subgraph -> ([XAG.Subgraph], XAG.Subgraph)
-    separateNontrivialAffine subG =
-      (affineSubgraphs, XAG.coverSubgraph subG nonAffineOutIdxs)
-      where
-        nonAffineOutIdxs =
-          IntSet.toList
-            ( IntSet.difference
-                (IntMap.keysSet (XAG.subOutputIDs subG))
-                (IntSet.fromList (concatMap (IntMap.keys . XAG.subOutputIDs) affineSubgraphs))
-            )
-
-        affineSubgraphs = mapMaybe tryResynthesizeAffineOutput (IntMap.keys (XAG.subOutputIDs subG))
-        tryResynthesizeAffineOutput outIdx = tryResynthesize 0 (XAG.coverSubgraph subG [outIdx])
 
     tryResynthesize :: Int -> XAG.Subgraph -> Maybe XAG.Subgraph
     tryResynthesize multComplexity subG =
