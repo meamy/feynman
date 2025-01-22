@@ -274,10 +274,11 @@ synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
     addKComplexityInputs :: Int -> FormulaState (FormulaFunc, XAGFunc)
     addKComplexityInputs 0 = return (return No, buildConstNode False)
     addKComplexityInputs k = do
-      _ <- addKComplexityInputs (k - 1)
+      (_, kLess1XAGFunc) <- addKComplexityInputs (k - 1)
       (andFmlFunc, andXAGFunc) <- andFormula
       input <- addComputedInput andFmlFunc andXAGFunc
       let xagFunc = do
+            _ <- kLess1XAGFunc
             nodeID <- andXAGFunc
             mapComputedInputNode input nodeID
             return nodeID
@@ -353,8 +354,9 @@ affineFormula = do
           formulaFuncAux ((v, Yes) : remain) = Var v :++: formulaFuncAux remain
           formulaFuncAux ((v, fml) : remain) = (Var v :&&: fml) :++: formulaFuncAux remain
   let xagFunc = do
-        inIDs <- mapM (\i -> gets (inputNodeID i)) inputs
-        used <- mapM (\p -> gets (paramAssignment p)) params
+        ctx <- gets id
+        let inIDs = map (`inputNodeID` ctx) inputs
+        let used = map (`paramAssignment` ctx) params
         case [i | (i, u) <- zip inIDs used, u] of
           [] -> buildConstNode False
           first : rest -> foldM buildXorNode first rest

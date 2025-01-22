@@ -469,14 +469,19 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qNames =
-  assert (all (`Set.notMember` Set.fromList qNames) outNames) $ -- qNames, outIDs outNames
+  assert (all (`Set.notMember` Set.fromList qNames) outNames) $ -- qNames, outIDs disjoint
     assert (length (XAG.inputIDs g) == length qNames) $ -- qNames labels every graph input
       (inoutMCTs ++ gates, outNames)
   where
     outNames = map (outIDMap !) (XAG.outputIDs g)
 
+    -- This ugliness ensures the outputs are distinct from the inputs -- if the
+    -- outputIDs in the graph share IDs with the inputIDs, the generated swaps
+    -- will just swap the inputs around. To be safe, the outputs need to all be
+    -- ancillas distinct from the inputs. I just wanted the bug fixed, but if
+    -- you think of a cleaner way to do this, like maybe the check should be
+    -- done by the caller and not in here... you have my blessing to improve it
     inoutMCTs = [MCT [inName] outName | (_, inName, outName) <- inoutIDInOuts]
-
     outIDMap = foldr (\(inID, inName, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts 
     inoutIDInOuts =
       [ (inID, inName, prefix ++ "Xi" ++ show newID)
