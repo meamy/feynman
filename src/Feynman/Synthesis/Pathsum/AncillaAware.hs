@@ -19,6 +19,8 @@ import Control.Monad (foldM, liftM, mapM, mfilter, msum, when, (>=>))
 import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, modify, put, runState)
 import Control.Monad.Writer.Lazy (Writer, execWriter, runWriter, tell)
 import Data.Bits (xor)
+import Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
 import Data.List (elemIndex, find, intercalate, isPrefixOf, sort, (\\))
 import Data.Map (Map, (!))
 import qualified Data.Map as Map
@@ -388,7 +390,11 @@ finalize sop = do
       -- Glom (prepend) the garbage onto sop
       sopAwaitingGarbage = (tensor sop (identity (outDeg garbage - inDeg sop)))
       sopWithGarbage = times garbage sopAwaitingGarbage
-      result = grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
+
+      result =
+        traceResynthesis ("finalize sopWithGarbage: " ++ show sopWithGarbage) $
+          traceResynthesis ("finalize synthSopWithGarbage: " ++ show synthSopWithGarbage) $
+            grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
   return result
 
 synthesizeSBools :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
@@ -462,14 +468,28 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
         rawXAG = fromSBools nInputs sbools
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
-xagToMCTs prefix g qIDs =
-  assert (all (not . (flip Set.member (Set.fromList qIDs))) outIDs) $ -- qIDs, outIDs disjoint
-    assert (length (XAG.inputIDs g) == length qIDs) $ -- qIDs labels every graph input
-      (gates, outIDs)
+xagToMCTs prefix g qNames =
+  assert (all (`Set.notMember` Set.fromList qNames) outNames) $ -- qNames, outIDs outNames
+    assert (length (XAG.inputIDs g) == length qNames) $ -- qNames labels every graph input
+      (inoutMCTs ++ gates, outNames)
   where
-    outIDs = map (idMap !) (XAG.outputIDs g)
+    outNames = map (outIDMap !) (XAG.outputIDs g)
 
-    gates = concat (map nodeToMCTs (XAG.nodes g))
+    inoutMCTs = [MCT [inName] outName | (_, inName, outName) <- inoutIDInOuts]
+
+    outIDMap = foldr (\(inID, inName, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts 
+    inoutIDInOuts =
+      [ (inID, inName, prefix ++ "Xi" ++ show newID)
+        | (inID, inName, newID) <- zip3 (XAG.inputIDs g) qNames [lastID + 1 ..],
+          IntSet.member inID inouts
+      ]
+    inouts =
+      IntSet.intersection
+        (IntSet.fromList (XAG.inputIDs g))
+        (IntSet.fromList (XAG.outputIDs g))
+    lastID = foldr max 0 nodeIDs
+
+    gates = concatMap nodeToMCTs (XAG.nodes g)
 
     nodeToMCTs :: XAG.Node -> [ExtractionGates]
     nodeToMCTs (XAG.Const nID False) = []
@@ -489,9 +509,9 @@ xagToMCTs prefix g qIDs =
           yNode = idMap ! yID
        in [MCT [xNode] thisNode, MCT [yNode] thisNode]
 
-    idMap = Map.fromList ((zip (XAG.inputIDs g) qIDs) ++ ancillaNodeIDs)
-    ancillaNodeIDs =
-      [(nID, (prefix ++ "X" ++ show nID)) | nID <- map XAG.nodeID (XAG.nodes g)]
+    idMap = Map.fromList (zip (XAG.inputIDs g) qNames ++ nodeIDNames)
+    nodeIDNames = [(nID, prefix ++ "X" ++ show nID) | nID <- nodeIDs]
+    nodeIDs = map XAG.nodeID (XAG.nodes g)
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -585,11 +605,21 @@ pushSwaps = reverse . snd . go (Map.empty, [])
 
 -- | A single pass of the synthesis algorithm
 synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-synthesizeFrontier sop = traceResynthesis ("Synthesizing " ++ show sop) $ go (grind sop)
+synthesizeFrontier sop =
+  traceResynthesis ("Synthesizing " ++ show sop) $
+    go (grind sop)
   where
     go sop
-      | pathVars sop == 0 = synthesisPass sop >>= finalize
-      | otherwise = synthesisPass sop >>= reducePaths
+      | pathVars sop == 0 = do
+        traceResynthesis ("finalizing, before synthesisPass: " ++ show sop) $ return ()
+        sop' <- synthesisPass sop
+        traceResynthesis ("finalizing, after synthesisPass: " ++ show sop') $ return ()
+        finalize sop'
+      | otherwise = do
+        traceResynthesis ("reducing, before synthesisPass: " ++ show sop) $ return ()
+        sop' <- synthesisPass sop
+        traceResynthesis ("reducing, after synthesisPass: " ++ show sop') $ return ()
+        reducePaths sop'
     synthesisPass =
       affineSimplifications
         >=> phaseSimplifications
@@ -611,6 +641,7 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       _ -> Nothing
     go sop = do
       sop' <- synthesizeFrontier sop
+      traceResynthesis ("synthesizeFrontier returned " ++ show sop') $ return ()
       let pathVarsLeft = pathVars sop'
       if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
