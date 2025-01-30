@@ -37,7 +37,7 @@ data Spec = PSSpec {
 
 type TypedID = (ID, SpecInputType)
 
-data SpecInputType = TypeQubit | TypeInt Int deriving (Eq, Show)
+data SpecInputType = TypeQubit | TypeInt Int | TypeAncilla Int deriving (Eq, Show)
 
 data Stmt =
     IncStmt String
@@ -204,6 +204,7 @@ prettyPrintTypedIDs = intercalate "," . map prettyPrintTypedID
 prettyPrintTypedID :: TypedID -> String
 prettyPrintTypedID (id, TypeInt n) = id ++ ":" ++ "int[" ++ show n ++ "]"
 prettyPrintTypedID (id, TypeQubit) = id
+prettyPrintTypedID (id, TypeAncilla n) = id ++ ":" ++ "anc[" ++ show n ++ "]"
 
 prettyPrintArgs :: [Arg] -> String
 prettyPrintArgs = intercalate "," . map prettyPrintArg

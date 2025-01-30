@@ -49,6 +49,7 @@ tokens :-
   sum                                                       { \s -> TSum }
   qubit                                                     { \s -> TQubitType }
   int                                                       { \s -> TIntType }
+  ancilla                                                   { \s -> TAncillaType }
   \-\>                                                      { \s -> TArrow }
   \(                                                        { \s -> TLParen }
   \)                                                        { \s -> TRParen }
@@ -126,6 +127,7 @@ data Token =
   -- Types for specifications
   | TQubitType
   | TIntType
+  | TAncillaType
   deriving (Eq,Show)
 
 lexer :: String -> [Token]

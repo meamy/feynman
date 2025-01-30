@@ -525,7 +525,7 @@ sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover 
         (s, gphase)   = decomposeScalar scalar
         boundIDs      = args ++ pvars
         pp            = constant gphase + (castDMod2 $ polyOfMaybeExp boundIDs ampl)
-        out           = map (castBoolean . polyOfExp []) $ expandInts boundIDs ovals
+        out           = map (castBoolean . polyOfExp []) $ expandOutput boundIDs ovals
         sop           = Pathsum s 0 (length out) 0 pp out
         getID (id, _) = id
         sumvars       = concat . map vars $ pvars
@@ -538,13 +538,54 @@ bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v
   where powertwo 0 = IntExp 1
         powertwo j = BOpExp (IntExp 2) TimesOp (powertwo $ j-1)
 
+{- 1/28, I think need to expand int types recursively, to take care of exps like x + y both ints -}
 expandInts :: [TypedID] -> [Exp] -> [Exp]
 expandInts boundIDs = concat . map expand
   where 
     expand exp = case exp of
       VarExp v -> case lookup v boundIDs of
-                  Nothing          -> error "Varible not bound"
+                  Nothing          -> error "Variable not bound"
                   Just TypeQubit   -> [VarExp v]
                   Just (TypeInt n) -> [OffsetExp v i | i <- [0..n-1]]
       e        -> [e]
 
+lengthOfExp :: [TypedID] -> Exp -> Int
+lengthOfExp boundIDs = go
+  where 
+    go e = case e of
+      VarExp v -> case lookup v boundIDs of
+                    Nothing              -> error "Variable not bound"
+                    Just TypeQubit       -> 1
+                    Just (TypeInt n)     -> n
+                    Just (TypeAncilla n) -> n
+      FloatExp _     -> 1
+      IntExp _       -> 1
+      PiExp          -> 1
+      OffsetExp _ _  -> 1
+      UOpExp _ e'    -> go e'
+      BOpExp e1 _ e2 -> let l1 = go e1
+                            l2 = go e2 in
+                          if l1 == 1 || l2 == 1 || l1 == l2
+                            then max l1 l2
+                            else error "Variable length mismatch" 
+
+expandOutput :: [TypedID] -> [Exp] -> [Exp]
+expandOutput boundIDs = concat . map (expandOutputExp boundIDs)
+
+expandOutputExp :: [TypedID] -> Exp -> [Exp]
+expandOutputExp boundIDs e = let l = lengthOfExp boundIDs e in
+  map (expand e) [0..l-1]
+  where 
+    expand exp index = case exp of
+      VarExp v -> case lookup v boundIDs of
+                    Nothing -> error "Variable not bound"
+                    Just TypeQubit ->       VarExp v
+                    Just (TypeInt _) ->     OffsetExp v index
+                    {- ancilla should be 0? or offset v i -}
+                    Just (TypeAncilla _) -> IntExp 0
+      BOpExp e1 bop e2 -> BOpExp (expand e1 index) bop (expand e2 index)
+      UOpExp uop e     -> UOpExp uop (expand e index)
+      OffsetExp _ _    -> exp
+      FloatExp _       -> exp
+      IntExp _         -> exp
+      PiExp            -> exp

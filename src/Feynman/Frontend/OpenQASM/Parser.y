@@ -59,6 +59,7 @@ import Feynman.Frontend.OpenQASM.VerificationSyntax
   sum     { TSum }
   qubit   { TQubitType }
   int     { TIntType }
+  ancilla { TAncillaType }
   
 %%
 
@@ -129,8 +130,10 @@ typed_ids : typed_id               { [$1] }
 typed_id : id ':' type { ($1, $3) }
          | id          { ($1, TypeQubit) }
 
-type : qubit           { TypeQubit }
-     | int '[' nat ']' { TypeInt $3 }
+type : qubit               { TypeQubit }
+     | int '[' nat ']'     { TypeInt $3 }
+     | ancilla '[' nat ']' { TypeAncilla $3 }
+     | ancilla             { TypeAncilla 1 }
 
 exps0 : {- empty -} { [] }
       | exps        { $1 }
