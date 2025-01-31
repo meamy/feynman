@@ -177,9 +177,10 @@ verifyGate spec gate =
 verifyGate' :: ID -> Spec -> Pathsum DMod2 -> State Env ()
 verifyGate' id spec gatePS = do
   env <- get
-  let specPS = sopOfPSSpec spec env
-  let n      = inDeg gatePS
-  let result = case (dropAmplitude $ grind $ specPS .> (dagger gatePS)) == identity n of
+  let mask   = createAncillaMask spec
+  let specPS = mask .> sopOfPSSpec spec env
+  let n      = inDeg mask
+  let result = case (dropAmplitude $ grind $ specPS .> (dagger (mask .> gatePS))) == identity n of
         False -> "Failed!"
         True  -> "Success!"
   Trace.trace ("Verifying \"" ++ id ++ "\" against specification " ++ show (specPS) ++ "..." ++ result) $ return ()
@@ -520,7 +521,7 @@ castBoolean = cast go where
   go _   = error "Not a Boolean polynomial"
 
 sopOfPSSpec :: Spec -> Env -> Pathsum DMod2
-sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover sumvars $ sop
+sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = (bind bindings . sumover sumvars $ sop)
   where bindings      = bindingList args env
         (s, gphase)   = decomposeScalar scalar
         boundIDs      = args ++ pvars
@@ -532,6 +533,16 @@ sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = bind bindings . sumover 
         vars (id, t)  = case t of
           TypeInt n -> [varOfOffset id i | i <- [0..n-1]]
           TypeQubit -> [id]
+
+createAncillaMask :: Spec -> Pathsum DMod2
+createAncillaMask = go . inputs
+  where 
+    go [] = mempty
+    go (a:as) = case a of
+      (_, TypeQubit)     -> identity 1 <> go as
+      (_, TypeInt n)     -> identity n <> go as
+      (_, TypeAncilla n) -> (ket $ replicate n 0) <> go as
+
 
 bitBlast :: ID -> Int -> Exp
 bitBlast v n = foldl (\a b -> BOpExp a PlusOp b) (IntExp 0) [BOpExp (OffsetExp v i) TimesOp (powertwo i) | i <- [0..n-1]]
