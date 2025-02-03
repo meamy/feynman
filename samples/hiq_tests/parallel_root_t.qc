@@ -18,5 +18,9 @@ tof a b c
 cnot c b
 cnot c a
 
+X c
+cnot a c
+cnot b c
+
 END
 
