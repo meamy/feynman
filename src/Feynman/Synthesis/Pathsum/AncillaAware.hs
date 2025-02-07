@@ -305,10 +305,13 @@ phaseSimplifications sop = do
   let (subs, localSOP) = changeFrame sop
   ctx <- ketToScope localSOP
   let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
-  mapM_ synthesizePhaseTerm . toTermList . rename (ctx !) $ poly
+  synthesizePhasePoly (rename (ctx !) poly)
   let localSOP' = localSOP {phasePoly = phasePoly localSOP - poly}
   return $ revertFrame subs localSOP'
   where
+    synthesizePhasePoly :: Multilinear ID DMod2 repr -> ExtractionState ()
+    synthesizePhasePoly poly = mapM_ synthesizePhaseTerm (toTermList poly)
+
     synthesizePhaseTerm (a, m) =
       emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
 
@@ -347,7 +350,10 @@ finalize sop = do
 
   emitGates "Finalize " (reverse synthGates)
 
-  let mctIDs (MCT _ tID) = [tID]
+  let -- mctIDs gets the target ID of any ExtractionGates synthesized.
+      -- Note we don't implement all gates, classical synthesis doesn't use
+      -- Hadamard or Phase
+      mctIDs (MCT _ tID) = [tID]
       mctIDs _ = []
 
       dropRepeats xs = head xs : [y | (x, y) <- zip xs (tail xs), x /= y]
@@ -388,7 +394,7 @@ finalize sop = do
           Pathsum 0 (inDeg sop) (outDeg synthSopWithGarbage) 0 0 garbageSBools
 
       -- Glom (prepend) the garbage onto sop
-      sopAwaitingGarbage = (tensor sop (identity (outDeg garbage - inDeg sop)))
+      sopAwaitingGarbage = tensor sop (identity (outDeg garbage - inDeg sop))
       sopWithGarbage = times garbage sopAwaitingGarbage
 
       result =
@@ -397,6 +403,9 @@ finalize sop = do
             grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
   return result
 
+-- | Synthesizes the transformation |x1...xn> -> |A(x1...xn) + b>, where
+--   x1...xn are identified by a list of ID, and A(x1...xn) are identified by
+--   a list of SBool Var. May imply the addition of many ancillas.
 synthesizeSBools :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBools
   | ctlUseMCTSynthesis = synthesizeSBoolsMCT
@@ -404,6 +413,10 @@ synthesizeSBools
   | ctlUseBasicXAGSynthesis = synthesizeSBoolsXAG basicXAGTransformers
   | ctlUseMinMultSatXAGSynthesis = synthesizeSBoolsXAG minMultSatXAGTransformers
 
+-- TODO JL I think the nInputs is a holdover from a brief moment I was
+-- considering non-square matrices. The pathsum can handle it but that's
+-- fundamentally not what we're synthesizing here, so nInputs == length qIDs
+-- (and so we should get rid of the junk)
 synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
 synthesizeSBoolsMCT prefix qIDs nInputs sbools =
   -- Synthesize computation of polynomial terms into ancillas
@@ -440,8 +453,11 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
   -- We don't have a guarantee about which ID the output ends up in, so
   -- generate swaps to fix up any issues -- because outputs must be distinct
   -- within each set, by swapping one output, we won't disturb any other
-  assert (Set.size (Set.fromList qIDs) == length qIDs) $ -- qubits should be distinct
-    assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $ -- outputs should be distinct
+
+  -- qubits should be distinct
+  -- outputs should be distinct
+  assert (Set.size (Set.fromList qIDs) == length qIDs) $
+    assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $
       xagSynthRaw
         ++ [ Swapper qID xagOutID
              | (qID, xagOutID) <- zip qIDs xagOutIDs,
@@ -469,8 +485,10 @@ synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qNames =
-  assert (all (`Set.notMember` Set.fromList qNames) outNames) $ -- qNames, outIDs disjoint
-    assert (length (XAG.inputIDs g) == length qNames) $ -- qNames labels every graph input
+  -- qNames, outIDs disjoint
+  -- qNames labels every graph input
+  assert (all (`Set.notMember` Set.fromList qNames) outNames) $
+    assert (length (XAG.inputIDs g) == length qNames) $
       (inoutMCTs ++ gates, outNames)
   where
     outNames = map (outIDMap !) (XAG.outputIDs g)
@@ -482,7 +500,7 @@ xagToMCTs prefix g qNames =
     -- you think of a cleaner way to do this, like maybe the check should be
     -- done by the caller and not in here... you have my blessing to improve it
     inoutMCTs = [MCT [inName] outName | (_, inName, outName) <- inoutIDInOuts]
-    outIDMap = foldr (\(inID, inName, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts 
+    outIDMap = foldr (\(inID, inName, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts
     inoutIDInOuts =
       [ (inID, inName, prefix ++ "Xi" ++ show newID)
         | (inID, inName, newID) <- zip3 (XAG.inputIDs g) qNames [lastID + 1 ..],
