@@ -62,13 +62,14 @@ fromSBools nvars sbools
       put $ GenState (gsNextID gs + 1) (newNode : gsNodes gs)
       return $ nodeID newNode
 
+    toSynthesizableTerms :: (Int -> a) -> SBool Var -> [(FF2, [a])]
+    toSynthesizableTerms mapInput outPoly =
+      -- Get all the monomial var sets as ID lists
+      map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
+      where
+        -- Map each IVar in the monomial through the idList
+        termIDs term = [mapInput i | IVar i <- Set.toList (vars term)]
+
 isIVar (IVar _) = True
 isIVar _ = False
 
-toSynthesizableTerms :: (Int -> a) -> SBool Var -> [(FF2, [a])]
-toSynthesizableTerms mapInput outPoly =
-  -- Get all the monomial var sets as ID lists
-  map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
-  where
-    -- Map each IVar in the monomial through the idList
-    termIDs term = [mapInput i | IVar i <- Set.toList (vars term)]

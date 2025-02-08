@@ -346,7 +346,11 @@ finalize sop = do
   qIDs <- gets ctxIDs
   prefix <- nextGenPrefix
 
-  let synthGates = synthesizeSBools prefix qIDs (inDeg sop) (outVals sop)
+  -- The SBools in the path must at this point all be input variables ie IVar:
+  -- finalize shouldn't be called if there are still path variables (PVar) and
+  -- there definitely shouldn't be free FVar at all in this synthesis
+  let idSBools = zip qIDs [rename (\(IVar i) -> qIDs !! i) sbool | sbool <- outVals sop]
+      synthGates = synthesizeSBools prefix idSBools
 
   emitGates "Finalize " (reverse synthGates)
 
@@ -364,7 +368,7 @@ finalize sop = do
       synthQIDs =
         -- intermediate values should not overlap qubits
         assert (Set.disjoint (Set.fromList qIDs) (Set.fromList (concatMap mctIDs synthGates))) $
-          (take (inDeg sop) qIDs) ++ dropRepeats (concatMap mctIDs synthGates)
+          take (inDeg sop) qIDs ++ dropRepeats (concatMap mctIDs synthGates)
 
       -- Apply the actual synthesized gates to a (blank) pathsum
       synthSopWithGarbage =
@@ -406,37 +410,26 @@ finalize sop = do
 -- | Synthesizes the transformation |x1...xn> -> |A(x1...xn) + b>, where
 --   x1...xn are identified by a list of ID, and A(x1...xn) are identified by
 --   a list of SBool Var. May imply the addition of many ancillas.
-synthesizeSBools :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
+synthesizeSBools :: (HasFeynmanControl) => String ->[(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBools
   | ctlUseMCTSynthesis = synthesizeSBoolsMCT
   | ctlUseNaiveXAGSynthesis = synthesizeSBoolsXAG naiveXAGTransformers
   | ctlUseBasicXAGSynthesis = synthesizeSBoolsXAG basicXAGTransformers
   | ctlUseMinMultSatXAGSynthesis = synthesizeSBoolsXAG minMultSatXAGTransformers
 
--- TODO JL I think the nInputs is a holdover from a brief moment I was
--- considering non-square matrices. The pathsum can handle it but that's
--- fundamentally not what we're synthesizing here, so nInputs == length qIDs
--- (and so we should get rid of the junk)
-synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
-synthesizeSBoolsMCT prefix qIDs nInputs sbools =
+synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [(ID, SBool ID)] -> [ExtractionGates]
+synthesizeSBoolsMCT prefix idSBools =
   -- Synthesize computation of polynomial terms into ancillas
-  concatMap (uncurry sboolMcts) (zip ancIDs sbools)
-    ++ [Swapper ancID qID | (ancID, qID) <- zip ancIDs qIDs]
+  concatMap sboolMcts idSBools
+    ++ [Swapper (ancID qID) qID | (qID, _) <- idSBools]
   where
-    sboolMcts ancID sbool = concatMap (termMct ancID) (toSynthesizableTerms sbool)
-    termMct ancID (val, termIDs)
-      | val == 0 = [MCT termIDs ancID, MCT [] ancID]
-      | otherwise = [MCT termIDs ancID]
-
-    ancIDs = [prefix ++ "M" ++ qID | qID <- qIDs]
-
-    toSynthesizableTerms :: SBool Var -> [(FF2, [ID])]
-    toSynthesizableTerms outPoly =
-      -- Get all the monomial var sets as ID lists
-      map (\(val, term) -> (val, termIDs term)) (toTermList outPoly)
-      where
-        -- Map each IVar in the monomial through the qIDs
-        termIDs term = [qIDs !! i | IVar i <- Set.toList (vars term)]
+    sboolMcts (qID, sbool) =
+      concat [termMCTs (ancID qID) val (Set.toList (vars term))
+              | (val, term) <- toTermList sbool]
+    termMCTs tID val termIDs
+      | val == 0 = [MCT termIDs tID, MCT [] tID]
+      | otherwise = [MCT termIDs tID]
+    ancID qID = prefix ++ "M" ++ qID
 
 naiveXAGTransformers = []
 
@@ -448,40 +441,69 @@ minMultSatXAGTransformers =
     (\g -> fromMaybe g (XAG.resynthesizeMinMultSat g))
   ]
 
-synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [ID] -> Int -> [SBool Var] -> [ExtractionGates]
-synthesizeSBoolsXAG transformers prefix qIDs nInputs sbools =
-  -- We don't have a guarantee about which ID the output ends up in, so
-  -- generate swaps to fix up any issues -- because outputs must be distinct
-  -- within each set, by swapping one output, we won't disturb any other
-
-  -- qubits should be distinct
-  -- outputs should be distinct
-  assert (Set.size (Set.fromList qIDs) == length qIDs) $
-    assert (Set.size (Set.fromList xagOutIDs) == length xagOutIDs) $
-      xagSynthRaw
-        ++ [ Swapper qID xagOutID
-             | (qID, xagOutID) <- zip qIDs xagOutIDs,
-               qID /= xagOutID
-           ]
+synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [(ID, SBool ID)] -> [ExtractionGates]
+synthesizeSBoolsXAG transformers prefix idSBools =
+  traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
+    traceResynthesis ("XAG transformed: " ++ show xag) $
+      fst (xagToMCTs prefix xag allInputs)
   where
-    -- xagToMCTs converts the graph to an extracted program; most of the
-    -- work here is mapping between numeric graph nodeID and ancilla ID
-    (xagSynthRaw, xagOutIDs) =
-      assert (length (XAG.outputIDs xag) == length qIDs) $
-        xagToMCTs prefix xag (take nInputs qIDs)
+    xag = foldr ($) rawXAG transformers
 
-    -- Indexes start at "outDeg sop", after they're tensored onto sop
-    xag =
-      traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
-        foldl transformXAG rawXAG transformers
-      where
-        transformXAG x t =
-          traceResynthesis ("XAG transformed: " ++ show transformedXAG) $
-            transformedXAG
-          where
-            transformedXAG = t x
+    rawXAG = XAG.Graph {XAG.nodes = rawNodes, XAG.inputIDs = rawInIDs, XAG.outputIDs = rawOutIDs}
 
-        rawXAG = fromSBools nInputs sbools
+    outputNames :: [ID]
+    outputNames = map fst idSBools
+
+    rawNodes :: [XAG.Node]
+    rawOutIDs :: [Int]
+    (rawNodes, rawOutIDs) = makeNodes firstFree idSBools
+      where makeNodes :: Int -> [(ID, SBool ID)] -> ([XAG.Node], [Int])
+            makeNodes startID [] = ([], [])
+            makeNodes startID ((outID, sbool) : remain) =
+              (sboolNodes ++ remainNodes, (idMap ! outID) : remainOutIDs)
+              where
+                (remainNodes, remainOutIDs) = makeNodes nextStartID remain
+                sboolNodes :: [XAG.Node]
+                nextStartID :: Int
+                (nextStartID, finTermID, sboolNodes) = makeSBoolNodes startID (toTermList sbool)
+
+            makeSBoolNodes :: Int -> [(FF2, Monomial ID a)] -> (Int, Int, [XAG.Node])
+            makeSBoolNodes allocID ((val, m) : remain) =
+              (finAllocID, finTermID, termNodes ++ remainNodes)
+              where
+                (finAllocID, finTermID, remainNodes) =
+                  makeSBoolNodesCont termAllocID termID remain
+                (termAllocID, termID, termNodes) = makeTermNodes allocID (Set.toList (vars m))
+
+            makeSBoolNodesCont allocID polyID [] = (allocID, polyID, [])
+            makeSBoolNodesCont allocID polyID ((val, m) : remain)
+              | val == 1 = (finAllocID, finTermID, termNodes ++ xorNode : invNodes ++ remainNodes)
+              | otherwise = error "I thought inverted terms weren't used"
+              where
+                (finAllocID, finTermID, remainNodes) =
+                  makeSBoolNodesCont (finPolyID + 1) finPolyID remain
+                (finPolyID, invNodes) =
+                  if val == 1 then (termAllocID, [])
+                              else (termAllocID + 1, [XAG.Not (termAllocID + 1) termAllocID])
+                xorNode = XAG.Xor termAllocID polyID termID
+                (termAllocID, termID, termNodes) = makeTermNodes allocID (Set.toList (vars m))
+
+            makeTermNodes :: Int -> [ID] -> (Int, Int, [XAG.Node])
+            -- zero-length term disallowed
+            makeTermNodes allocID (mID : remain) = makeTermNodesCont allocID (idMap ! mID) remain
+
+            makeTermNodesCont allocID termID [] = (allocID, termID, [])
+            makeTermNodesCont allocID termID (mID : remain) =
+              (finAllocID, finTermID, XAG.And allocID termID (idMap ! mID) : remainNodes)
+              where
+                (finAllocID, finTermID, remainNodes) = makeTermNodesCont (allocID + 1) allocID remain
+
+    rawInIDs = [2..(firstFree - 1)]
+    firstFree = 2 + length allInputs
+    idMap = Map.fromList (zip allInputs [2 ..])
+    allInputs = Set.toAscList $
+      foldr Set.union Set.empty
+        (concatMap ((map (vars . snd) . toTermList) . snd) idSBools)
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qNames =
