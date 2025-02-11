@@ -18,7 +18,7 @@ import Control.Exception (assert)
 import Control.Monad (foldM, liftM, mapM, mfilter, msum, when, (>=>))
 import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, modify, put, runState)
 import Control.Monad.Writer.Lazy (Writer, execWriter, runWriter, tell)
-import Data.Bits (xor)
+import Data.Bits (xor, shiftL)
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.List (elemIndex, find, intercalate, isPrefixOf, sort, (\\))
@@ -28,6 +28,7 @@ import Data.Maybe (fromJust, fromMaybe, isJust, isNothing, mapMaybe, maybe)
 import Data.Semigroup ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
+import Data.Tuple (swap)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
 import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
@@ -60,6 +61,7 @@ import Test.QuickCheck
     resize,
     suchThat,
   )
+import Data.Bifunctor (Bifunctor(first))
 
 {-----------------------------------
  Types
@@ -304,16 +306,50 @@ phaseSimplifications :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState 
 phaseSimplifications sop = do
   let (subs, localSOP) = changeFrame sop
   ctx <- ketToScope localSOP
-  let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
-  synthesizePhasePoly (rename (ctx !) poly)
-  let localSOP' = localSOP {phasePoly = phasePoly localSOP - poly}
-  return $ revertFrame subs localSOP'
-  where
-    synthesizePhasePoly :: Multilinear ID DMod2 repr -> ExtractionState ()
-    synthesizePhasePoly poly = mapM_ synthesizePhaseTerm (toTermList poly)
+  let revCtx = (Map.fromList . map swap) (Map.toList ctx)
 
-    synthesizePhaseTerm (a, m) =
-      emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
+      synthesizePhaseTermIntoAncs :: Pathsum DMod2 -> String -> Integer -> Int -> Monomial ID repr -> ExtractionState (Pathsum DMod2)
+      synthesizePhaseTermIntoAncs ssop prefix _ 0 m = return ssop
+      synthesizePhaseTermIntoAncs ssop prefix num dpow m = do
+        let (div2, mod2) = num `divMod` 2
+        ssop' <- if mod2 == 1
+                   then emitSBoolConstruction undefined ssop
+                   else return ssop
+        synthesizePhaseTermIntoAncs ssop' prefix div2 (dpow - 1) m
+
+      synthesizePhaseTerm :: Pathsum DMod2 -> (DMod2, Monomial ID repr) -> ExtractionState (Pathsum DMod2)
+      synthesizePhaseTerm ssop (a, m) =
+        if ctlUseAncillaPhaseSynthesis
+          then do
+            -- Reminder that the denominator in the dyadic rational is stored as
+            -- the n in (1/2)^n, here named dpow
+            let (Dy num dpow) = unpack a
+            ancPrefix <- nextGenPrefix
+            synthesizePhaseTermIntoAncs ssop ancPrefix num dpow m
+          else do
+            emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
+            let ssop' = ssop {phasePoly = phasePoly ssop - ofTerm (a, (Monomial . Set.map (revCtx !) . vars) m)}
+            traceResynthesis ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
+            return ssop'
+
+      splitByFraction :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
+      splitByFraction _ (-1) = []
+      splitByFraction poly n = (n, sbool) : splitByFraction poly (n - 1)
+        where
+          sbool = ofTermList (map (first (const 1)) oddNFracTerms)
+          oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
+          nFracTerms = filter ((2 `shiftL` n ==) . denom . unpack . fst) (toTermList poly)
+
+  let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
+      maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
+      polysByFraction = splitByFraction poly maxN
+
+  traceResynthesis ("Split " ++ show poly ++ ": " ++ show polysByFraction) $ return ()
+
+  localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
+  return $ revertFrame subs localSOP'
+
+
 
 -- | Simplify the output ket up to non-linear transformations
 --
@@ -344,17 +380,20 @@ finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMo
 finalize sop = do
   traceResynthesis ("Finalizing (XAG) " ++ show sop) $ return ()
   qIDs <- gets ctxIDs
-  prefix <- nextGenPrefix
-
   -- The SBools in the path must at this point all be input variables ie IVar:
   -- finalize shouldn't be called if there are still path variables (PVar) and
   -- there definitely shouldn't be free FVar at all in this synthesis
   let idSBools = zip qIDs [rename (\(IVar i) -> qIDs !! i) sbool | sbool <- outVals sop]
-      synthGates = synthesizeSBools prefix idSBools
+  emitSBoolConstruction idSBools sop
 
-  emitGates "Finalize " (reverse synthGates)
+emitSBoolConstruction :: (HasFeynmanControl) => [(ID, SBool ID)] -> Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+emitSBoolConstruction idSBools sop = do
+  prefix <- nextGenPrefix
+  qIDs <- gets ctxIDs
 
-  let -- mctIDs gets the target ID of any ExtractionGates synthesized.
+  let synthGates = synthesizeSBools prefix idSBools
+
+      -- mctIDs gets the target ID of any ExtractionGates synthesized.
       -- Note we don't implement all gates, classical synthesis doesn't use
       -- Hadamard or Phase
       mctIDs (MCT _ tID) = [tID]
@@ -401,10 +440,12 @@ finalize sop = do
       sopAwaitingGarbage = tensor sop (identity (outDeg garbage - inDeg sop))
       sopWithGarbage = times garbage sopAwaitingGarbage
 
-      result =
-        traceResynthesis ("finalize sopWithGarbage: " ++ show sopWithGarbage) $
-          traceResynthesis ("finalize synthSopWithGarbage: " ++ show synthSopWithGarbage) $
-            grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
+      result = grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
+
+  traceResynthesis ("sopWithGarbage: " ++ show sopWithGarbage) $
+    traceResynthesis ("synthSopWithGarbage: " ++ show synthSopWithGarbage) $
+      return ()
+  emitGates "SBoolConstruction " (reverse synthGates)
   return result
 
 -- | Synthesizes the transformation |x1...xn> -> |A(x1...xn) + b>, where
