@@ -328,9 +328,9 @@ branchSummary :: Ctx F2Vec -> Ctx F2Vec -> State (Ctx F2Vec) AffineRelation
 branchSummary ctx' ctx'' =
   let n   = Map.size $ ket ctx'
       o1  = orphans ctx' ++ Map.elems (terms ctx')
-      ar1 = makeARD n (dim ctx') . Map.elems $ ket ctx'
+      ar1 = projectTemporaries . makeARD n (dim ctx') . Map.elems $ ket ctx'
       o2  = orphans ctx'' ++ Map.elems (terms ctx'')
-      ar2 = makeARD n (dim ctx'') . Map.elems $ ket ctx''
+      ar2 = projectTemporaries . makeARD n (dim ctx'') . Map.elems $ ket ctx''
   in do
     modify (\ctx -> ctx { orphans = orphans ctx ++ o1 ++ o2 } )
     return $ join ar1 ar2
@@ -341,7 +341,7 @@ loopSummary ctx' ctx =
   let n         = Map.size $ ket ctx'
       loopTrans = makeARD n (dim ctx') . Map.elems $ ket ctx'
       inTrans   = makeARD n (dim ctx) . Map.elems $ ket ctx
-      summary   = star. projectTemporaries $ loopTrans
+      summary   = star . projectTemporaries $ loopTrans
       combTrans = ARD $ compose' inTrans summary
 
       (t,z)     = Map.partitionWithKey (\bv _ -> bv /= 0) $ reducedTerms where

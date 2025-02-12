@@ -62,6 +62,16 @@ instance Show AffineRelation where
     go row = "[" ++ show (row@@(n-1,0)) ++ "|" ++ show (row@.(n)) ++ "]\n"
 
 {---------------------------
+ Tests
+ ----------------------------}
+
+-- | Checks whether it is the trivial relation
+isTrivial :: AffineRelation -> Bool
+isTrivial (ARD (F2Mat m n vals)) = case vals of
+  [] -> True
+  _  -> False
+
+{---------------------------
  Accessors
  ----------------------------}
 
@@ -200,7 +210,9 @@ projectOut (j,i) vec
 
 -- | Intersection
 meet :: AffineRelation -> AffineRelation -> AffineRelation
-meet (ARD mat) (ARD mat')
+meet ar1@(ARD mat) ar2@(ARD mat')
+  | isTrivial ar1   = ar2
+  | isTrivial ar2   = ar1
   | n mat /= n mat' = error "Can't meet relations on different sets of variables"
   | otherwise       = canonicalize $ ARD (stack mat mat')
 
@@ -223,6 +235,8 @@ compose ar1 ar2
 -- | Union
 join :: AffineRelation -> AffineRelation -> AffineRelation
 join ar1 ar2
+  | isTrivial ar1        = ar1
+  | isTrivial ar2        = ar2
   | vars ar1 /= vars ar2 = error $ "AffineRel.join: variable sets not equal"
   | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
       v = vars ar1
@@ -263,6 +277,8 @@ composeFF ar1 ar2
 -- | Union in the [X|X'] order
 joinFF :: AffineRelation -> AffineRelation -> AffineRelation
 joinFF ar1 ar2
+  | isTrivial ar1        = ar1
+  | isTrivial ar2        = ar2
   | vars ar1 /= vars ar2 = error "AffineRel.joinFF: variable sets not equal" 
   | otherwise            = ARD (project (v+1,0) $ fromList constraints) where
       v = vars ar1
