@@ -308,46 +308,47 @@ phaseSimplifications sop = do
   ctx <- ketToScope localSOP
   let revCtx = (Map.fromList . map swap) (Map.toList ctx)
 
-      synthesizePhaseTermIntoAncs :: Pathsum DMod2 -> String -> Integer -> Int -> Monomial ID repr -> ExtractionState (Pathsum DMod2)
-      synthesizePhaseTermIntoAncs ssop prefix _ 0 m = return ssop
-      synthesizePhaseTermIntoAncs ssop prefix num dpow m = do
-        let (div2, mod2) = num `divMod` 2
-        ssop' <- if mod2 == 1
-                   then emitSBoolConstruction undefined ssop
-                   else return ssop
-        synthesizePhaseTermIntoAncs ssop' prefix div2 (dpow - 1) m
-
       synthesizePhaseTerm :: Pathsum DMod2 -> (DMod2, Monomial ID repr) -> ExtractionState (Pathsum DMod2)
-      synthesizePhaseTerm ssop (a, m) =
-        if ctlUseAncillaPhaseSynthesis
-          then do
-            -- Reminder that the denominator in the dyadic rational is stored as
-            -- the n in (1/2)^n, here named dpow
-            let (Dy num dpow) = unpack a
-            ancPrefix <- nextGenPrefix
-            synthesizePhaseTermIntoAncs ssop ancPrefix num dpow m
-          else do
-            emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
-            let ssop' = ssop {phasePoly = phasePoly ssop - ofTerm (a, (Monomial . Set.map (revCtx !) . vars) m)}
-            traceResynthesis ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
-            return ssop'
+      synthesizePhaseTerm ssop (a, m) = do
+        emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
+        let ssop' = ssop {phasePoly = phasePoly ssop - ofTerm (a, (Monomial . Set.map (revCtx !) . vars) m)}
+        traceResynthesis ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
+        return ssop'
 
       splitByFraction :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
       splitByFraction _ (-1) = []
-      splitByFraction poly n = (n, sbool) : splitByFraction poly (n - 1)
+      splitByFraction poly maxN =
+        traceResynthesis ("Splitting " ++ show poly ++ " 1/2^" ++ show maxN ++ ": " ++ show dyFrac) $
+          (maxN, sboolFrac) : splitByFraction (poly - dyFrac) (maxN - 1)
         where
-          sbool = ofTermList (map (first (const 1)) oddNFracTerms)
+          dyFrac = ofTermList (map (first (const (dMod2 1 maxN))) oddNFracTerms)
+          sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
           oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
-          nFracTerms = filter ((2 `shiftL` n ==) . denom . unpack . fst) (toTermList poly)
+          nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
 
   let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
-      maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
-      polysByFraction = splitByFraction poly maxN
 
-  traceResynthesis ("Split " ++ show poly ++ ": " ++ show polysByFraction) $ return ()
+  if ctlUseAncillaPhaseSynthesis
+    then do
+      let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
+          polysByFraction = splitByFraction poly maxN
 
-  localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
-  return $ revertFrame subs localSOP'
+      traceResynthesis ("Split " ++ show poly ++ ": " ++ show polysByFraction) $ return ()
+      prefix <- nextGenPrefix
+      let ancID = prefix ++ "R"
+      localSOP' <-
+        foldM
+          ( \ssop (n, p) -> do
+              ssop' <- emitSBoolConstruction [(ancID, p)] ssop
+              tell [Phase (dMod2 1 n) [ancID]]
+              return ssop'
+          )
+          localSOP
+          polysByFraction
+      return $ revertFrame subs localSOP'
+    else do
+      localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
+      return $ revertFrame subs localSOP'
 
 
 
@@ -389,6 +390,7 @@ finalize sop = do
 emitSBoolConstruction :: (HasFeynmanControl) => [(ID, SBool ID)] -> Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 emitSBoolConstruction idSBools sop = do
   prefix <- nextGenPrefix
+  -- TODO get qIDs from the SBools and the sop, not ctx
   qIDs <- gets ctxIDs
 
   let synthGates = synthesizeSBools prefix idSBools
