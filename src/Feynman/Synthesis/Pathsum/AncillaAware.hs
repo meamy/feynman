@@ -19,6 +19,7 @@ import Control.Monad (foldM, liftM, mapM, mfilter, msum, when, (>=>))
 import Control.Monad.State.Strict (State, StateT, evalState, evalStateT, get, gets, modify, put, runState)
 import Control.Monad.Writer.Lazy (Writer, execWriter, runWriter, tell)
 import Data.Bits (xor, shiftL)
+import Data.Foldable (foldl')
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
 import Data.List (elemIndex, find, intercalate, isPrefixOf, sort, (\\))
@@ -235,7 +236,7 @@ linearizeV2 xs =
 --
 --   Returns the frame as well as the path-sum
 changeFrame :: Pathsum DMod2 -> ([(Var, SBool Var)], Pathsum DMod2)
-changeFrame sop = foldl go ([], sop) [0 .. outDeg sop - 1]
+changeFrame sop = foldl' go ([], sop) [0 .. outDeg sop - 1]
   where
     candidate (a, m) = a /= 0 && degree m > 0 && (degree m > 1 || not (all isF $ vars m))
     fv i = FVar $ "#tmp" ++ show i
@@ -249,7 +250,7 @@ changeFrame sop = foldl go ([], sop) [0 .. outDeg sop - 1]
 
 -- | Reverts the frame of the path-sum back to the standard frame
 revertFrame :: [(Var, SBool Var)] -> Pathsum DMod2 -> Pathsum DMod2
-revertFrame = flip (foldl applySub)
+revertFrame = flip (foldl' applySub)
   where
     applySub sop (v, p) = substitute [v] p sop
 
@@ -318,8 +319,7 @@ phaseSimplifications sop = do
       splitByFraction :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
       splitByFraction _ (-1) = []
       splitByFraction poly maxN =
-        traceResynthesis ("Splitting " ++ show poly ++ " 1/2^" ++ show maxN ++ ": " ++ show dyFrac) $
-          (maxN, sboolFrac) : splitByFraction (poly - dyFrac) (maxN - 1)
+        (maxN, sboolFrac) : splitByFraction (poly - dyFrac) (maxN - 1)
         where
           dyFrac = ofTermList (map (first (const (dMod2 1 maxN))) oddNFracTerms)
           sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
@@ -333,15 +333,23 @@ phaseSimplifications sop = do
       let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
           polysByFraction = splitByFraction poly maxN
 
-      traceResynthesis ("Split " ++ show poly ++ ": " ++ show polysByFraction) $ return ()
-      prefix <- nextGenPrefix
-      let ancID = prefix ++ "R"
+          mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
+
+      traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) polysByFraction) $ return ()
+      let (qVars, qIDs) = unzip (Map.toAscList ctx)
       localSOP' <-
         foldM
           ( \ssop (n, p) -> do
-              ssop' <- emitSBoolConstruction [(ancID, p)] ssop
-              tell [Phase (dMod2 1 n) [ancID]]
-              return ssop'
+              prefix <- nextGenPrefix
+              let ancID = prefix ++ "Rz"
+                  sboolGates = synthesizeSBools prefix [(ancID, p)]
+                  ancIDSet = Set.insert ancID (mctIDSet sboolGates)
+                  rzGates = sboolGates ++ [Phase (dMod2 1 n) [ancID]] ++ reverse sboolGates
+                  idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0..])
+              emitGates ("Phase SBool " ++ show p) rzGates
+              let createAnc = tensor (identity (outDeg ssop)) (ket (replicate (Set.size ancIDSet) 0))
+                  ssopAnc = applyExtract idMap (times ssop createAnc) rzGates
+              return (times (PS.dagger createAnc) ssopAnc)
           )
           localSOP
           polysByFraction
@@ -390,10 +398,10 @@ finalize sop = do
 emitSBoolConstruction :: (HasFeynmanControl) => [(ID, SBool ID)] -> Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 emitSBoolConstruction idSBools sop = do
   prefix <- nextGenPrefix
-  -- TODO get qIDs from the SBools and the sop, not ctx
-  qIDs <- gets ctxIDs
-
-  let synthGates = synthesizeSBools prefix idSBools
+  let outQIDs = (Set.fromList . map fst) idSBools
+      inQIDs = foldl' Set.union Set.empty (map (vars . snd) idSBools)
+      qIDs = Set.toAscList (Set.union outQIDs inQIDs)
+      synthGates = synthesizeSBools prefix idSBools
 
       -- mctIDs gets the target ID of any ExtractionGates synthesized.
       -- Note we don't implement all gates, classical synthesis doesn't use
@@ -409,7 +417,7 @@ emitSBoolConstruction idSBools sop = do
       synthQIDs =
         -- intermediate values should not overlap qubits
         assert (Set.disjoint (Set.fromList qIDs) (Set.fromList (concatMap mctIDs synthGates))) $
-          take (inDeg sop) qIDs ++ dropRepeats (concatMap mctIDs synthGates)
+          qIDs ++ dropRepeats (concatMap mctIDs synthGates)
 
       -- Apply the actual synthesized gates to a (blank) pathsum
       synthSopWithGarbage =
@@ -447,13 +455,15 @@ emitSBoolConstruction idSBools sop = do
   traceResynthesis ("sopWithGarbage: " ++ show sopWithGarbage) $
     traceResynthesis ("synthSopWithGarbage: " ++ show synthSopWithGarbage) $
       return ()
+
   emitGates "SBoolConstruction " (reverse synthGates)
+
   return result
 
 -- | Synthesizes the transformation |x1...xn> -> |A(x1...xn) + b>, where
 --   x1...xn are identified by a list of ID, and A(x1...xn) are identified by
 --   a list of SBool Var. May imply the addition of many ancillas.
-synthesizeSBools :: (HasFeynmanControl) => String ->[(ID, SBool ID)] -> [ExtractionGates]
+synthesizeSBools :: (HasFeynmanControl) => String -> [(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBools
   | ctlUseMCTSynthesis = synthesizeSBoolsMCT
   | ctlUseNaiveXAGSynthesis = synthesizeSBoolsXAG naiveXAGTransformers
@@ -503,7 +513,7 @@ synthesizeSBoolsXAG transformers prefix idSBools =
       where makeNodes :: Int -> [(ID, SBool ID)] -> ([XAG.Node], [Int])
             makeNodes startID [] = ([], [])
             makeNodes startID ((outID, sbool) : remain) =
-              (sboolNodes ++ remainNodes, (idMap ! outID) : remainOutIDs)
+              (sboolNodes ++ remainNodes, finTermID : remainOutIDs)
               where
                 (remainNodes, remainOutIDs) = makeNodes nextStartID remain
                 sboolNodes :: [XAG.Node]
@@ -783,7 +793,7 @@ doApplyExtract sop xs = do
 
 -- | Apply a circuit to a state
 applyExtract :: Map ID Int -> Pathsum DMod2 -> [ExtractionGates] -> Pathsum DMod2
-applyExtract ctx sop xs = foldl (absorbGate ctx) sop xs
+applyExtract ctx sop xs = foldl' (absorbGate ctx) sop xs
   where
     absorbGate ctx sop gate =
       let index xs = ((Map.fromList $ zip [0 ..] [ctx ! x | x <- xs]) !)
