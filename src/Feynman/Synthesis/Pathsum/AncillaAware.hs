@@ -325,11 +325,11 @@ phaseSimplifications sop = do
           sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
           oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
           nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
+      
 
   let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
   -- TODO document why the local frame transformation is done
   -- TODO consider splitting out synthesizePhasePolyNeg
-
 
   if ctlUseAncillaPhaseSynthesis
     then do
@@ -345,27 +345,24 @@ phaseSimplifications sop = do
 
       traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
       let (qVars, qIDs) = unzip (Map.toAscList ctx)
+
+          synthesizeShaving ssop (_, 0) = return ssop
+          synthesizeShaving ssop (n, p) = do
+            prefix <- nextGenPrefix
+            let ancID = prefix ++ "Rz"
+                sboolGates = synthesizeSBools prefix [(ancID, p)]
+                ancIDSet = Set.insert ancID (mctIDSet sboolGates)
+                rzGates = sboolGates ++ [Phase (dMod2 (-1) n) [ancID]] ++ reverse sboolGates
+                idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0 ..])
+            emitGates ("Phase SBool " ++ show p) rzGates
+            let createAnc = tensor (identity (outDeg ssop)) (ket (replicate (Set.size ancIDSet) 0))
+                ssopWithAnc = times ssop createAnc
+                ssopAnc = applyExtract idMap ssopWithAnc rzGates
+                ssop' = times ssopAnc (PS.dagger createAnc)
+            return $ grind ssop'
       localSOP' <-
         foldM
-          ( \ssop (n, p) -> do
-              prefix <- nextGenPrefix
-              let ancID = prefix ++ "Rz"
-                  sboolGates = synthesizeSBools prefix [(ancID, p)]
-                  ancIDSet = Set.insert ancID (mctIDSet sboolGates)
-                  rzGates = sboolGates ++ [Phase (dMod2 (-1) n) [ancID]] ++ reverse sboolGates
-                  idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0..])
-              emitGates ("Phase SBool " ++ show p) rzGates
-              let createAnc = tensor (identity (outDeg ssop)) (ket (replicate (Set.size ancIDSet) 0))
-                  ssopWithAnc = times ssop createAnc
-              traceResynthesis ("ssopWithAnc = " ++ show ssopWithAnc) $ return ()
-              let
-                  ssopAnc = applyExtract idMap ssopWithAnc rzGates
-              traceResynthesis ("ssopAnc = " ++ show ssopAnc) $ return ()
-              let
-                  ssop' = grind (times ssopAnc (PS.dagger createAnc))
-              traceResynthesis ("ssop' = " ++ show ssop') $ return ()
-              return ssop'
-          )
+          synthesizeShaving
           localSOP
           sboolShavings
       return $ revertFrame subs localSOP'
@@ -512,15 +509,12 @@ minMultSatXAGTransformers =
 synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBoolsXAG transformers prefix idSBools =
   traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
-    traceResynthesis ("XAG transformed: " ++ show xag) $
-      fst (xagToMCTs prefix xag allInputs)
+    traceResynthesis ("XAG transformed: " ++ show finXAG) $
+      gates ++ [Swapper ancID qID | (ancID, (qID, _)) <- zip outNames idSBools]
   where
-    xag = foldr ($) rawXAG transformers
-
+    (gates, outNames) = xagToMCTs prefix finXAG allInputs
+    finXAG = foldr ($) rawXAG transformers
     rawXAG = XAG.Graph {XAG.nodes = rawNodes, XAG.inputIDs = rawInIDs, XAG.outputIDs = rawOutIDs}
-
-    outputNames :: [ID]
-    outputNames = map fst idSBools
 
     rawNodes :: [XAG.Node]
     rawOutIDs :: [Int]
@@ -575,7 +569,7 @@ synthesizeSBoolsXAG transformers prefix idSBools =
 
 xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
 xagToMCTs prefix g qNames =
-  -- qNames, outIDs disjoint
+  -- qNames, outNames disjoint
   -- qNames labels every graph input
   assert (all (`Set.notMember` Set.fromList qNames) outNames) $
     assert (length (XAG.inputIDs g) == length qNames) $
@@ -590,7 +584,7 @@ xagToMCTs prefix g qNames =
     -- you think of a cleaner way to do this, like maybe the check should be
     -- done by the caller and not in here... you have my blessing to improve it
     inoutMCTs = [MCT [inName] outName | (_, inName, outName) <- inoutIDInOuts]
-    outIDMap = foldr (\(inID, inName, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts
+    outIDMap = foldr (\(inID, _, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts
     inoutIDInOuts =
       [ (inID, inName, prefix ++ "Xi" ++ show newID)
         | (inID, inName, newID) <- zip3 (XAG.inputIDs g) qNames [lastID + 1 ..],
