@@ -316,26 +316,34 @@ phaseSimplifications sop = do
         traceResynthesis ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
         return ssop'
 
-      splitByFraction :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
-      splitByFraction _ (-1) = []
-      splitByFraction poly maxN =
-        (maxN, sboolFrac) : splitByFraction (poly - dyFrac) (maxN - 1)
+      shavePseudoBoolean :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
+      shavePseudoBoolean _ (-1) = []
+      shavePseudoBoolean poly maxN =
+        (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
         where
-          dyFrac = ofTermList (map (first (const (dMod2 1 maxN))) oddNFracTerms)
+          dyFrac = distribute (dMod2 1 maxN) sboolFrac
           sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
           oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
           nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
 
   let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
+  -- TODO document why the local frame transformation is done
+  -- TODO consider splitting out synthesizePhasePolyNeg
+
 
   if ctlUseAncillaPhaseSynthesis
     then do
       let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
-          polysByFraction = splitByFraction poly maxN
+          -- Shavings, because we iteratively subtract out binary polynomials
+          -- for the pseudo-boolean, like shaving that precision level off,
+          -- from the highest power of 1 / 2^n to the lowest.
+          -- The takes a polynomial like 3 / 2^1 x_1 + 1 / 2^1 x_2 and
+          -- separates it into (1 / 2^1)(x_1 (+) x_2) + (1 / 2^0)(x_1)
+          sboolShavings = shavePseudoBoolean poly maxN
 
           mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
 
-      traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) polysByFraction) $ return ()
+      traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
       let (qVars, qIDs) = unzip (Map.toAscList ctx)
       localSOP' <-
         foldM
@@ -344,15 +352,22 @@ phaseSimplifications sop = do
               let ancID = prefix ++ "Rz"
                   sboolGates = synthesizeSBools prefix [(ancID, p)]
                   ancIDSet = Set.insert ancID (mctIDSet sboolGates)
-                  rzGates = sboolGates ++ [Phase (dMod2 1 n) [ancID]] ++ reverse sboolGates
+                  rzGates = sboolGates ++ [Phase (dMod2 (-1) n) [ancID]] ++ reverse sboolGates
                   idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0..])
               emitGates ("Phase SBool " ++ show p) rzGates
               let createAnc = tensor (identity (outDeg ssop)) (ket (replicate (Set.size ancIDSet) 0))
-                  ssopAnc = applyExtract idMap (times ssop createAnc) rzGates
-              return (times (PS.dagger createAnc) ssopAnc)
+                  ssopWithAnc = times ssop createAnc
+              traceResynthesis ("ssopWithAnc = " ++ show ssopWithAnc) $ return ()
+              let
+                  ssopAnc = applyExtract idMap ssopWithAnc rzGates
+              traceResynthesis ("ssopAnc = " ++ show ssopAnc) $ return ()
+              let
+                  ssop' = grind (times ssopAnc (PS.dagger createAnc))
+              traceResynthesis ("ssop' = " ++ show ssop') $ return ()
+              return ssop'
           )
           localSOP
-          polysByFraction
+          sboolShavings
       return $ revertFrame subs localSOP'
     else do
       localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
