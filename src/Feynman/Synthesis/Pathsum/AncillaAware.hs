@@ -319,13 +319,13 @@ phaseSimplifications sop = do
       shavePseudoBoolean :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
       shavePseudoBoolean _ (-1) = []
       shavePseudoBoolean poly maxN =
-        (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
+        traceResynthesis ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
+          (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
         where
           dyFrac = distribute (dMod2 1 maxN) sboolFrac
           sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
           oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
           nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
-      
 
   let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
   -- TODO document why the local frame transformation is done
@@ -333,39 +333,43 @@ phaseSimplifications sop = do
 
   if ctlUseAncillaPhaseSynthesis
     then do
+      prefix <- nextGenPrefix
       let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
           -- Shavings, because we iteratively subtract out binary polynomials
           -- for the pseudo-boolean, like shaving that precision level off,
           -- from the highest power of 1 / 2^n to the lowest.
-          -- The takes a polynomial like 3 / 2^1 x_1 + 1 / 2^1 x_2 and
-          -- separates it into (1 / 2^1)(x_1 (+) x_2) + (1 / 2^0)(x_1)
-          sboolShavings = shavePseudoBoolean poly maxN
+          -- The takes a polynomial like 3 / 2^1 x_1 and separates it into
+          -- (1 / 2^1)(x_1) + (1 / 2^0)(x_1)
+          sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
 
           mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
 
       traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
-      let (qVars, qIDs) = unzip (Map.toAscList ctx)
-
-          synthesizeShaving ssop (_, 0) = return ssop
-          synthesizeShaving ssop (n, p) = do
-            prefix <- nextGenPrefix
-            let ancID = prefix ++ "Rz"
-                sboolGates = synthesizeSBools prefix [(ancID, p)]
-                ancIDSet = Set.insert ancID (mctIDSet sboolGates)
-                rzGates = sboolGates ++ [Phase (dMod2 (-1) n) [ancID]] ++ reverse sboolGates
-                idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0 ..])
-            emitGates ("Phase SBool " ++ show p) rzGates
-            let createAnc = tensor (identity (outDeg ssop)) (ket (replicate (Set.size ancIDSet) 0))
-                ssopWithAnc = times ssop createAnc
-                ssopAnc = applyExtract idMap ssopWithAnc rzGates
-                ssop' = times ssopAnc (PS.dagger createAnc)
-            return $ grind ssop'
-      localSOP' <-
-        foldM
-          synthesizeShaving
-          localSOP
-          sboolShavings
-      return $ revertFrame subs localSOP'
+      let (qVars, _) = unzip (Map.toAscList ctx)
+          sboolGates = synthesizeSBools prefix [(ancN, p) | (ancN, _, p) <- sboolShavings]
+          phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+          ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
+          rzGates = sboolGates ++ phaseGates -- ++ reverse sboolGates
+      emitGates ("Phase SBools " ++ show sboolShavings) rzGates
+      qIDs <- gets ctxIDs
+      let createAnc = tensor (identity (outDeg sop)) (ket (replicate (Set.size ancIDSet) 0))
+          sopAnc = times sop createAnc
+          idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0 ..])
+          sopAnc' = applyExtract idMap sopAnc (rzGates ++ reverse sboolGates)
+          sop' = grind (times sopAnc' (PS.dagger createAnc))
+      traceResynthesis "Phase synthesis debug" $ return ()
+      traceResynthesis ("  sop before phase synthesis:\n    " ++ show sop) $ return ()
+      traceResynthesis ("  sop substitutions: " ++ show subs) $ return ()
+      traceResynthesis ("  localSOP:\n    " ++ show localSOP) $ return ()
+      traceResynthesis ("  sop with ancillas (inDeg " ++ show (inDeg sopAnc) ++ "):\n    " ++ show sopAnc) $ return ()
+      traceResynthesis ("  ctxIDs:            " ++ show qIDs) $ return ()
+      traceResynthesis ("  idMap:             " ++ show ((map snd . sort . map (\(a,b) -> (b,a))) (Map.toList idMap))) $ return ()
+      traceResynthesis ("  sop with ancillas after phase synthesis:"
+                        ++ fst (foldl' (\(str, s) g -> let s' = grind (applyExtract idMap s [g])
+                                                        in (str ++ "\n    " ++ show g ++ " -> " ++ show s', s'))
+                                       ("", sopAnc) rzGates)) $ return ()
+      traceResynthesis ("  sop after phase synthesis:\n    " ++ show sop') $ return ()
+      return sop'
     else do
       localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
       return $ revertFrame subs localSOP'
@@ -510,8 +514,13 @@ synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String
 synthesizeSBoolsXAG transformers prefix idSBools =
   traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
     traceResynthesis ("XAG transformed: " ++ show finXAG) $
-      gates ++ [Swapper ancID qID | (ancID, (qID, _)) <- zip outNames idSBools]
+      gates ++ copyOuts ++ swapOuts
   where
+    swapOuts = [Swapper ancID qID | (ancID, (qID, _)) <- zip swapAncNames idSBools]
+    copyOuts = [MCT [outID] ancID | (outID, ancID) <- zip outNames swapAncNames]
+
+    swapAncNames = [prefix ++ "S" ++ show n | n <- [0 .. length outNames - 1]]
+    
     (gates, outNames) = xagToMCTs prefix finXAG allInputs
     finXAG = foldr ($) rawXAG transformers
     rawXAG = XAG.Graph {XAG.nodes = rawNodes, XAG.inputIDs = rawInIDs, XAG.outputIDs = rawOutIDs}
@@ -573,28 +582,9 @@ xagToMCTs prefix g qNames =
   -- qNames labels every graph input
   assert (all (`Set.notMember` Set.fromList qNames) outNames) $
     assert (length (XAG.inputIDs g) == length qNames) $
-      (inoutMCTs ++ gates, outNames)
+      (gates, outNames)
   where
-    outNames = map (outIDMap !) (XAG.outputIDs g)
-
-    -- This ugliness ensures the outputs are distinct from the inputs -- if the
-    -- outputIDs in the graph share IDs with the inputIDs, the generated swaps
-    -- will just swap the inputs around. To be safe, the outputs need to all be
-    -- ancillas distinct from the inputs. I just wanted the bug fixed, but if
-    -- you think of a cleaner way to do this, like maybe the check should be
-    -- done by the caller and not in here... you have my blessing to improve it
-    inoutMCTs = [MCT [inName] outName | (_, inName, outName) <- inoutIDInOuts]
-    outIDMap = foldr (\(inID, _, outName) m -> Map.insert inID outName m) idMap inoutIDInOuts
-    inoutIDInOuts =
-      [ (inID, inName, prefix ++ "Xi" ++ show newID)
-        | (inID, inName, newID) <- zip3 (XAG.inputIDs g) qNames [lastID + 1 ..],
-          IntSet.member inID inouts
-      ]
-    inouts =
-      IntSet.intersection
-        (IntSet.fromList (XAG.inputIDs g))
-        (IntSet.fromList (XAG.outputIDs g))
-    lastID = foldr max 0 nodeIDs
+    outNames = map (idMap !) (XAG.outputIDs g)
 
     gates = concatMap nodeToMCTs (XAG.nodes g)
 
