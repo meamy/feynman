@@ -37,9 +37,8 @@ where
 import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Debug.Trace (trace)
 import Feynman.Frontend.OpenQASM3.Ast
-import Numeric
+import Numeric (readDec, readFloat, readHex, readOct)
 import Text.Read (readMaybe)
 
 type ParseNode = Node Tag SourceRef

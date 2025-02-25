@@ -10,7 +10,6 @@ import Data.Maybe
 import Data.Sequence.Internal.Sorting (QList (Nil))
 import qualified Data.Set as Set
 import Data.Word (Word64)
-import Debug.Trace
 import Feynman.Core
 import Feynman.Frontend.OpenQASM3.Ast
 import qualified Feynman.Frontend.OpenQASM3.Chatty as Chatty

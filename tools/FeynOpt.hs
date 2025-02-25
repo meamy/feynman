@@ -3,6 +3,7 @@
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 
+import Feynman.Control
 import Feynman.Core (Primitive,
                      ID,
                      simplifyPrimitive',
@@ -77,7 +78,8 @@ data Options = Options {
   passes :: [Pass],
   verify :: Bool,
   pureCircuit :: Bool,
-  useQASM3 :: Bool }
+  useQASM3 :: Bool,
+  control :: FeynmanControl }
 
 {- DotQC -}
 
@@ -325,13 +327,13 @@ printHelp = mapM_ putStrLn lines
           "         Set user-level memory limits when doing so."
           ]
 
-
 defaultOptions :: Options
 defaultOptions = Options {
   passes = [],
   verify = False,
   pureCircuit = False,
-  useQASM3 = False }
+  useQASM3 = False,
+  control = FeynmanControl False False False False False False }
 
 
 parseArgs :: Bool -> Options -> [String] -> IO ()
@@ -339,6 +341,18 @@ parseArgs doneSwitches options []     = printHelp
 parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
+  "--feature-trace-resynthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlTraceResynthesis = True}} xs
+  "--feature-use-mct-poly-synthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseMCTSynthesis = True}} xs
+  "--feature-use-naive-xag-poly-synthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseNaiveXAGSynthesis = True}} xs
+  "--feature-use-basic-xag-poly-synthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseBasicXAGSynthesis = True}} xs
+  "--feature-use-minmultsat-xag-poly-synthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseMinMultSatXAGSynthesis = True}} xs
+  "--feature-use-ancilla-phase-synthesis"
+                 -> parseArgs doneSwitches options {control=(control options) {feynmanControlUseAncillaPhaseSynthesis = True}} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
   "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs

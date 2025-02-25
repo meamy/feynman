@@ -16,6 +16,7 @@ import Test.QuickCheck                         (Gen, generate, arbitrary)
 import Text.Printf
 import System.CPUTime                          (getCPUTime)
 
+import Feynman.Control
 import Feynman.Core                            (ID, Primitive(..), dagger)
 import Feynman.Util.Unicode                    (subscript, ulambda, bullet, star)
 import Feynman.Algebra.Base
@@ -45,7 +46,7 @@ synthesizeClifford xs = do
   return $ Result True t (fromIntegral count) (fromIntegral count')
 
 -- | Re-synthesizes a Clifford+T circuit and returns the results
-synthesizeCliffordT :: [Primitive] -> IO Result
+synthesizeCliffordT :: HasFeynmanControl => [Primitive] -> IO Result
 synthesizeCliffordT xs = do
   start <- getCPUTime
   let !count  = length xs
@@ -68,7 +69,7 @@ cliffordTests n k l = do
           fromIntegral (before result - after result) / (fromIntegral $ before result) * 100
   
 -- | Generates random Clifford+T circuits, synthesizes them and prints statistics
-cliffordTTests :: Int -> Int -> Int -> IO ()
+cliffordTTests :: HasFeynmanControl => Int -> Int -> Int -> IO ()
 cliffordTTests n k l = do
   circuits <- mapM (\_ -> generateCliffordT n k) [1..l]
   results  <- mapM synthesizeCliffordT circuits
