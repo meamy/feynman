@@ -1,24 +1,30 @@
-{-# LANGUAGE TypeFamilies #-}
-
 module Feynman.Graph where
 
 import Control.Monad.State.Strict (State (..), evalState, gets)
 import Data.Foldable (Foldable (..), foldl')
 import Data.Kind (Type)
 import Data.Map.Strict (Map, (!))
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Traversable (for)
+import Feynman.Control
 import Feynman.Core
+import Data.Bifunctor (second)
 
-class (Ord (GateQubit g), Eq (GateQubit g)) => CircuitGate g where
+traceG :: (HasFeynmanControl) => String -> a -> a
+traceG = traceIf (ctlEnabled fcfTrace_Graph)
+
+traceValG :: (HasFeynmanControl) => (a -> String) -> a -> a
+traceValG = traceValIf (ctlEnabled fcfTrace_Graph)
+
+class (Eq (GateQubit g), Ord (GateQubit g)) => CircuitGate g where
   type GateQubit g :: Type
   foldGateReferences :: (a -> GateQubit g -> a) -> a -> g -> a
   mapGateReferences :: (GateQubit g -> GateQubit g) -> g -> g
 
 class
-  (CircuitGate (GraphGate g), Ord (GateQubit (GraphGate g)), Eq (GateQubit (GraphGate g))) =>
+  (CircuitGate (GraphGate g), Eq (GateQubit (GraphGate g)), Ord (GateQubit (GraphGate g))) =>
   CircuitGraph g
   where
   -- type GraphQubit g :: Type
@@ -27,20 +33,26 @@ class
   foldReferences :: (a -> GateQubit (GraphGate g) -> a) -> a -> g -> a
   mapGates :: (GraphGate g -> GraphGate g) -> g -> g
   mapReferences :: (GateQubit (GraphGate g) -> GateQubit (GraphGate g)) -> g -> g
-  pureGates :: g
+  pureGraph :: g
   appendGate :: g -> GraphGate g -> g
+  graphFromList :: [GraphGate g] -> g
+  graphFromList = foldl' appendGate pureGraph
+  graphToList :: g -> [GraphGate g]
+  graphToList = reverse . foldGates (flip (:)) []
 
 -- In a way, it's nice that Haskell lets me do this.
 -- In another way, it would be nicer if Feynman didn't use 3 different gate
 -- representations, and I didn't feel like I had to do this.
 instance (CircuitGate g) => CircuitGraph [g] where
   type GraphGate [g] = g
-  foldGates f = foldr (flip f)
-  foldReferences f = foldr (flip (foldGateReferences f))
+  foldGates = foldl'
+  foldReferences f = foldl' (foldGateReferences f)
   mapGates = map
   mapReferences f = map (mapGateReferences f)
-  pureGates = []
-  appendGate graph g = g : graph
+  pureGraph = []
+  appendGate graph g = graph ++ [g]
+  graphFromList = id
+  graphToList = id
 
 instance CircuitGate Primitive where
   type GateQubit Primitive = ID
@@ -92,8 +104,8 @@ data UnravelState g = (CircuitGraph g) => Unravel
 emptyUnravel :: (CircuitGraph g) => UnravelState g
 emptyUnravel =
   Unravel
-    { accepted = pureGates,
-      rejected = pureGates,
+    { accepted = pureGraph,
+      rejected = pureGraph,
       currentMap = Map.empty,
       fullMap = Map.empty,
       freshIDs = undefined
@@ -132,15 +144,15 @@ emptyUnravel =
 -- reference in the rejected gate.
 
 unravel ::
-  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g)) =>
+  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
   (GraphGate g -> Bool) ->
   [GateQubit (GraphGate g)] ->
   g ->
-  (g, g, [(GateQubit (GraphGate g), Set (GateQubit (GraphGate g)))])
+  (g, g, [(GateQubit (GraphGate g), [GateQubit (GraphGate g)])])
 unravel testF freshIDSource gates =
-  (accepted finState, rejected finState, Map.toList (fullMap finState))
+  (accepted finState, rejected finState, map (second Set.toList) (Map.toList (fullMap finState)))
   where
-    finState = foldGates unravelAux (emptyUnravel {freshIDs = freshIDSource}) gates
+    finState = foldGates unravelAux (emptyUnravel {freshIDs = freshIDSource, currentMap = initialMap}) gates
 
     unravelAux st g =
       -- If the gate is accepted, map its references according to the current
@@ -148,32 +160,38 @@ unravel testF freshIDSource gates =
       -- If it's rejected, make new labels for all its references and map it
       -- according to the new mapping; update the list, mapping, fresh IDs
       if testF g
-        then st {accepted = appendGate (accepted st) (mapGateReferences (currentMap st !) g)}
+        then
+          traceG ("Accepting " ++ show g) $
+            st {accepted = appendGate (accepted st) (mapGateReferences (currentMap st !) g)}
         else
-          let (added, newMap, newFreshIDs) =
-                relabelReferences g (currentMap st) (freshIDs st)
-              addRefToSet m (refID, remapID) =
-                Map.adjust (Set.insert remapID) refID m
-           in st
-                { rejected = appendGate (rejected st) (mapGateReferences (newMap !) g),
-                  currentMap = newMap,
-                  fullMap = foldl' addRefToSet (fullMap st) added,
-                  freshIDs = newFreshIDs
-                }
+          traceG ("Rejecting " ++ show g) $
+            let (added, newMap, newFreshIDs) =
+                  relabelReferences g (currentMap st) (freshIDs st)
+                addRefToSet m (refID, remapID) =
+                  Map.insertWith Set.union refID (Set.singleton remapID) m
+             in st
+                  { rejected = appendGate (rejected st) (mapGateReferences (newMap !) g),
+                    currentMap = newMap,
+                    fullMap = foldl' addRefToSet (fullMap st) added,
+                    freshIDs = newFreshIDs
+                  }
 
     initialMap = Map.fromList (zip allIDs allIDs)
     allIDs = Set.toList (foldReferences (flip Set.insert) Set.empty gates)
 
     -- Get new labels from freshIDs for every label referenced by this gate
     relabelReferences g m freshIDs =
-      foldl'
-        ( \(items, m', nextID : remainIDs) refID ->
-            ((refID, nextID) : items, Map.insert refID nextID m', remainIDs)
-        )
-        ([], m, freshIDs)
-        deps
+      traceValG (\(items, m', nextID : _) -> "Relabeling " ++ show g ++ " with " ++ show items ++ ", " ++ show m' ++ ", [" ++ show nextID ++ "..]") $
+        foldl'
+          ( \(items, m', nextID : remainIDs) refID ->
+              ((refID, nextID) : items, Map.insert refID nextID m', remainIDs)
+          )
+          ([], m, freshIDs)
+          refs
       where
-        deps = Set.toList (foldGateReferences (flip Set.insert) Set.empty g)
+        refs =
+          traceValG (\d -> "Refs of " ++ show g ++ ": " ++ show d) $
+            Set.toList (foldGateReferences (flip Set.insert) Set.empty g)
 
 reknit :: [Primitive] -> [Primitive] -> [(ID, ID)] -> [Primitive]
 reknit xGates yGates xyMap = undefined

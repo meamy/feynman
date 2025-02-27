@@ -34,6 +34,10 @@ main = do
         ['@' : show n | n <- [1 ..]]
         [ Uninterp "tof" ["a", "b", "c"],
           H "c",
+          Uninterp "tof" ["a", "b", "c"],
+          H "c",
+          Uninterp "tof" ["a", "b", "c"],
+          H "c",
           CNOT "c" "b"
         ]
     )
@@ -46,6 +50,10 @@ main = do
         (\g -> case g of Hadamard _ -> False; _ -> True)
         ['@' : show n | n <- [1 ..]]
         [ MCT ["a", "b"] "c",
+          Hadamard "c",
+          MCT ["a", "b"] "c",
+          Hadamard "c",
+          MCT ["a", "b"] "c",
           Hadamard "c",
           MCT ["c"] "b"
         ]
