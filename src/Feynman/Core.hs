@@ -1,4 +1,3 @@
-{-# LANGUAGE Rank2Types, DeriveGeneric #-}
 module Feynman.Core where
 
 import Data.List
@@ -8,7 +7,11 @@ import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
 
+import Feynman.Control (FeynmanControl)
 import Feynman.Algebra.Base
+
+
+type HasFeynmanControl = (?feynmanControl :: FeynmanControl)
 
 
 type ID = String

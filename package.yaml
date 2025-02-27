@@ -26,14 +26,22 @@ dependencies:
 
 ghc-options:
 - -O2
+- -Wno-unrecognised-pragmas
 
 language: Haskell2010
 
 default-extensions:
-- GADTs
+- BangPatterns
+- ConstraintKinds
 - ExistentialQuantification
 - FlexibleContexts
 - FlexibleInstances
+- GADTs
+- ImplicitParams
+- ImportQualifiedPost
+- Rank2Types
+- TupleSections
+- TypeFamilies
 
 library:
   source-dirs: src
@@ -159,8 +167,8 @@ executables:
     - QuickCheck
 
 tests:
-  feynman-graph:
-    main:                Spec.hs
+  TestCoreGraph:
+    main:                TestCoreGraph.hs
     source-dirs:         test
     ghc-options:
     - -threaded

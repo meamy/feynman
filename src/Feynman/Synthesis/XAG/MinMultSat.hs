@@ -1,6 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 {-# HLINT ignore "Eta reduce" #-}
 {-# HLINT ignore "Avoid lambda" #-}
 
@@ -22,18 +19,22 @@ import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe (fromJust, fromMaybe, mapMaybe)
-import Feynman.Control (HasFeynmanControl, traceResynthesis)
+import Feynman.Control
+import Feynman.Core (HasFeynmanControl)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import Feynman.Synthesis.XAG.Simplify qualified as XAG
 import Feynman.Synthesis.XAG.Subgraph qualified as XAG
 import SAT.MiniSat
 
+traceMMS :: (HasFeynmanControl) => String -> a -> a
+traceMMS = traceIf (ctlEnabled fcfTrace_Synthesis_XAG)
+
 resynthesizeMinMultSat :: (HasFeynmanControl) => XAG.Graph -> Maybe XAG.Graph
 resynthesizeMinMultSat g =
-  traceResynthesis ("Resynthesizing " ++ show g) $
+  traceMMS ("Resynthesizing " ++ show g) $
     -- trace ("Truth table:\n  " ++ intercalate "\n  " (map show truthTable)) $
-    traceResynthesis ("  fullSubG = " ++ show fullSubG) $
-      traceResynthesis ("  trivAffine = " ++ show trivAffineSubGs) $
+    traceMMS ("  fullSubG = " ++ show fullSubG) $
+      traceMMS ("  trivAffine = " ++ show trivAffineSubGs) $
         (Just . XAG.subgraphToGraph)
           =<< foldr (liftA2 XAG.mergeSubgraphs) (Just affineSubG) minMultSubGs
   where
@@ -222,11 +223,11 @@ mapComputedInputNode input nodeID = do
 -- variables to output values
 synthesizeFromTruthTable :: (HasFeynmanControl) => Int -> Int -> Int -> [([Bool], [Bool])] -> Maybe XAG.Graph
 synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
-  traceResynthesis ("Searching MC " ++ show multComplexity) $
+  traceMMS ("Searching MC " ++ show multComplexity) $
     case solve fullFormula of
       -- Found a working solution!
       Just assignments ->
-        traceResynthesis "Solved, building XAG" $
+        traceMMS "Solved, building XAG" $
           let (outputIDs, s) = runState fullXAGFunc (emptyXAGBuilder assignments)
            in Just $ XAG.Graph (reverse (xagNodesRev s)) freeInputIDs outputIDs
       -- Can't do, expand search?
@@ -244,7 +245,7 @@ synthesizeFromTruthTable multComplexity nInputs nOutputs truthTable =
 
     fullFormula :: ParamFormula
     fullFormula =
-      traceResynthesis ("Full formula has " ++ show (length fullFormulaClauses) ++ " clauses") $
+      traceMMS ("Full formula has " ++ show (length fullFormulaClauses) ++ " clauses") $
         All fullFormulaClauses
 
     fullFormulaClauses = concatMap (uncurry ttRowClauses) truthTable
@@ -344,7 +345,7 @@ affineFormula :: (HasFeynmanControl) => FormulaState (FormulaFunc, XAGFunc)
 affineFormula = do
   inputs <- gets allInputs
   params <- freshParams (length inputs)
-  traceResynthesis ("Allocated params " ++ show params) $ return ()
+  traceMMS ("Allocated params " ++ show params) $ return ()
   let formulaFunc ctx =
         formulaFuncAux (filter (\(_, i) -> i /= No) (zip params (map (inputFormula ctx) inputs)))
         where

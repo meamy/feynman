@@ -1,7 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE TupleSections #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 {-# HLINT ignore "Redundant bracket" #-}
 module Main (main) where
 

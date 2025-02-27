@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-|
 Module      : Main
 Description : Extraction tests
@@ -16,8 +15,7 @@ import Test.QuickCheck                         (Gen, generate, arbitrary)
 import Text.Printf
 import System.CPUTime                          (getCPUTime)
 
-import Feynman.Control
-import Feynman.Core                            (ID, Primitive(..), dagger)
+import Feynman.Core                            (HasFeynmanControl, ID, Primitive(..), dagger)
 import Feynman.Util.Unicode                    (subscript, ulambda, bullet, star)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial              (degree)

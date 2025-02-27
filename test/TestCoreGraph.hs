@@ -1,13 +1,12 @@
-{-# LANGUAGE TypeFamilies #-}
-
 module Main (main) where
 
 import Data.Foldable (foldl')
-
+import Feynman.Control
 import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Unitary
 import Feynman.Synthesis.Pathsum.Util
+import Test.QuickCheck
 
 instance CircuitGate ExtractionGates where
   type GateQubit ExtractionGates = ID
@@ -24,6 +23,10 @@ instance CircuitGate ExtractionGates where
 
 main :: IO ()
 main = do
+  let ?feynmanControl =
+        defaultControl
+          { fcfTrace_Graph = True
+          }
   putStrLn "Unraveling [Primitive]:"
   print
     ( unravel

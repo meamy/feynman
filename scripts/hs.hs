@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-|
 Module      : Main
 Description : Hidden shift

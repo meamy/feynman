@@ -42,7 +42,7 @@ import Test.QuickCheck (Arbitrary(..),
 import qualified Feynman.Core as Core
 
 import Feynman.Control
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger, removeSwaps)
+import Feynman.Core (HasFeynmanControl, ID, Primitive(..), Angle(..), dagger, removeSwaps)
 import Feynman.Circuits (cs, ccx)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
@@ -61,6 +61,12 @@ import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
 import qualified Feynman.Synthesis.XAG.Simplify as XAG
 
 import Feynman.Verification.Symbolic
+
+traceAA :: (HasFeynmanControl) => String -> a -> a
+traceAA = traceIf (ctlEnabled fcfTrace_Synthesis_Pathsum_Unitary)
+
+traceValAA :: (HasFeynmanControl) => (a -> String) -> a -> a
+traceValAA = traceValIf (ctlEnabled fcfTrace_Synthesis_Pathsum_Unitary)
 
 {-----------------------------------
  Types
@@ -308,13 +314,13 @@ phaseSimplifications sop = do
       synthesizePhaseTerm ssop (a, m) = do
         emitGates "Phase simplifications" [Phase (-a) (Set.toList $ vars m)]
         let ssop' = ssop {phasePoly = phasePoly ssop - ofTerm (a, (Monomial . Set.map (revCtx !) . vars) m)}
-        traceResynthesis ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
+        traceAA ("Simplified term " ++ show ssop ++ " - " ++ show "-> " ++ show ssop') $ return ()
         return ssop'
 
       shavePseudoBoolean :: PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
       shavePseudoBoolean _ (-1) = []
       shavePseudoBoolean poly maxN =
-        traceResynthesis ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
+        traceAA ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
           (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
         where
           dyFrac = distribute (dMod2 1 maxN) sboolFrac
@@ -326,8 +332,11 @@ phaseSimplifications sop = do
   -- TODO document why the local frame transformation is done
   -- TODO consider splitting out synthesizePhasePolyNeg
 
-  if ctlUseAncillaPhaseSynthesis
+  if ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_OriginalPhase
     then do
+      localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
+      return $ revertFrame subs localSOP'
+    else do
       prefix <- nextGenPrefix
       let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
           -- Shavings, because we iteratively subtract out binary polynomials
@@ -339,9 +348,16 @@ phaseSimplifications sop = do
 
           mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
 
-      traceResynthesis ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
+      traceAA ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
       let (qVars, _) = unzip (Map.toAscList ctx)
-          sboolGates = synthesizeSBools prefix [(ancN, p) | (ancN, _, p) <- sboolShavings]
+          sboolF = if ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase
+                     then synthesizeSBoolsMCT
+                     else if ctlEnabled fcfFeature_Synthesis_XAG_Direct
+                            then synthesizeSBoolsXAG directXAGTransformers
+                            else if ctlEnabled fcfFeature_Synthesis_XAG_Strash
+                                   then synthesizeSBoolsXAG strashXAGTransformers
+                                   else synthesizeSBoolsXAG minMultSatXAGTransformers
+          sboolGates = sboolF prefix [(ancN, p) | (ancN, _, p) <- sboolShavings]
           phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
           ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
           rzGates = sboolGates ++ phaseGates -- ++ reverse sboolGates
@@ -352,22 +368,19 @@ phaseSimplifications sop = do
           idMap = Map.fromList (zip (qIDs ++ Set.toAscList ancIDSet) [0 ..])
           sopAnc' = computeGates idMap sopAnc (rzGates ++ reverse sboolGates)
           sop' = grind (times sopAnc' (PS.dagger createAnc))
-      traceResynthesis "Phase synthesis debug" $ return ()
-      traceResynthesis ("  sop before phase synthesis:\n    " ++ show sop) $ return ()
-      traceResynthesis ("  sop substitutions: " ++ show subs) $ return ()
-      traceResynthesis ("  localSOP:\n    " ++ show localSOP) $ return ()
-      traceResynthesis ("  sop with ancillas (inDeg " ++ show (inDeg sopAnc) ++ "):\n    " ++ show sopAnc) $ return ()
-      traceResynthesis ("  ctxIDs:            " ++ show qIDs) $ return ()
-      traceResynthesis ("  idMap:             " ++ show ((map snd . sort . map (\(a,b) -> (b,a))) (Map.toList idMap))) $ return ()
-      traceResynthesis ("  sop with ancillas after phase synthesis:"
+      traceAA "Phase synthesis debug" $ return ()
+      traceAA ("  sop before phase synthesis:\n    " ++ show sop) $ return ()
+      traceAA ("  sop substitutions: " ++ show subs) $ return ()
+      traceAA ("  localSOP:\n    " ++ show localSOP) $ return ()
+      traceAA ("  sop with ancillas (inDeg " ++ show (inDeg sopAnc) ++ "):\n    " ++ show sopAnc) $ return ()
+      traceAA ("  ctxIDs:            " ++ show qIDs) $ return ()
+      traceAA ("  idMap:             " ++ show ((map snd . sort . map (\(a,b) -> (b,a))) (Map.toList idMap))) $ return ()
+      traceAA ("  sop with ancillas after phase synthesis:"
                         ++ fst (foldl' (\(str, s) g -> let s' = grind (computeGates idMap s [g])
                                                         in (str ++ "\n    " ++ show g ++ " -> " ++ show s', s'))
                                        ("", sopAnc) rzGates)) $ return ()
-      traceResynthesis ("  sop after phase synthesis:\n    " ++ show sop') $ return ()
+      traceAA ("  sop after phase synthesis:\n    " ++ show sop') $ return ()
       return sop'
-    else do
-      localSOP' <- foldM synthesizePhaseTerm localSOP (toTermList poly)
-      return $ revertFrame subs localSOP'
 
 
 
@@ -404,7 +417,7 @@ nonlinearSimplifications = computeFixpoint where
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalize sop = do
-  traceResynthesis ("Finalizing (XAG) " ++ show sop) $ return ()
+  traceAA ("Finalizing (XAG) " ++ show sop) $ return ()
   qIDs <- gets ctxIDs
   -- The SBools in the path must at this point all be input variables ie IVar:
   -- finalize shouldn't be called if there are still path variables (PVar) and
@@ -469,8 +482,8 @@ emitSBoolConstruction idSBools sop = do
 
       result = grind (times sopWithGarbage (PS.dagger synthSopWithGarbage))
 
-  traceResynthesis ("sopWithGarbage: " ++ show sopWithGarbage) $
-    traceResynthesis ("synthSopWithGarbage: " ++ show synthSopWithGarbage) $
+  traceAA ("sopWithGarbage: " ++ show sopWithGarbage) $
+    traceAA ("synthSopWithGarbage: " ++ show synthSopWithGarbage) $
       return ()
 
   emitGates "SBoolConstruction " (reverse synthGates)
@@ -482,10 +495,13 @@ emitSBoolConstruction idSBools sop = do
 --   a list of SBool Var. May imply the addition of many ancillas.
 synthesizeSBools :: (HasFeynmanControl) => String -> [(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBools
-  | ctlUseMCTSynthesis = synthesizeSBoolsMCT
-  | ctlUseNaiveXAGSynthesis = synthesizeSBoolsXAG naiveXAGTransformers
-  | ctlUseBasicXAGSynthesis = synthesizeSBoolsXAG basicXAGTransformers
-  | ctlUseMinMultSatXAGSynthesis = synthesizeSBoolsXAG minMultSatXAGTransformers
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTKet = synthesizeSBoolsMCT
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGKet
+      && ctlEnabled fcfFeature_Synthesis_XAG_Direct = synthesizeSBoolsXAG directXAGTransformers
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGKet
+      && ctlEnabled fcfFeature_Synthesis_XAG_Strash = synthesizeSBoolsXAG strashXAGTransformers
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGKet
+      && ctlEnabled fcfFeature_Synthesis_XAG_MinMultSat = synthesizeSBoolsXAG minMultSatXAGTransformers
 
 synthesizeSBoolsMCT :: (HasFeynmanControl) => String -> [(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBoolsMCT prefix idSBools =
@@ -501,9 +517,9 @@ synthesizeSBoolsMCT prefix idSBools =
       | otherwise = [MCT termIDs tID]
     ancID qID = prefix ++ "M" ++ qID
 
-naiveXAGTransformers = []
+directXAGTransformers = []
 
-basicXAGTransformers = [XAG.mergeStructuralDuplicates]
+strashXAGTransformers = [XAG.mergeStructuralDuplicates]
 
 minMultSatXAGTransformers :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph]
 minMultSatXAGTransformers =
@@ -513,8 +529,8 @@ minMultSatXAGTransformers =
 
 synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [(ID, SBool ID)] -> [ExtractionGates]
 synthesizeSBoolsXAG transformers prefix idSBools =
-  traceResynthesis ("XAG before transformation: " ++ show rawXAG) $
-    traceResynthesis ("XAG transformed: " ++ show finXAG) $
+  traceAA ("XAG before transformation: " ++ show rawXAG) $
+    traceAA ("XAG transformed: " ++ show finXAG) $
       gates ++ copyOuts ++ swapOuts
   where
     swapOuts = [Swapper ancID qID | (ancID, (qID, _)) <- zip swapAncNames idSBools]
@@ -701,19 +717,19 @@ pushSwaps = reverse . snd . go (Map.empty, []) where
 -- | A single pass of the synthesis algorithm
 synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizeFrontier sop =
-  traceResynthesis ("Synthesizing " ++ show sop) $
+  traceAA ("Synthesizing " ++ show sop) $
     go (grind sop)
   where
     go sop
       | pathVars sop == 0 = do
-        traceResynthesis ("finalizing, before synthesisPass: " ++ show sop) $ return ()
+        traceAA ("finalizing, before synthesisPass: " ++ show sop) $ return ()
         sop' <- synthesisPass sop
-        traceResynthesis ("finalizing, after synthesisPass: " ++ show sop') $ return ()
+        traceAA ("finalizing, after synthesisPass: " ++ show sop') $ return ()
         finalize sop'
       | otherwise = do
-        traceResynthesis ("reducing, before synthesisPass: " ++ show sop) $ return ()
+        traceAA ("reducing, before synthesisPass: " ++ show sop) $ return ()
         sop' <- synthesisPass sop
-        traceResynthesis ("reducing, after synthesisPass: " ++ show sop') $ return ()
+        traceAA ("reducing, after synthesisPass: " ++ show sop') $ return ()
         reducePaths sop'
     synthesisPass =
       affineSimplifications
@@ -736,13 +752,13 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx
       _ -> Nothing
     go sop = do
       sop' <- synthesizeFrontier sop
-      traceResynthesis ("synthesizeFrontier returned " ++ show sop') $ return ()
+      traceAA ("synthesizeFrontier returned " ++ show sop') $ return ()
       let pathVarsLeft = pathVars sop'
       if pathVarsLeft > 0 && pathVarsLeft < pathVars sop
         then go sop'
         else
           return $
-            traceResynthesisF
+            traceValAA
               (\t -> if t then "Resynthesis succeeded" else "Resynthesis failed: sop not trivial")
               (isTrivial sop')
 
@@ -755,7 +771,7 @@ resynthesizeCircuit xs ancillas =
 
 emitGates :: (HasFeynmanControl) => String -> [ExtractionGates] -> ExtractionState ()
 emitGates logDescription gates =
-  traceResynthesis
+  traceAA
     (logDescription ++ ":\n  " ++ intercalate "\n  " (map show gates))
     (tell gates)
 

@@ -1,4 +1,3 @@
-{-# LANGUAGE TupleSections #-}
 module Benchmarks where
 
 import Data.List

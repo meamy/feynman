@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 module Feynman.Frontend.OpenQASM3.Syntax
   ( ParseNode,
     Token (..),

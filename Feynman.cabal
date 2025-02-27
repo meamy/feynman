@@ -80,11 +80,18 @@ library
   hs-source-dirs:
       src
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-tools:
       alex
     , happy
@@ -112,11 +119,18 @@ executable abr22
   hs-source-dirs:
       scripts
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , QuickCheck
@@ -130,11 +144,18 @@ executable ar21
   hs-source-dirs:
       scripts
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , base
@@ -149,11 +170,18 @@ executable feynopt
   hs-source-dirs:
       tools
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , QuickCheck
@@ -174,11 +202,18 @@ executable feynsim
   hs-source-dirs:
       tools
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , QuickCheck
@@ -197,11 +232,18 @@ executable feynver
   hs-source-dirs:
       tools
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , QuickCheck
@@ -220,11 +262,18 @@ executable hs
   hs-source-dirs:
       scripts
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , QuickCheck
@@ -238,11 +287,18 @@ executable qc2qasm
   hs-source-dirs:
       tools
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
     , base
@@ -250,17 +306,24 @@ executable qc2qasm
     , filepath
   default-language: Haskell2010
 
-test-suite feynman-graph
+test-suite TestCoreGraph
   type: exitcode-stdio-1.0
-  main-is: Spec.hs
+  main-is: TestCoreGraph.hs
   hs-source-dirs:
       test
   default-extensions:
-      GADTs
+      BangPatterns
+      ConstraintKinds
       ExistentialQuantification
       FlexibleContexts
       FlexibleInstances
-  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       Feynman
     , QuickCheck

@@ -1,5 +1,3 @@
-{-# LANGUAGE TupleSections #-}
-
 {-|
 Module      : Clifford
 Description : Extraction of Clifford path sums to circuits

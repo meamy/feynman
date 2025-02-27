@@ -132,7 +132,7 @@ emptyUnravel =
 -- reference in the rejected gate.
 
 unravel ::
-  (CircuitGraph g, CircuitGate (GraphGate g)) =>
+  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g)) =>
   (GraphGate g -> Bool) ->
   [GateQubit (GraphGate g)] ->
   g ->

@@ -3,7 +3,6 @@ snapshot: lts-22.43
 extra-deps:
 - parsec3-numbers-0.1.0@sha256:2f32295f9f4023f7f97da851549aaaf5e72866e98bf016a1ac3c6e8715bbaf8a,685
 
-
 packages:
 - .
 
