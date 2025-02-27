@@ -53,6 +53,8 @@ library
       Feynman.Frontend.OpenQASM3.Parser
       Feynman.Frontend.OpenQASM3.Syntax
       Feynman.Frontend.OpenQASM3.Utils
+      Feynman.Graph
+      Feynman.Optimization.Classical
       Feynman.Optimization.Clifford
       Feynman.Optimization.PhaseFold
       Feynman.Optimization.StateFold
@@ -246,4 +248,23 @@ executable qc2qasm
     , base
     , bytestring
     , filepath
+  default-language: Haskell2010
+
+test-suite feynman-graph
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  hs-source-dirs:
+      test
+  default-extensions:
+      GADTs
+      ExistentialQuantification
+      FlexibleContexts
+      FlexibleInstances
+  ghc-options: -O2 -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      Feynman
+    , QuickCheck
+    , base
+    , containers
+    , mtl
   default-language: Haskell2010

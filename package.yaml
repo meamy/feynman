@@ -157,3 +157,18 @@ executables:
     - mtl
     - containers
     - QuickCheck
+
+tests:
+  feynman-graph:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+    - QuickCheck
