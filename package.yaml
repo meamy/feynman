@@ -63,6 +63,7 @@ library:
   - parsec
   - parsec3-numbers
   - random
+  - reducers
   - vec
   when:
     condition: false

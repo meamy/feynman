@@ -1,16 +1,20 @@
 module Feynman.Graph where
 
+import Control.Exception (assert)
 import Control.Monad.State.Strict (State (..), evalState, gets)
+import Data.Bifunctor (second)
 import Data.Foldable (Foldable (..), foldl')
 import Data.Kind (Type)
 import Data.Map.Strict (Map, (!))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (isJust)
+import Data.Semigroup.Union
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Traversable (for)
+import Data.Tuple (swap)
 import Feynman.Control
 import Feynman.Core
-import Data.Bifunctor (second)
 
 traceG :: (HasFeynmanControl) => String -> a -> a
 traceG = traceIf (ctlEnabled fcfTrace_Graph)
@@ -95,27 +99,16 @@ instance CircuitGate Primitive where
 
 data UnravelState g = (CircuitGraph g) => Unravel
   { accepted :: g,
-    rejected :: g,
-    currentMap :: Map (GateQubit (GraphGate g)) (GateQubit (GraphGate g)),
-    fullMap :: Map (GateQubit (GraphGate g)) (Set (GateQubit (GraphGate g))),
+    rejected :: [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])],
+    unravelMapping :: Map (GateQubit (GraphGate g)) (GateQubit (GraphGate g)),
     freshIDs :: [GateQubit (GraphGate g)]
   }
 
-emptyUnravel :: (CircuitGraph g) => UnravelState g
-emptyUnravel =
-  Unravel
-    { accepted = pureGraph,
-      rejected = pureGraph,
-      currentMap = Map.empty,
-      fullMap = Map.empty,
-      freshIDs = undefined
-    }
-
 -- Unravels a circuit with gates we can't interpret (according to a supplied
 -- test, not just the "Uninterp" gate) so that the interpretable gates are in
--- one accepted circuit, and the uninterpretable ones are in a rejected
--- circuit. The inputs and outputs for the places where the circuit is cut out
--- are remapped to new qubits (with names taken from freshIDSource).
+-- one accepted circuit, and the uninterpretable ones are in a rejected list.
+-- The inputs and outputs for the places where the circuit is cut out are
+-- remapped to new qubits (with names taken from freshIDSource).
 
 -- For example, suppose we have an algorithm that can't deal with H gates, and
 -- we want to process
@@ -134,8 +127,7 @@ emptyUnravel =
 --   tof 1 2 3
 --   cnot @1 2
 -- Rejected:
---   H @1
--- Name map: [(3, @1)]
+--   H 3, (3 -> @1)
 
 -- To reconstruct the original circuit, the rejected gates must be put back
 -- after the last unchanged reference in the accepted circuit, and before the
@@ -148,12 +140,19 @@ unravel ::
   (GraphGate g -> Bool) ->
   [GateQubit (GraphGate g)] ->
   g ->
-  (g, g, [(GateQubit (GraphGate g), [GateQubit (GraphGate g)])])
+  (g, [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])])
 unravel testF freshIDSource gates =
-  (accepted finState, rejected finState, map (second Set.toList) (Map.toList (fullMap finState)))
+  (accepted finState, rejected finState)
   where
-    finState = foldGates unravelAux (emptyUnravel {freshIDs = freshIDSource, currentMap = initialMap}) gates
-
+    finState = foldGates unravelAux initialUnravel gates
+    initialUnravel =
+      Unravel
+        { accepted = pureGraph,
+          rejected = [],
+          unravelMapping = Map.fromList (zip allIDs allIDs),
+          freshIDs = freshIDSource
+        }
+    allIDs = Set.toList (foldReferences (flip Set.insert) Set.empty gates)
     unravelAux st g =
       -- If the gate is accepted, map its references according to the current
       -- mapping, updating the current accept list
@@ -162,22 +161,16 @@ unravel testF freshIDSource gates =
       if testF g
         then
           traceG ("Accepting " ++ show g) $
-            st {accepted = appendGate (accepted st) (mapGateReferences (currentMap st !) g)}
+            st {accepted = appendGate (accepted st) (mapGateReferences (unravelMapping st !) g)}
         else
           traceG ("Rejecting " ++ show g) $
             let (added, newMap, newFreshIDs) =
-                  relabelReferences g (currentMap st) (freshIDs st)
-                addRefToSet m (refID, remapID) =
-                  Map.insertWith Set.union refID (Set.singleton remapID) m
+                  relabelReferences g (unravelMapping st) (freshIDs st)
              in st
-                  { rejected = appendGate (rejected st) (mapGateReferences (newMap !) g),
-                    currentMap = newMap,
-                    fullMap = foldl' addRefToSet (fullMap st) added,
+                  { rejected = (g, added) : rejected st,
+                    unravelMapping = newMap,
                     freshIDs = newFreshIDs
                   }
-
-    initialMap = Map.fromList (zip allIDs allIDs)
-    allIDs = Set.toList (foldReferences (flip Set.insert) Set.empty gates)
 
     -- Get new labels from freshIDs for every label referenced by this gate
     relabelReferences g m freshIDs =
@@ -187,11 +180,73 @@ unravel testF freshIDSource gates =
               ((refID, nextID) : items, Map.insert refID nextID m', remainIDs)
           )
           ([], m, freshIDs)
-          refs
-      where
-        refs =
-          traceValG (\d -> "Refs of " ++ show g ++ ": " ++ show d) $
-            Set.toList (foldGateReferences (flip Set.insert) Set.empty g)
+          (Set.toList (foldGateReferences (flip Set.insert) Set.empty g))
 
-reknit :: [Primitive] -> [Primitive] -> [(ID, ID)] -> [Primitive]
-reknit xGates yGates xyMap = undefined
+-- reknit just puts a graph back together that's been taken apart by unravel.
+reknit ::
+  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
+  g ->
+  [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])] ->
+  g
+reknit unraveled stitchList =
+  assert
+    ( isJust $
+        let allDisjoint (Just x) y | Set.disjoint x y = Just (Set.union x y)
+            allDisjoint _ _ = Nothing
+            stitchSets = [Set.fromList (map snd ms) | (_, ms) <- stitchList]
+         in foldl' allDisjoint (Just Set.empty) stitchSets
+    )
+    $ knittedGraph (foldGates reknitAux initialReknit unraveled)
+  where
+    initialReknit =
+      Reknit
+        { knittedGraph = pureGraph,
+          unappliedStitches = foldl' insertUnapplied Map.empty stitchList,
+          reknitMapping = Map.fromList (foldReferences (\l x -> (x, x) : l) [] unraveled)
+        }
+    insertUnapplied m s@(_, rms) =
+      assert (Set.disjoint (Set.fromList (map snd rms)) (Map.keysSet m)) $
+        Map.union (Map.fromList (map (\(r, nr) -> (nr, s)) rms)) m
+    reknitAux st gate
+      | null stitchableRefs =
+          st
+            { knittedGraph =
+                appendGate
+                  (knittedGraph st)
+                  (mapGateReferences (reknitMapping st !) gate)
+            }
+      | otherwise =
+          let (removedGate, mappings) = unappliedStitches st ! Set.findMin stitchableRefs
+              stitchMapping = Map.fromList (map swap mappings)
+              newMapping = Map.union stitchMapping (reknitMapping st)
+              stitchedGate = mapGateReferences (newMapping !) removedGate
+           in assert (Set.disjoint (foldGateReferences (flip Set.insert) Set.empty stitchedGate) stitchableRefs) $
+                reknitAux
+                  ( st
+                      { knittedGraph = appendGate (knittedGraph st) stitchedGate,
+                        unappliedStitches =
+                          foldl' (flip Map.delete) (unappliedStitches st) (map snd mappings),
+                        reknitMapping = newMapping
+                      }
+                  )
+                  gate
+      where
+        stitchableRefs =
+          traceValG (\v -> "Stitchable: " ++ show v) $
+            Set.intersection (Map.keysSet (unappliedStitches st)) refs
+        refs =
+          traceValG (\v -> "Refs: " ++ show v) $
+            foldGateReferences (flip Set.insert) Set.empty gate
+
+data ReknitState g = (CircuitGraph g) => Reknit
+  { knittedGraph :: g,
+    unappliedStitches :: Map (GateQubit (GraphGate g)) (GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))]),
+    reknitMapping :: Map (GateQubit (GraphGate g)) (GateQubit (GraphGate g))
+  }
+
+equivalentToTrivialReorder ::
+  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
+  g ->
+  g ->
+  Bool
+equivalentToTrivialReorder = undefined

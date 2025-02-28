@@ -28,35 +28,39 @@ main = do
           { fcfTrace_Graph = True
           }
   putStrLn "Unraveling [Primitive]:"
-  print
-    ( unravel
-        (\g -> case g of H _ -> False; _ -> True)
-        ['@' : show n | n <- [1 ..]]
-        [ Uninterp "tof" ["a", "b", "c"],
-          H "c",
-          Uninterp "tof" ["a", "b", "c"],
-          H "c",
-          Uninterp "tof" ["a", "b", "c"],
-          H "c",
-          CNOT "c" "b"
-        ]
-    )
+  let unr1 =
+        unravel
+          (\g -> case g of H _ -> False; _ -> True)
+          ['@' : show n | n <- [1 ..]]
+          [ Uninterp "tof" ["a", "b", "c"],
+            H "c",
+            Uninterp "tof" ["a", "b", "c"],
+            H "c",
+            Uninterp "tof" ["a", "b", "c"],
+            H "c",
+            CNOT "c" "b"
+          ]
+  print unr1
+
+  print (uncurry reknit unr1)
 
   putStrLn ""
 
   putStrLn "Unraveling [ExtractionGates]:"
-  print
-    ( unravel
-        (\g -> case g of Hadamard _ -> False; _ -> True)
-        ['@' : show n | n <- [1 ..]]
-        [ MCT ["a", "b"] "c",
-          Hadamard "c",
-          MCT ["a", "b"] "c",
-          Hadamard "c",
-          MCT ["a", "b"] "c",
-          Hadamard "c",
-          MCT ["c"] "b"
-        ]
-    )
+  let unr2 =
+        unravel
+          (\g -> case g of Hadamard _ -> False; _ -> True)
+          ['@' : show n | n <- [1 ..]]
+          [ MCT ["a", "b"] "c",
+            Hadamard "c",
+            MCT ["a", "b"] "c",
+            Hadamard "c",
+            MCT ["a", "b"] "c",
+            Hadamard "c",
+            MCT ["c"] "b"
+          ]
+  print unr2
+
+  print (uncurry reknit unr2)
 
   return ()
