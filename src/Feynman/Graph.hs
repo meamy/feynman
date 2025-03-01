@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeOperators #-}
+
 module Feynman.Graph where
 
 import Control.Exception (assert)
@@ -140,9 +142,9 @@ unravel ::
   (GraphGate g -> Bool) ->
   [GateQubit (GraphGate g)] ->
   g ->
-  (g, [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])])
+  (g, [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])], [GateQubit (GraphGate g)])
 unravel testF freshIDSource gates =
-  (accepted finState, rejected finState)
+  (accepted finState, rejected finState, freshIDs finState)
   where
     finState = foldGates unravelAux initialUnravel gates
     initialUnravel =
@@ -250,3 +252,18 @@ equivalentToTrivialReorder ::
   g ->
   Bool
 equivalentToTrivialReorder = undefined
+
+makeFreshPrimitiveIDs :: [Primitive] -> [String]
+makeFreshPrimitiveIDs graph =
+  ["@" ++ show n | n <- [nextN ..]]
+  where
+    -- Scan the qubit names used by the graph, and find an n such that no ID
+    -- with the prefix @(n + k), k >= 0, is in use -- this ensures no
+    -- accidental overlap when we generate IDs
+    nextN = foldReferences maxAncillaID 1 graph
+    maxAncillaID n ('@' : name) = max n prefixN
+      where
+        prefixN = read ('0' : digitsPrefix) :: Int
+        digitsPrefix = takeWhile (`Set.member` digits) name
+    maxAncillaID n _ = n
+    digits = Set.fromList "0123456789"

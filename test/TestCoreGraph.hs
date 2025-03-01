@@ -28,7 +28,7 @@ main = do
           { fcfTrace_Graph = True
           }
   putStrLn "Unraveling [Primitive]:"
-  let unr1 =
+  let (unr1, unr1Rej, _) =
         unravel
           (\g -> case g of H _ -> False; _ -> True)
           ['@' : show n | n <- [1 ..]]
@@ -41,13 +41,15 @@ main = do
             CNOT "c" "b"
           ]
   print unr1
+  print unr1Rej
 
-  print (uncurry reknit unr1)
+  let unr1Reknit = reknit unr1 unr1Rej
+  print unr1Reknit
 
   putStrLn ""
 
   putStrLn "Unraveling [ExtractionGates]:"
-  let unr2 =
+  let (unr2, unr2Rej, _) =
         unravel
           (\g -> case g of Hadamard _ -> False; _ -> True)
           ['@' : show n | n <- [1 ..]]
@@ -60,7 +62,9 @@ main = do
             MCT ["c"] "b"
           ]
   print unr2
+  print unr2Rej
 
-  print (uncurry reknit unr2)
+  let unr2Reknit = reknit unr2 unr2Rej
+  print unr2Reknit
 
   return ()
