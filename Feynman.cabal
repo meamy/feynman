@@ -307,9 +307,12 @@ executable qc2qasm
     , filepath
   default-language: Haskell2010
 
-test-suite TestCoreGraph
+test-suite FeynmanSpecs
   type: exitcode-stdio-1.0
-  main-is: TestCoreGraph.hs
+  main-is: Spec.hs
+  other-modules:
+      AlgebraLinearSpec
+      GraphSpec
   hs-source-dirs:
       test
   default-extensions:
@@ -325,10 +328,13 @@ test-suite TestCoreGraph
       TupleSections
       TypeFamilies
   ghc-options: -O2 -Wno-unrecognised-pragmas -threaded -rtsopts -with-rtsopts=-N
+  build-tool-depends:
+      hspec-discover:hspec-discover
   build-depends:
       Feynman
     , QuickCheck
     , base
     , containers
+    , hspec
     , mtl
   default-language: Haskell2010

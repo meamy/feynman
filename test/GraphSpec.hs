@@ -1,11 +1,17 @@
-module Main (main) where
 
+module GraphSpec where
+
+import Data.Bits (Bits (..))
 import Data.Foldable (foldl')
+import Data.IntSet (IntSet)
+import Data.IntSet qualified as IntSet
+import Feynman.Algebra.Base (dMod2)
 import Feynman.Control
 import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Unitary
 import Feynman.Synthesis.Pathsum.Util
+import Test.Hspec
 import Test.QuickCheck
 
 instance CircuitGate ExtractionGates where
@@ -21,8 +27,45 @@ instance CircuitGate ExtractionGates where
   mapGateReferences f (Phase theta xIDs) = Phase theta (map f xIDs)
   mapGateReferences f (Swapper xID yID) = Swapper (f xID) (f yID)
 
+-- | Generates a random circuit
+generateExtractionGates :: Int -> Int -> Int -> IO [ExtractionGates]
+generateExtractionGates m n k = generate customArbitrary
+  where
+    customArbitrary = resize k $ listOf1 $ oneof [genHadamard, genMCT, genPhase, genSwapper]
+    genHadamard = do
+      x <- chooseInt (0, n)
+      return $ Hadamard (q x)
+    genMCT = do
+      yxs <- genQubitParams
+      let y : xs = yxs
+      return $ MCT xs y
+    genPhase = do
+      xs <- genQubitParams
+      theta <- genDMod2
+      return $ Phase theta xs
+    genSwapper = do
+      x <- chooseInt (0, n)
+      y <- chooseInt (0, n) `suchThat` (/= x)
+      return $ Swapper (q x) (q y)
+    genDMod2 = do
+      x <- chooseInt (0, (1 `shiftL` m) - 2)
+      return $ dMod2 (fromIntegral (x + 1)) m
+    genQubitParams = genQubitParamsFrom IntSet.empty
+    genQubitParamsFrom s = do
+      -- starting from IntSet.empty should guarantee at least 1 entry
+      i <- chooseInt (0, n) `suchThat` (`IntSet.notMember` s)
+      rest <- oneof [return [], genQubitParamsFrom (IntSet.insert i s)]
+      return $ q i : rest
+    q idx = 'q' : show idx
+    allQubitIdxSet = IntSet.fromAscList [0 .. n]
+
+spec :: Spec
+spec = return ()
+  
 main :: IO ()
 main = do
+  r <- generateExtractionGates 3 9 99
+  print r
   let ?feynmanControl =
         defaultControl
           { fcfTrace_Graph = True
