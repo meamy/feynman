@@ -119,6 +119,7 @@ executable abr22
   main-is: abr22.hs
   hs-source-dirs:
       scripts
+      test
   default-extensions:
       BangPatterns
       ConstraintKinds
@@ -311,8 +312,12 @@ test-suite FeynmanSpecs
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      AlgebraLinearSpec
-      GraphSpec
+      Arbitrary.Clifford
+      Arbitrary.CliffordT
+      Specs.AlgebraLinearSpec
+      Specs.GraphSpec
+      Specs.SynthesisPathsumCliffordSpec
+      Specs.SynthesisPathsumUnitarySpec
   hs-source-dirs:
       test
   default-extensions:

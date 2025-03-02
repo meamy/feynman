@@ -1,5 +1,5 @@
 
-module GraphSpec where
+module Specs.GraphSpec where
 
 import Data.Bits (Bits (..))
 import Data.Foldable (foldl')
@@ -111,3 +111,4 @@ main = do
   print unr2Reknit
 
   return ()
+

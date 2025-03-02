@@ -147,7 +147,9 @@ executables:
   
   abr22:
     main:        abr22.hs
-    source-dirs: scripts
+    source-dirs:
+    - scripts
+    - test
     other-modules: []
     dependencies:
     - Feynman

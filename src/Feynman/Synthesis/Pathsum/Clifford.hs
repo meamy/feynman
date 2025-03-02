@@ -11,8 +11,7 @@ module Feynman.Synthesis.Pathsum.Clifford(
   isClifford,
   isUnitary,
   extractClifford,
-  resynthesizeClifford,
-  generateClifford
+  resynthesizeClifford
   ) where
 
 import Data.Semigroup ((<>))
@@ -25,17 +24,6 @@ import qualified Data.Map as Map
 import Control.Monad (foldM, mapM, mfilter)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter)
 import Control.Monad.State.Strict (runState)
-
-import Test.QuickCheck (Arbitrary(..),
-                        Gen,
-                        quickCheck,
-                        generate,
-                        resize,
-                        listOf,
-                        listOf1,
-                        suchThat,
-                        chooseInt,
-                        oneof)
 
 import qualified Feynman.Core as Core
 
@@ -79,7 +67,7 @@ var = ("q" ++) . show
 
 -- | The number of an ID
 unvar :: ID -> Int
-unvar = read . tail
+unvar ('q' : iStr) = read iStr
 
 -- | Normalizes the outputs of a path sum, up to Cliffords
 normalizeOutputs :: Pathsum DMod2 -> Writer [Primitive] (Pathsum DMod2)
@@ -186,80 +174,3 @@ resynthesizeClifford xs = case extractClifford sop of
         sub        = (qubits!) . unvar
 
 
--- | Clifford basis
-xGate :: Pathsum DMod2
-xGate = xgate
-
-zGate :: Pathsum DMod2
-zGate = zgate
-
-sGate :: Pathsum DMod2
-sGate = sgate
-
-hGate :: Pathsum DMod2
-hGate = hgate
-
-cxGate :: Pathsum DMod2
-cxGate = cxgate
-
--- | More challenging circuits
-test1 = (hGate <> hGate) .> cxGate .> (hGate <> hGate)
-test2 = (hGate <> identity 1) .> cxGate .> (hGate <> identity 1)
-test3 = (identity 1 <> hGate) .> cxGate .> (identity 1 <> hGate)
-
-{-----------------------------------
- Automated tests
- -----------------------------------}
-
--- | Maximum size of circuits
-maxSize :: Int
-maxSize = 9
-
--- | Maximum length of circuits
-maxGates :: Int
-maxGates = 100
-
--- | Type for generating instances of Clifford circuits
-newtype Clifford = Clifford [Primitive] deriving (Show, Eq)
-
-instance Arbitrary Clifford where
-  arbitrary = fmap Clifford $ resize maxGates $ listOf $ oneof gates where
-    gates = [genH maxSize, genS maxSize, genCX maxSize]
-
--- | Random CX gate
-genCX :: Int -> Gen Primitive
-genCX n = do
-  x <- chooseInt (0, n)
-  y <- chooseInt (0, n) `suchThat` (/= x)
-  return $ CNOT (var x) (var y)
-
--- | Random S gate
-genS :: Int -> Gen Primitive
-genS n = do
-  x <- chooseInt (0,n)
-  return $ S (var x)
-
--- | Random H gate
-genH :: Int -> Gen Primitive
-genH n = do
-  x <- chooseInt (0,n)
-  return $ H (var x)
-
--- | Checks that the path sum of a Clifford circuit is indeed Clifford
-prop_Clifford_is_Clifford :: Clifford -> Bool
-prop_Clifford_is_Clifford (Clifford xs) = isClifford $ simpleAction xs
-
--- | Checks that the path sum of a Clifford circuit is indeed Unitary
-prop_Clifford_is_Unitary :: Clifford -> Bool
-prop_Clifford_is_Unitary (Clifford xs) = isUnitary $ simpleAction xs
-
--- | Checks that the path sum of a Clifford circuit is correctly extracted
-prop_Clifford_Extraction_Correct :: Clifford -> Bool
-prop_Clifford_Extraction_Correct (Clifford xs) = go where
-  go  = isTrivial . normalizeClifford . simpleAction $ xs ++ Core.dagger xs'
-  xs' = resynthesizeClifford xs
-
--- | Generates a random Clifford circuit
-generateClifford :: Int -> Int -> IO [Primitive]
-generateClifford n k = generate customArbitrary where
-  customArbitrary = resize k $ listOf1 $ oneof [genH n, genS n, genCX n]

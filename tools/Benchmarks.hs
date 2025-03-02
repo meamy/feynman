@@ -32,7 +32,6 @@ import Feynman.Verification.Symbolic
 import Feynman.Core (Primitive(CNOT, T, Tinv), Loc)
 
 import qualified Data.BitVector as BitVector
-import Test.QuickCheck
 
 import qualified Data.ByteString as B
 
