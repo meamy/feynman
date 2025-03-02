@@ -27,8 +27,6 @@ import Data.Coerce
 import Control.Monad
 import Data.Function
 
-import Test.QuickCheck
-  
 import Data.Set (Set)
 import qualified Data.Set as Set
 

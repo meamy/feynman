@@ -25,6 +25,9 @@ import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Unitary
 
+import Arbitrary.Clifford
+import Arbitrary.CliffordT
+
 -- | Utilities
 data Result = Result {
   success :: Bool,

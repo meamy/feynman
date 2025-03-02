@@ -1,4 +1,4 @@
-module AlgebraLinearSpec where
+module Specs.AlgebraLinearSpec where
 
 import Control.Monad
 import Control.Monad.Writer

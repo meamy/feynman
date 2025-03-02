@@ -99,6 +99,7 @@ executable abr22
   main-is: abr22.hs
   hs-source-dirs:
       scripts
+      test
   default-extensions:
       GADTs
       ExistentialQuantification
@@ -242,7 +243,11 @@ test-suite FeynmanSpecs
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   other-modules:
-      AlgebraLinearSpec
+      Arbitrary.Clifford
+      Arbitrary.CliffordT
+      Specs.AlgebraLinearSpec
+      Specs.SynthesisPathsumCliffordSpec
+      Specs.SynthesisPathsumUnitarySpec
   hs-source-dirs:
       test
   default-extensions:
