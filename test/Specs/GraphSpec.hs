@@ -5,6 +5,8 @@ import Data.Bits (Bits (..))
 import Data.Foldable (foldl')
 import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
+import Data.Set (Set)
+import Data.Set qualified as Set
 import Feynman.Algebra.Base (dMod2)
 import Feynman.Control
 import Feynman.Core
@@ -12,6 +14,7 @@ import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Unitary
 import Feynman.Synthesis.Pathsum.Util
 import Test.Hspec
+import Test.Hspec.QuickCheck
 import Test.QuickCheck
 
 instance CircuitGate ExtractionGates where
@@ -28,10 +31,10 @@ instance CircuitGate ExtractionGates where
   mapGateReferences f (Swapper xID yID) = Swapper (f xID) (f yID)
 
 -- | Generates a random circuit
-generateExtractionGates :: Int -> Int -> Int -> IO [ExtractionGates]
-generateExtractionGates m n k = generate customArbitrary
+generateExtractionGates :: Int -> Int -> Int -> Gen [ExtractionGates]
+generateExtractionGates m n k =
+  resize k $ listOf1 $ oneof [genHadamard, genMCT, genPhase, genSwapper]
   where
-    customArbitrary = resize k $ listOf1 $ oneof [genHadamard, genMCT, genPhase, genSwapper]
     genHadamard = do
       x <- chooseInt (0, n)
       return $ Hadamard (q x)
@@ -59,56 +62,69 @@ generateExtractionGates m n k = generate customArbitrary
     q idx = 'q' : show idx
     allQubitIdxSet = IntSet.fromAscList [0 .. n]
 
+prop_ReknitUnravelIsIdentity :: (HasFeynmanControl) => Gen Bool
+prop_ReknitUnravelIsIdentity = do
+  circ <- generateExtractionGates 3 9 99
+  denied <- sublistOf circ
+  let inouts = Set.toList (circuitReferenceSet circ)
+      deniedSet = Set.fromList denied
+      (unCirc, stitches, _) = unravel (`Set.member` deniedSet) inouts circ
+      reCirc = reknit unCirc stitches
+  return $ equivalentToTrivialReorder circ reCirc
+
 spec :: Spec
-spec = return ()
-  
-main :: IO ()
-main = do
-  r <- generateExtractionGates 3 9 99
-  print r
+spec = do
   let ?feynmanControl =
         defaultControl
-          { fcfTrace_Graph = True
+          { fcfTrace_Graph = False
           }
-  putStrLn "Unraveling [Primitive]:"
-  let (unr1, unr1Rej, _) =
-        unravel
-          (\g -> case g of H _ -> False; _ -> True)
-          ['@' : show n | n <- [1 ..]]
-          [ Uninterp "tof" ["a", "b", "c"],
-            H "c",
-            Uninterp "tof" ["a", "b", "c"],
-            H "c",
-            Uninterp "tof" ["a", "b", "c"],
-            H "c",
-            CNOT "c" "b"
-          ]
-  print unr1
-  print unr1Rej
+  prop "reknit . unravel is identity up to trivial reorder" prop_ReknitUnravelIsIdentity
+  
+-- main :: IO ()
+-- main = do
+--   let ?feynmanControl =
+--         defaultControl
+--           { fcfTrace_Graph = True
+--           }
+--   putStrLn "Unraveling [Primitive]:"
+--   let (unr1, unr1Rej, _) =
+--         unravel
+--           (\g -> case g of H _ -> False; _ -> True)
+--           ['@' : show n | n <- [1 ..]]
+--           [ Uninterp "tof" ["a", "b", "c"],
+--             H "c",
+--             Uninterp "tof" ["a", "b", "c"],
+--             H "c",
+--             Uninterp "tof" ["a", "b", "c"],
+--             H "c",
+--             CNOT "c" "b"
+--           ]
+--   print unr1
+--   print unr1Rej
 
-  let unr1Reknit = reknit unr1 unr1Rej
-  print unr1Reknit
+--   let unr1Reknit = reknit unr1 unr1Rej
+--   print unr1Reknit
 
-  putStrLn ""
+--   putStrLn ""
 
-  putStrLn "Unraveling [ExtractionGates]:"
-  let (unr2, unr2Rej, _) =
-        unravel
-          (\g -> case g of Hadamard _ -> False; _ -> True)
-          ['@' : show n | n <- [1 ..]]
-          [ MCT ["a", "b"] "c",
-            Hadamard "c",
-            MCT ["a", "b"] "c",
-            Hadamard "c",
-            MCT ["a", "b"] "c",
-            Hadamard "c",
-            MCT ["c"] "b"
-          ]
-  print unr2
-  print unr2Rej
+--   putStrLn "Unraveling [ExtractionGates]:"
+--   let (unr2, unr2Rej, _) =
+--         unravel
+--           (\g -> case g of Hadamard _ -> False; _ -> True)
+--           ['@' : show n | n <- [1 ..]]
+--           [ MCT ["a", "b"] "c",
+--             Hadamard "c",
+--             MCT ["a", "b"] "c",
+--             Hadamard "c",
+--             MCT ["a", "b"] "c",
+--             Hadamard "c",
+--             MCT ["c"] "b"
+--           ]
+--   print unr2
+--   print unr2Rej
 
-  let unr2Reknit = reknit unr2 unr2Rej
-  print unr2Reknit
+--   let unr2Reknit = reknit unr2 unr2Rej
+--   print unr2Reknit
 
-  return ()
+--   return ()
 

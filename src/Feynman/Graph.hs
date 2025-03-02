@@ -246,12 +246,27 @@ data ReknitState g = (CircuitGraph g) => Reknit
     reknitMapping :: Map (GateQubit (GraphGate g)) (GateQubit (GraphGate g))
   }
 
-equivalentToTrivialReorder ::
-  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
-  g ->
-  g ->
-  Bool
-equivalentToTrivialReorder = undefined
+gateReferenceSet :: (HasFeynmanControl, CircuitGate g) => g -> Set (GateQubit g)
+gateReferenceSet = foldGateReferences (flip Set.insert) Set.empty
+
+circuitReferenceSet :: (HasFeynmanControl, CircuitGraph g) => g -> Set (GateQubit (GraphGate g))
+circuitReferenceSet = foldReferences (flip Set.insert) Set.empty
+
+-- Check that:
+-- 1. Both circuits reference the same set of qubits
+-- 2. For each qubit, the subgraphs of each circuit including only gates
+--    referencing that qubit are the same
+equivalentToTrivialReorder :: (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Eq (GraphGate g)) => g -> g -> Bool
+equivalentToTrivialReorder xCirc yCirc =
+  (allRefsX == allRefsY) && all subgraphsMatch (Set.toList allRefsX)
+  where
+    subgraphsMatch ref = subgraphForRef xCirc ref == subgraphForRef yCirc ref
+    subgraphForRef circ ref = foldGates (prependIfRef ref) [] circ
+    prependIfRef ref soFar g
+      | Set.member ref (gateReferenceSet g) = g : soFar
+      | otherwise = soFar
+    allRefsX = circuitReferenceSet xCirc
+    allRefsY = circuitReferenceSet yCirc
 
 makeFreshPrimitiveIDs :: [Primitive] -> [String]
 makeFreshPrimitiveIDs graph =
