@@ -77,24 +77,17 @@ idGen = ['@' : show i | i <- [1 ..]]
 
 prop_ReknitUnravelIsIdentity :: (HasFeynmanControl) => Gen Bool
 prop_ReknitUnravelIsIdentity = do
-  let gateCount = trace "hello!" 29
-  circ <- generateExtractionGates 3 9 gateCount
+  circ <- generateExtractionGates 3 19 99
   denied <- sublistOf circ
-  let deniedSet = trace ("circ: " ++ show circ ++ "\ndenied: " ++ show denied) $ Set.fromList denied
+  let deniedSet = Set.fromList denied
       (unCirc, stitches, _) = unravel (`Set.member` deniedSet) idGen circ
       reCirc = reknit unCirc stitches
-      equiv = equivalentToTrivialReorder circ reCirc
-  if equiv
-    then return True
-    else return False -- trace ("Failed on:\n" ++ indent 2 (pretty circ) ++ "\nDenied:\n" ++ indent 2 (pretty denied) ++ "\n(bad) result:\n" ++ indent 2 (pretty reCirc)) (return False)
+  return $ equivalentToTrivialReorder circ reCirc
 
 spec :: Spec
 spec = do
-  let ?feynmanControl =
-        defaultControl
-          { fcfTrace_Graph = True
-          }
-  prop "reknit . unravel is identity up to trivial reorder" (within 10000000 $ variant 1340709177 prop_ReknitUnravelIsIdentity)
+  let ?feynmanControl = defaultControl
+  prop "reknit . unravel is identity up to trivial reorder" prop_ReknitUnravelIsIdentity
 
 main :: IO ()
 main = do
