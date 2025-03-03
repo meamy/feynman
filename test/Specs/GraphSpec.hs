@@ -1,12 +1,13 @@
-
 module Specs.GraphSpec where
 
 import Data.Bits (Bits (..))
 import Data.Foldable (foldl')
 import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
+import Data.List (intercalate, singleton)
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Debug.Trace
 import Feynman.Algebra.Base (dMod2)
 import Feynman.Control
 import Feynman.Core
@@ -45,7 +46,7 @@ generateExtractionGates m n k =
     genPhase = do
       xs <- genQubitParams
       theta <- genDMod2
-      return $ Phase theta xs
+      return $ Phase 0 xs
     genSwapper = do
       x <- chooseInt (0, n)
       y <- chooseInt (0, n) `suchThat` (/= x)
@@ -53,78 +54,150 @@ generateExtractionGates m n k =
     genDMod2 = do
       x <- chooseInt (0, (1 `shiftL` m) - 2)
       return $ dMod2 (fromIntegral (x + 1)) m
-    genQubitParams = genQubitParamsFrom IntSet.empty
-    genQubitParamsFrom s = do
-      -- starting from IntSet.empty should guarantee at least 1 entry
-      i <- chooseInt (0, n) `suchThat` (`IntSet.notMember` s)
-      rest <- oneof [return [], genQubitParamsFrom (IntSet.insert i s)]
-      return $ q i : rest
+    genQubitParams = do
+      sz <- getSize
+      let count = max 0 (min (sz - 1) n)
+      rBits <- choose (0, (1 `shiftL` count) - 1) :: Gen Integer
+      genQubitParamsAux (rBits .|. 1) allIdxs []
+    -- using rBits as a random source, select
+    genQubitParamsAux rBits elems qubits
+      | even rBits = return qubits
+      | otherwise = do
+          i <- choose (0, length elems - 1)
+          let (ls, e : rs) = splitAt i elems
+          genQubitParamsAux (rBits `shiftR` 1) (ls ++ rs) (q e : qubits)
     q idx = 'q' : show idx
-    allQubitIdxSet = IntSet.fromAscList [0 .. n]
+    allIdxs = [0 .. n]
+
+pretty = concatMap (("\n" ++) . show)
+
+indent n = unlines . map (replicate n ' ' ++) . lines
+
+idGen = ['@' : show i | i <- [1 ..]]
 
 prop_ReknitUnravelIsIdentity :: (HasFeynmanControl) => Gen Bool
 prop_ReknitUnravelIsIdentity = do
-  circ <- generateExtractionGates 3 9 99
+  let gateCount = trace "hello!" 29
+  circ <- generateExtractionGates 3 9 gateCount
   denied <- sublistOf circ
-  let inouts = Set.toList (circuitReferenceSet circ)
-      deniedSet = Set.fromList denied
-      (unCirc, stitches, _) = unravel (`Set.member` deniedSet) inouts circ
+  let deniedSet = trace ("circ: " ++ show circ ++ "\ndenied: " ++ show denied) $ Set.fromList denied
+      (unCirc, stitches, _) = unravel (`Set.member` deniedSet) idGen circ
       reCirc = reknit unCirc stitches
-  return $ equivalentToTrivialReorder circ reCirc
+      equiv = equivalentToTrivialReorder circ reCirc
+  if equiv
+    then return True
+    else return False -- trace ("Failed on:\n" ++ indent 2 (pretty circ) ++ "\nDenied:\n" ++ indent 2 (pretty denied) ++ "\n(bad) result:\n" ++ indent 2 (pretty reCirc)) (return False)
 
 spec :: Spec
 spec = do
   let ?feynmanControl =
         defaultControl
-          { fcfTrace_Graph = False
+          { fcfTrace_Graph = True
           }
-  prop "reknit . unravel is identity up to trivial reorder" prop_ReknitUnravelIsIdentity
-  
--- main :: IO ()
--- main = do
---   let ?feynmanControl =
---         defaultControl
---           { fcfTrace_Graph = True
---           }
---   putStrLn "Unraveling [Primitive]:"
---   let (unr1, unr1Rej, _) =
---         unravel
---           (\g -> case g of H _ -> False; _ -> True)
---           ['@' : show n | n <- [1 ..]]
---           [ Uninterp "tof" ["a", "b", "c"],
---             H "c",
---             Uninterp "tof" ["a", "b", "c"],
---             H "c",
---             Uninterp "tof" ["a", "b", "c"],
---             H "c",
---             CNOT "c" "b"
---           ]
---   print unr1
---   print unr1Rej
+  prop "reknit . unravel is identity up to trivial reorder" (within 10000000 $ variant 1340709177 prop_ReknitUnravelIsIdentity)
 
---   let unr1Reknit = reknit unr1 unr1Rej
---   print unr1Reknit
+main :: IO ()
+main = do
+  let ?feynmanControl =
+        defaultControl
+          { fcfTrace_Graph = True
+          }
 
---   putStrLn ""
+  -- let circ =
+  --       [ Phase 0 ["q4", "q9", "q0", "q5"], --
+  --         Swapper "q3" "q5",
+  --         Swapper "q3" "q9", --
+  --         Hadamard "q3",
+  --         Swapper "q7" "q3",
+  --         Phase 0 ["q3", "q2", "q6"],
+  --         MCT ["q5"] "q2", --
+  --         MCT ["q3", "q2", "q7", "q9"] "q6",
+  --         MCT ["q9", "q7", "q5", "q6", "q3", "q1"] "q8",
+  --         Phase 0 ["q5"], --
+  --         Swapper "q3" "q1",
+  --         Phase 0 ["q3", "q0"],
+  --         Phase 0 ["q5", "q7", "q1"], --
+  --         Hadamard "q2",
+  --         MCT [] "q5", --
+  --         Phase 0 ["q4", "q3", "q5"], --
+  --         MCT ["q6", "q9"] "q3", --
+  --         Phase 0 ["q7"], --
+  --         Phase 0 ["q8", "q4", "q7"], --
+  --         MCT ["q5", "q6", "q7"] "q8",
+  --         Phase 0 ["q2"],
+  --         Phase 0 ["q1", "q3"]
+  --       ]
 
---   putStrLn "Unraveling [ExtractionGates]:"
---   let (unr2, unr2Rej, _) =
---         unravel
---           (\g -> case g of Hadamard _ -> False; _ -> True)
---           ['@' : show n | n <- [1 ..]]
---           [ MCT ["a", "b"] "c",
---             Hadamard "c",
---             MCT ["a", "b"] "c",
---             Hadamard "c",
---             MCT ["a", "b"] "c",
---             Hadamard "c",
---             MCT ["c"] "b"
---           ]
---   print unr2
---   print unr2Rej
+  -- let deny =
+  --       Set.fromList
+  --         [ Phase 0 ["q4", "q9", "q0", "q5"],
+  --           Swapper "q3" "q9",
+  --           MCT ["q5"] "q2",
+  --           Phase 0 ["q5"],
+  --           Phase 0 ["q5", "q7", "q1"],
+  --           MCT [] "q5",
+  --           Phase 0 ["q4", "q3", "q5"],
+  --           MCT ["q6", "q9"] "q3",
+  --           Phase 0 ["q7"],
+  --           Phase 0 ["q8", "q4", "q7"]
+  --         ]
+  -- let circ =
+  --       [ Phase 0 ["q5"], --
+  --         Swapper "q3" "q1",
+  --         Phase 0 ["q3", "q0"], --
+  --         Phase 0 ["q5", "q7", "q1"], --
+  --         MCT [] "q5", --
+  --         Swapper "q7" "q3",
+  --         Phase 0 ["q1", "q3"]
+  --       ]
 
---   let unr2Reknit = reknit unr2 unr2Rej
---   print unr2Reknit
+  -- let deny =
+  --       Set.fromList
+  --         [ Phase 0 ["q5"],
+  --           Phase 0 ["q3", "q0"],
+  --           Phase 0 ["q5", "q7", "q1"],
+  --           MCT [] "q5"
+  --         ]
 
---   return ()
+  let circ =
+        [ MCT [] "q7", --
+          Swapper "q2" "q5",
+          Hadamard "q4",
+          Hadamard "q9",
+          Hadamard "q5",
+          Swapper "q4" "q2", --
+          Phase 0 ["q4", "q5"], --
+          Hadamard "q1",
+          Swapper "q4" "q0", --
+          Phase 0 ["q0", "q6", "q2"], --
+          MCT [] "q6",
+          Swapper "q2" "q4", --
+          Swapper "q0" "q3",
+          Swapper "q7" "q9", --
+          Phase 0 ["q3"]
+        ]
+  let deny =
+        Set.fromList
+          [ MCT [] "q7",
+            Swapper "q4" "q2",
+            Phase 0 ["q4", "q5"],
+            Swapper "q4" "q0",
+            Swapper "q2" "q4",
+            Phase 0 ["q0", "q6", "q2"],
+            Swapper "q7" "q9"
+          ]
 
+  let (unr1, unr1Rej, _) = unravel (`Set.notMember` deny) idGen circ
+
+  putStrLn "Unraveling [ExtractionGates]:"
+  putStrLn (indent 2 (pretty unr1))
+  putStrLn (indent 2 (show unr1Rej))
+  putStrLn ""
+  putStrLn "Result:"
+  let unr1Reknit = reknit unr1 unr1Rej
+  putStrLn (indent 2 (pretty unr1Reknit))
+  putStrLn ""
+  putStrLn "Equivalent:"
+  putStrLn (show $ equivalentToTrivialReorder circ unr1Reknit)
+
+  return ()

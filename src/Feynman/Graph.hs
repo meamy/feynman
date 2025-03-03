@@ -17,12 +17,21 @@ import Data.Traversable (for)
 import Data.Tuple (swap)
 import Feynman.Control
 import Feynman.Core
+import GHC.Stack (HasCallStack)
 
 traceG :: (HasFeynmanControl) => String -> a -> a
 traceG = traceIf (ctlEnabled fcfTrace_Graph)
 
 traceValG :: (HasFeynmanControl) => (a -> String) -> a -> a
 traceValG = traceValIf (ctlEnabled fcfTrace_Graph)
+
+-- infixl 9 ?!
+
+-- (?!) :: (HasFeynmanControl, Ord a, Show (Map a a), Show a) => Map a a -> a -> a
+-- (?!) m k =
+--   if Map.member k m
+--     then m ! k
+--     else traceG ("Map: " ++ show k ++ " not found in " ++ show m) k
 
 class (Eq (GateQubit g), Ord (GateQubit g)) => CircuitGate g where
   type GateQubit g :: Type
@@ -144,7 +153,8 @@ unravel ::
   g ->
   (g, [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])], [GateQubit (GraphGate g)])
 unravel testF freshIDSource gates =
-  (accepted finState, rejected finState, freshIDs finState)
+  traceG ("Gates: " ++ show gates) $
+    (accepted finState, rejected finState, freshIDs finState)
   where
     finState = foldGates unravelAux initialUnravel gates
     initialUnravel =
@@ -163,26 +173,28 @@ unravel testF freshIDSource gates =
       if testF g
         then
           traceG ("Accepting " ++ show g) $
-            st {accepted = appendGate (accepted st) (mapGateReferences (unravelMapping st !) g)}
+            st {accepted = appendGate (accepted st) mappedG}
         else
           traceG ("Rejecting " ++ show g) $
             let (added, newMap, newFreshIDs) =
                   relabelReferences g (unravelMapping st) (freshIDs st)
              in st
-                  { rejected = (g, added) : rejected st,
+                  { rejected = (mappedG, added) : rejected st,
                     unravelMapping = newMap,
                     freshIDs = newFreshIDs
                   }
+      where
+        mappedG = mapGateReferences (unravelMapping st !) g
 
     -- Get new labels from freshIDs for every label referenced by this gate
     relabelReferences g m freshIDs =
-      traceValG (\(items, m', nextID : _) -> "Relabeling " ++ show g ++ " with " ++ show items ++ ", " ++ show m' ++ ", [" ++ show nextID ++ "..]") $
-        foldl'
-          ( \(items, m', nextID : remainIDs) refID ->
-              ((refID, nextID) : items, Map.insert refID nextID m', remainIDs)
-          )
-          ([], m, freshIDs)
-          (Set.toList (foldGateReferences (flip Set.insert) Set.empty g))
+      -- traceValG (\(items, m', nextID : _) -> "Relabeling " ++ show g ++ " with " ++ show items ++ ", " ++ show m' ++ ", [" ++ show nextID ++ "..]") $
+      foldl'
+        ( \(items, m', nextID : remainIDs) refID ->
+            ((refID, nextID) : items, Map.insert refID nextID m', remainIDs)
+        )
+        ([], m, freshIDs)
+        (Set.toList (foldGateReferences (flip Set.insert) Set.empty g))
 
 -- reknit just puts a graph back together that's been taken apart by unravel.
 reknit ::
@@ -198,47 +210,82 @@ reknit unraveled stitchList =
             stitchSets = [Set.fromList (map snd ms) | (_, ms) <- stitchList]
          in foldl' allDisjoint (Just Set.empty) stitchSets
     )
-    $ knittedGraph (foldGates reknitAux initialReknit unraveled)
+    $ traceValG (\ !val -> "All done!") knittedGraph finReknit
   where
+    finReknit = applyLeftovers reknitAccepted
+
+    applyLeftovers st
+      | null (unappliedStitches st) = st
+      | otherwise =
+          let stitch = snd . Map.findMin $ unappliedStitches st
+           in applyLeftovers (applyStitch st stitch)
+
+    reknitAccepted = foldGates reknitAux initialReknit unraveled
+
     initialReknit =
       Reknit
         { knittedGraph = pureGraph,
           unappliedStitches = foldl' insertUnapplied Map.empty stitchList,
-          reknitMapping = Map.fromList (foldReferences (\l x -> (x, x) : l) [] unraveled)
+          reknitMapping = Map.fromList [(q, q) | q <- Set.toList allReknitQubits]
         }
+
+    allReknitQubits = allReknitQubitsAndSomeStitch Set.\\ allStitchQubits
+    allStitchQubits = Set.fromList [q | (_, rms) <- stitchList, (_, q) <- rms]
+    allReknitQubitsAndSomeStitch =
+      Set.union (circuitReferenceSet unraveled) (Set.fromList [q | (_, rms) <- stitchList, (q, _) <- rms])
+
     insertUnapplied m s@(_, rms) =
       assert (Set.disjoint (Set.fromList (map snd rms)) (Map.keysSet m)) $
         Map.union (Map.fromList (map (\(r, nr) -> (nr, s)) rms)) m
-    reknitAux st gate
-      | null stitchableRefs =
-          st
-            { knittedGraph =
-                appendGate
-                  (knittedGraph st)
-                  (mapGateReferences (reknitMapping st !) gate)
-            }
+
+    reknitAux st gate =
+      traceG ("Reknitting " ++ show gate ++ " " ++ show refs ++ ":\n  unapplied=" ++ (show . Map.keys . unappliedStitches) newSt ++ "\n  mapping=" ++ show (reknitMapping newSt)) $
+        newSt
+          { knittedGraph =
+              appendGate
+                (knittedGraph newSt)
+                (mapGateReferences (reknitMapping newSt !) gate)
+          }
+      where
+        newSt = stitchAllRefs st refs
+        refs =
+          -- traceValG (\v -> "Refs: " ++ show v) $
+          foldGateReferences (flip Set.insert) Set.empty gate
+
+    stitchAllRefs st refs
+      | null stitchableRefs = st
       | otherwise =
-          let (removedGate, mappings) = unappliedStitches st ! Set.findMin stitchableRefs
-              stitchMapping = Map.fromList (map swap mappings)
-              newMapping = Map.union stitchMapping (reknitMapping st)
-              stitchedGate = mapGateReferences (newMapping !) removedGate
-           in assert (Set.disjoint (foldGateReferences (flip Set.insert) Set.empty stitchedGate) stitchableRefs) $
-                reknitAux
-                  ( st
-                      { knittedGraph = appendGate (knittedGraph st) stitchedGate,
-                        unappliedStitches =
-                          foldl' (flip Map.delete) (unappliedStitches st) (map snd mappings),
-                        reknitMapping = newMapping
-                      }
-                  )
-                  gate
+          let chosenRef = Set.findMin stitchableRefs
+              stitch = unappliedStitches st ! chosenRef
+           in stitchAllRefs (applyStitch st stitch) (Set.delete chosenRef stitchableRefs)
       where
         stitchableRefs =
-          traceValG (\v -> "Stitchable: " ++ show v) $
-            Set.intersection (Map.keysSet (unappliedStitches st)) refs
-        refs =
-          traceValG (\v -> "Refs: " ++ show v) $
-            foldGateReferences (flip Set.insert) Set.empty gate
+          -- traceValG (\v -> "Stitchable: " ++ show v) $
+          Set.intersection (Map.keysSet (unappliedStitches st)) refs
+
+    applyStitch st stitch =
+      let (removedGate, mappings) = stitch
+          stitchMapping = Map.fromList (map swap mappings)
+          -- So we know at this point this is a stitch we want to apply, but
+          -- delightfully, it sometimes turns out that some other stitch
+          -- should really come before this one.
+          -- To handle this, we remove our stitch from the unapplied list, and
+          -- recurse back into stitchAllRefs with a list of refs that will
+          -- capture what we need.
+          remainUnapplied = foldl' (flip Map.delete) (unappliedStitches st) (map snd mappings)
+          newMapping = Map.union stitchMapping (reknitMapping st)
+          newSt =
+            stitchAllRefs
+              ( st
+                  { unappliedStitches = remainUnapplied,
+                    reknitMapping = newMapping
+                  }
+              )
+              (gateReferenceSet removedGate)
+          -- Now that awfulness is behind us, continue on our way...
+          stitchedGate = mapGateReferences (reknitMapping newSt !) removedGate
+       in traceG ("Stitching in " ++ show stitch ++ ": " ++ show (reknitMapping st)) $
+            newSt {knittedGraph = appendGate (knittedGraph newSt) stitchedGate}
 
 data ReknitState g = (CircuitGraph g) => Reknit
   { knittedGraph :: g,

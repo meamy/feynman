@@ -332,7 +332,7 @@ test-suite FeynmanSpecs
       Rank2Types
       TupleSections
       TypeFamilies
-  ghc-options: -O2 -Wno-unrecognised-pragmas -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -O2 -Wno-unrecognised-pragmas
   build-tool-depends:
       hspec-discover:hspec-discover
   build-depends:
