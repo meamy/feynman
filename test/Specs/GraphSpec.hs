@@ -18,19 +18,6 @@ import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 
-instance CircuitGate ExtractionGates where
-  type GateQubit ExtractionGates = ID
-
-  foldGateReferences f a (Hadamard xID) = f a xID
-  foldGateReferences f a (MCT xIDs yID) = f (foldl' f a xIDs) yID
-  foldGateReferences f a (Phase theta xIDs) = foldl' f a xIDs
-  foldGateReferences f a (Swapper xID yID) = f (f a xID) yID
-
-  mapGateReferences f (Hadamard xID) = Hadamard (f xID)
-  mapGateReferences f (MCT xIDs yID) = MCT (map f xIDs) (f yID)
-  mapGateReferences f (Phase theta xIDs) = Phase theta (map f xIDs)
-  mapGateReferences f (Swapper xID yID) = Swapper (f xID) (f yID)
-
 -- | Generates a random circuit
 generateExtractionGates :: Int -> Int -> Int -> Gen [ExtractionGates]
 generateExtractionGates m n k =
@@ -80,7 +67,7 @@ prop_ReknitUnravelIsIdentity = do
   circ <- generateExtractionGates 3 19 99
   denied <- sublistOf circ
   let deniedSet = Set.fromList denied
-      (unCirc, stitches, _) = unravel (`Set.member` deniedSet) idGen circ
+      (unCirc, stitches, _, _) = unravel (`Set.member` deniedSet) idGen circ
       reCirc = reknit unCirc stitches
   return $ equivalentToTrivialReorder circ reCirc
 
@@ -180,7 +167,7 @@ main = do
             Swapper "q7" "q9"
           ]
 
-  let (unr1, unr1Rej, _) = unravel (`Set.notMember` deny) idGen circ
+  let (unr1, unr1Rej, _, _) = unravel (`Set.notMember` deny) idGen circ
 
   putStrLn "Unraveling [ExtractionGates]:"
   putStrLn (indent 2 (pretty unr1))

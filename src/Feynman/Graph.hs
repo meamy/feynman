@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeOperators #-}
-
 module Feynman.Graph where
 
 import Control.Exception (assert)
@@ -147,16 +145,31 @@ data UnravelState g = (CircuitGraph g) => Unravel
 -- reference in the rejected gate.
 
 unravel ::
-  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
+  ( HasFeynmanControl,
+    CircuitGraph g,
+    CircuitGate (GraphGate g),
+    Show g,
+    Show (GraphGate g),
+    Show (GateQubit (GraphGate g))
+  ) =>
   (GraphGate g -> Bool) ->
   [GateQubit (GraphGate g)] ->
   g ->
-  (g, [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])], [GateQubit (GraphGate g)])
-unravel testF freshIDSource gates =
-  traceG ("Gates: " ++ show gates) $
-    (accepted finState, rejected finState, freshIDs finState)
+  ( g,
+    [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])],
+    [(GateQubit (GraphGate g), GateQubit (GraphGate g))],
+    [GateQubit (GraphGate g)]
+  )
+unravel testF freshIDSource graph =
+  traceG
+    ("Unraveling: " ++ show graph)
+    ( accepted finState,
+      rejected finState,
+      [(refID, unravelMapping finState ! refID) | refID <- allIDs],
+      freshIDs finState
+    )
   where
-    finState = foldGates unravelAux initialUnravel gates
+    finState = foldGates unravelAux initialUnravel graph
     initialUnravel =
       Unravel
         { accepted = pureGraph,
@@ -164,7 +177,7 @@ unravel testF freshIDSource gates =
           unravelMapping = Map.fromList (zip allIDs allIDs),
           freshIDs = freshIDSource
         }
-    allIDs = Set.toList (foldReferences (flip Set.insert) Set.empty gates)
+    allIDs = Set.toList (foldReferences (flip Set.insert) Set.empty graph)
     unravelAux st g =
       -- If the gate is accepted, map its references according to the current
       -- mapping, updating the current accept list
@@ -198,7 +211,13 @@ unravel testF freshIDSource gates =
 
 -- reknit just puts a graph back together that's been taken apart by unravel.
 reknit ::
-  (HasFeynmanControl, CircuitGraph g, CircuitGate (GraphGate g), Show g, Show (GraphGate g), Show (GateQubit (GraphGate g))) =>
+  ( HasFeynmanControl,
+    CircuitGraph g,
+    CircuitGate (GraphGate g),
+    Show g,
+    Show (GraphGate g),
+    Show (GateQubit (GraphGate g))
+  ) =>
   g ->
   [(GraphGate g, [(GateQubit (GraphGate g), GateQubit (GraphGate g))])] ->
   g
@@ -239,8 +258,17 @@ reknit unraveled stitchList =
         Map.union (Map.fromList (map (\(r, nr) -> (nr, s)) rms)) m
 
     reknitAux st gate =
-      traceG ("Reknitting " ++ show gate ++ " " ++ show refs ++ ":\n  unapplied=" ++ (show . Map.keys . unappliedStitches) newSt ++ "\n  mapping=" ++ show (reknitMapping newSt)) $
-        newSt
+      traceG
+        ( "Reknitting "
+            ++ show gate
+            ++ " "
+            ++ show refs
+            ++ ":\n  unapplied="
+            ++ (show . Map.keys . unappliedStitches) newSt
+            ++ "\n  mapping="
+            ++ show (reknitMapping newSt)
+        )
+        $ newSt
           { knittedGraph =
               appendGate
                 (knittedGraph newSt)
