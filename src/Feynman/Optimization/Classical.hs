@@ -7,27 +7,29 @@ import Data.Set qualified as Set
 import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Util
+import Feynman.Synthesis.XAG.Graph qualified as XAG
+import Feynman.Synthesis.XAG.Util (fromMCTs)
 
--- Basic process:
+-- Basic outline of the process:
 -- 1. unravel the circuit graph to get just the parts we can process
 -- 2. compute irreversible output functions for all outputs
 -- 3. synthesize/optimize the output functions into an irreversible graph
 -- 4. optimize pebbling of the synthesized output back into a circuit
 -- 5. reknit the final circuit using the saved stitches
 
--- You may wonder why we explicitly keep track of inoutIDs. After all, a sane
--- circuit shouldn't just output entangled garbage! Well, we are in the
--- business of exact synthesis here, but not with respect to ancilla use. I
--- would like for this function to be roughly idempotent, which means if it's
--- adding NEW ancilla inouts sometimes, it must have a way of forgetting the
--- OLD ones. Moreover, I don't want to waste time synthesizing ancilla
--- functions that in the best case are just fancy ways of computing nothing.
+-- You may wonder why we explicitly keep track of inputIDs and careOutIDs. The
+-- implication is there are outputs we don't care about, and a circuit should
+-- be fully specified, otherwise you're outputting entangled garbage you can't
+-- uncompute, and it shouldn't ask for any more ancillas than it's using.
 
--- We cannot in general perfectly analyze the function that computes an
--- output, but even if we could, there's actually no clear distinction at a
--- circuit level between an ancilla which is returned to its original |0>
--- state, and a circuit that for practical reasons doesn't modify some of its
--- inputs, as in most adder designs.
+-- Well, if we're resynthesizing the circuit, the number of ancillas may
+-- change, so it's important to know which inputs and outputs are ancillas in
+-- the first place. We cannot in general perfectly analyze the function that
+-- computes an output, but even if restrict ourselves to circuits we can fully
+-- analyze, there's actually no clear distinction at a circuit level between
+-- an ancilla which is returned to its original |0> state, and a circuit that
+-- for practical reasons doesn't modify some of its inputs, as in most adder
+-- designs.
 
 -- So, we leave it to the user to specify which lines they care about.
 
@@ -44,34 +46,37 @@ import Feynman.Synthesis.Pathsum.Util
 resynthesizeClassical :: (HasFeynmanControl) => [ExtractionGates] -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID], [ID], [(ID, ID)], [ID])
 resynthesizeClassical graph inputIDs careOutIDs freshIDs =
   let -- 1. unravel the circuit graph to get just the parts we can process
-      (classical, stitches, inoutRemap, unravelFreshIDs) =
+      (mcts, stitches, inoutRemap, unravelFreshIDs) =
         unravel isMCT freshIDs graph
       isMCT (MCT _ _) = True
       isMCT _ = False
       -- The unraveling will add a bunch of inputs and outputs, and we need to
       -- consider all the added ones as important, as well as the specifically
-      -- identified ones passed in, which have new names now. Oof.
+      -- identified ones passed in, which have new names now. So, we figure
+      -- out which of the originals were specifically UNimportant, and exclude
+      -- those.
       unimportantOuts =
         foldReferences (flip Set.insert) Set.empty graph
           Set.\\ (Set.fromList inputIDs `Set.union` finCareOutIDs)
       importantOuts =
-        foldReferences (flip Set.insert) Set.empty classical
+        foldReferences (flip Set.insert) Set.empty mcts
           Set.\\ unimportantOuts
       -- Set.fromList inputIDs
       --   `Set.union` Set.fromList (map (Map.fromList inoutRemap !) inputIDs)
       --   `Set.union` Set.fromList (map (Map.fromList inoutRemap !) finCareOutIDs)
 
-      -- compute XAG from remaining MCT circuit
       -- 2. compute irreversible output functions for all outputs
-      
+      (initialXAG, initialInOrder, initialOutOrder) = fromMCTs mcts
 
-      -- collect subgraph of not-unimportant outputs
       -- 3. synthesize/optimize the output functions into an irreversible graph
       -- do minmultsat optimization
+
       -- 4. optimize pebbling of the synthesized output back into a circuit
       -- convert minmultsat back into an MCT circuit
+
       -- 5. reknit the final circuit using the saved stitches
-      finGraph = graph
+
+      finGraph = reknit mcts stitches
       finCareOutIDs = undefined
       finOutMap = undefined
       finFreshIDs = unravelFreshIDs
