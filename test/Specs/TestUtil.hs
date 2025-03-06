@@ -1,23 +1,39 @@
 module Specs.TestUtil where
 
 import Data.Bits
+import Data.Map (Map, (!))
+import Data.Map qualified as Map
 import Feynman.Algebra.Base
 import Feynman.Control
 import Feynman.Core
 import Feynman.Synthesis.Pathsum.Util
-import Feynman.Synthesis.XAG.Util (fromMCTs, fromSBools)
+import Feynman.Synthesis.XAG.Util
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
+import Feynman.Algebra.Polynomial.Multilinear
+import Feynman.Algebra.Pathsum.Balanced hiding (trace)
+import Data.Foldable (foldl')
+import Debug.Trace (trace)
 
+evalMCTs :: [ExtractionGates] -> [(ID, Bool)] -> [(ID, Bool)]
+evalMCTs gates initVals =
+  Map.toList (foldl' evalMCT (Map.fromList initVals) gates)
+  where
+    evalMCT ctx (MCT controls target) =
+       Map.insert target (ctx ! target /= all (ctx !) controls) ctx
 
--- evalMCTs :: [ExtractionGates] -> Map ID Int -> [Bool] -> [Bool]
--- evalMCTs []
+evalSBool :: SBool Var -> [(Var, Bool)] -> Bool
+evalSBool sbool inputVals =
+  foldl' (/=) False (map (all (Map.fromList inputVals !) . vars . snd) (toTermList sbool))
 
+indent :: Int -> String -> String
 indent n = unlines . map (replicate n ' ' ++) . lines
 
+idGen :: [ID]
 idGen = ['@' : show i | i <- [1 ..]]
 
+genQubitParams :: Int -> Gen [ID]
 genQubitParams n = do
   sz <- getSize
   let count = max 0 (min (sz - 1) n)
@@ -33,6 +49,7 @@ genQubitParams n = do
           genQubitParamsAux (rBits `shiftR` 1) (ls ++ rs) (q e : qubits)
     allIdxs = [0 .. n]
 
+q :: Int -> ID
 q idx = 'q' : show idx
 
 generateMCTs :: Int -> Int -> Gen [ExtractionGates]

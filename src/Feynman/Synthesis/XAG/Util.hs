@@ -12,9 +12,11 @@ import Data.Map.Strict (Map, (!))
 import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Debug.Trace (traceM)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Algebra.Polynomial.Multilinear
+import Feynman.Control (traceIf)
 import Feynman.Core
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.XAG.Graph
@@ -33,6 +35,7 @@ fromSBools nvars sbools
 
     genAllSBools = mapM genSBool sbools
 
+isIVar :: Var -> Bool
 isIVar (IVar _) = True
 isIVar _ = False
 
@@ -51,8 +54,9 @@ fromMCTs mcts =
     firstNonInputNID = numInputs + 2
     inputNIDs = [2 .. numInputs + 2 - 1]
     numInputs = length allInIDs
-    allOutIDs = Set.toList (foldl' Set.union Set.empty (map mctTargetSet mcts))
-    allInIDs = Set.toList (foldl' Set.union Set.empty (map mctControlsSet mcts))
+    allInIDs = Set.toList (foldl' Set.union allOutIDsSet (map mctControlsSet mcts))
+    allOutIDs = Set.toList allOutIDsSet
+    allOutIDsSet = foldl' Set.union Set.empty (map mctTargetSet mcts)
 
     mctTargetSet (MCT _ target) = Set.singleton target
     mctTargetSet _ = Set.empty
@@ -100,7 +104,8 @@ genTree :: (Int -> Int -> Int -> Node) -> [Int] -> State GenState Int
 genTree ctor [] = error "Can't generate tree of 0 things"
 genTree ctor [xID] = return xID
 genTree ctor xys = do
-  let (xs, ys) = splitAt (length xs `div` 2) xys
+  let idx = length xys `div` 2
+      (xs, ys) = splitAt idx xys
   xID <- genTree ctor xs
   yID <- genTree ctor ys
   addNode (\newID -> ctor newID xID yID)
