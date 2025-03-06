@@ -1,9 +1,5 @@
 module Specs.GraphSpec where
 
-import Data.Bits (Bits (..))
-import Data.Foldable (foldl')
-import Data.IntSet (IntSet)
-import Data.IntSet qualified as IntSet
 import Data.List (intercalate, singleton)
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -17,50 +13,9 @@ import Feynman.Synthesis.Pathsum.Util
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
-
--- | Generates a random circuit
-generateExtractionGates :: Int -> Int -> Int -> Gen [ExtractionGates]
-generateExtractionGates m n k =
-  resize k $ listOf1 $ oneof [genHadamard, genMCT, genPhase, genSwapper]
-  where
-    genHadamard = do
-      x <- chooseInt (0, n)
-      return $ Hadamard (q x)
-    genMCT = do
-      yxs <- genQubitParams
-      let y : xs = yxs
-      return $ MCT xs y
-    genPhase = do
-      xs <- genQubitParams
-      theta <- genDMod2
-      return $ Phase 0 xs
-    genSwapper = do
-      x <- chooseInt (0, n)
-      y <- chooseInt (0, n) `suchThat` (/= x)
-      return $ Swapper (q x) (q y)
-    genDMod2 = do
-      x <- chooseInt (0, (1 `shiftL` m) - 2)
-      return $ dMod2 (fromIntegral (x + 1)) m
-    genQubitParams = do
-      sz <- getSize
-      let count = max 0 (min (sz - 1) n)
-      rBits <- choose (0, (1 `shiftL` count) - 1) :: Gen Integer
-      genQubitParamsAux (rBits .|. 1) allIdxs []
-    -- using rBits as a random source, select
-    genQubitParamsAux rBits elems qubits
-      | even rBits = return qubits
-      | otherwise = do
-          i <- choose (0, length elems - 1)
-          let (ls, e : rs) = splitAt i elems
-          genQubitParamsAux (rBits `shiftR` 1) (ls ++ rs) (q e : qubits)
-    q idx = 'q' : show idx
-    allIdxs = [0 .. n]
+import Specs.TestUtil
 
 pretty = concatMap (("\n" ++) . show)
-
-indent n = unlines . map (replicate n ' ' ++) . lines
-
-idGen = ['@' : show i | i <- [1 ..]]
 
 prop_ReknitUnravelIsIdentity :: (HasFeynmanControl) => Gen Bool
 prop_ReknitUnravelIsIdentity = do

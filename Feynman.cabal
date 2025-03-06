@@ -318,6 +318,8 @@ test-suite FeynmanSpecs
       Specs.GraphSpec
       Specs.SynthesisPathsumCliffordSpec
       Specs.SynthesisPathsumUnitarySpec
+      Specs.SynthesisXAGUtilSpec
+      Specs.TestUtil
   hs-source-dirs:
       test
   default-extensions:

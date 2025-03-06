@@ -5,8 +5,6 @@ import Control.Monad.Writer.Lazy
 import Control.Monad.State.Strict
 import Data.Map (Map, (!))
 import Data.Maybe
-import Data.Set (Set)
-import qualified Data.Set as Set
 import qualified Data.Map as Map
 import Test.Hspec
 
