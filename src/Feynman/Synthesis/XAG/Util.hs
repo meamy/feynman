@@ -20,13 +20,13 @@ import Feynman.Control (traceIf)
 import Feynman.Core
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.XAG.Graph
+import Feynman.Synthesis.XAG.Simplify (mergeStructuralDuplicates)
 
 fromSBools :: Int -> [SBool Var] -> Graph
-fromSBools nvars sbools
+fromSBools nvars sbools =
   -- all vars in all terms in all SBools must be IVar
-  | assert (all (all (all isIVar . (vars . snd)) . toTermList) sbools) $
-      assert (valid finGraph) otherwise =
-      finGraph
+  assert (all (all (all isIVar . (vars . snd)) . toTermList) sbools) $
+    mergeStructuralDuplicates finGraph
   where
     finGraph = Graph (reverse finNodesRev) [0 .. nvars - 1] finOutIDs
 
@@ -39,9 +39,13 @@ isIVar :: Var -> Bool
 isIVar (IVar _) = True
 isIVar _ = False
 
-fromMCTs :: [ExtractionGates] -> (Graph, [ID], [ID])
-fromMCTs mcts =
-  (Graph (reverse finNodesRev) inputNIDs (map (finIDMap !) allOutIDs), allInIDs, allOutIDs)
+fromMCTs :: [ExtractionGates] -> [ID] -> [ID] -> (Graph, [ID], [ID])
+fromMCTs mcts _ _ =
+  ( mergeStructuralDuplicates
+      (Graph (reverse finNodesRev) inputNIDs (map (finIDMap !) allOutIDs)),
+    allInIDs,
+    allOutIDs
+  )
   where
     (finIDMap, GenState {gsNodes = finNodesRev}) =
       runState genAllMCTs (GenState firstNonInputNID [])

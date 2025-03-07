@@ -22,7 +22,7 @@ import Test.QuickCheck
 prop_XAGFromMCTsEvalsEquivalent :: (HasFeynmanControl) => Gen Bool
 prop_XAGFromMCTsEvalsEquivalent = do
   mcts <- generateMCTs 5 99
-  let (xag, inputIDs, outputIDs) = fromMCTs mcts
+  let (xag, inputIDs, outputIDs) = fromMCTs mcts [] []
   let tt = makeTruthTable (length inputIDs)
       mctRes = map ((\m -> map (m !) outputIDs) . Map.fromList . evalMCTs mcts . zip inputIDs) tt
       -- I'm suspicious xagOutOrder works by accident and will fail if outputIDs actually get for real reordered

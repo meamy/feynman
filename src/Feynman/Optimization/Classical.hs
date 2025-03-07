@@ -8,14 +8,18 @@ import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.XAG.Graph qualified as XAG
+import Feynman.Synthesis.XAG.MinMultSat (resynthesizeMinMultSat)
 import Feynman.Synthesis.XAG.Util (fromMCTs)
+import Data.Maybe (fromMaybe)
 
 -- Basic outline of the process:
--- 1. unravel the circuit graph to get just the parts we can process
--- 2. compute irreversible output functions for all outputs
--- 3. synthesize/optimize the output functions into an irreversible graph
--- 4. optimize pebbling of the synthesized output back into a circuit
--- 5. reknit the final circuit using the saved stitches
+-- 1. expand controlled phase controls into classical logic
+-- 2. unravel the circuit graph to get just the parts we can process
+-- 3. compute irreversible output functions for all outputs
+-- 4. synthesize/optimize the output functions into an irreversible graph
+-- 5. translate the resynthesized XAG back into a circuit
+-- 6. reknit the final circuit using the saved stitches
+-- 7. optimize the qubit use in the resulting circuit
 
 -- You may wonder why we explicitly keep track of inputIDs and careOutIDs. The
 -- implication is there are outputs we don't care about, and a circuit should
@@ -43,41 +47,71 @@ import Feynman.Synthesis.XAG.Util (fromMCTs)
 -- compromise it may leave one or more outputs in the input state and compute
 -- the desired function into a fresh ancilla instead.
 
-resynthesizeClassical :: (HasFeynmanControl) => [ExtractionGates] -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID], [ID], [(ID, ID)], [ID])
-resynthesizeClassical graph inputIDs careOutIDs freshIDs =
-  let -- 1. unravel the circuit graph to get just the parts we can process
-      (mcts, stitches, inoutRemap, unravelFreshIDs) =
-        unravel isMCT freshIDs graph
-      isMCT (MCT _ _) = True
-      isMCT _ = False
-      -- The unraveling will add a bunch of inputs and outputs, and we need to
+resynthesizeClassical ::
+  (HasFeynmanControl) =>
+  [ExtractionGates] ->
+  [ID] ->
+  [ID] ->
+  [ID] ->
+  ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
+resynthesizeClassical circ inputIDs careOutIDs freshIDs =
+  let -- The unraveling will add a bunch of inputs and outputs, and we need to
       -- consider all the added ones as important, as well as the specifically
       -- identified ones passed in, which have new names now. So, we figure
       -- out which of the originals were specifically UNimportant, and exclude
       -- those.
       unimportantOuts =
-        foldReferences (flip Set.insert) Set.empty graph
-          Set.\\ (Set.fromList inputIDs `Set.union` finCareOutIDs)
+        foldReferences (flip Set.insert) Set.empty circ
+          Set.\\ (Set.fromList inputIDs `Set.union` Set.fromList careOutIDs)
       importantOuts =
         foldReferences (flip Set.insert) Set.empty mcts
           Set.\\ unimportantOuts
-      -- Set.fromList inputIDs
-      --   `Set.union` Set.fromList (map (Map.fromList inoutRemap !) inputIDs)
-      --   `Set.union` Set.fromList (map (Map.fromList inoutRemap !) finCareOutIDs)
 
-      -- 2. compute irreversible output functions for all outputs
-      (initialXAG, initialInOrder, initialOutOrder) = fromMCTs mcts
+      -- 1. expand controlled phase gates in the circuit graph
+      (exPhaseGraph, exPhaseFreshIDs) = expandPhase freshIDs circ
 
-      -- 3. synthesize/optimize the output functions into an irreversible graph
-      -- do minmultsat optimization
+      -- 2. unravel the circuit graph to get just the parts we can process
+      (mcts, stitches, inoutRemap, unravelFreshIDs) =
+        unravel isMCT exPhaseFreshIDs exPhaseGraph
+      isMCT (MCT _ _) = True
+      isMCT _ = False
 
-      -- 4. optimize pebbling of the synthesized output back into a circuit
-      -- convert minmultsat back into an MCT circuit
+      -- 3. compute irreversible output functions for all outputs
+      -- Here we drop the unimportantOuts implicitly, all we really want from
+      -- the MCTs is a specification of the Boolean functions for the
+      -- importantOuts
+      (initialXAG, initialInOrder, initialOutOrder) =
+        fromMCTs mcts inputIDs careOutIDs
 
-      -- 5. reknit the final circuit using the saved stitches
+      -- 4. synthesize/optimize the output functions into an irreversible graph
+      maybeResynthXAG = resynthesizeMinMultSat initialXAG
+      resynthXAG = fromMaybe initialXAG maybeResynthXAG
 
-      finGraph = reknit mcts stitches
-      finCareOutIDs = undefined
-      finOutMap = undefined
-      finFreshIDs = unravelFreshIDs
-   in (finGraph, inputIDs, finCareOutIDs, finOutMap, finFreshIDs)
+      -- 5. translate the resynthesized XAG back into a circuit
+      -- This will allocate plenty ancillas, but we deal with that after the
+      -- reknitting
+      (resynthMCTs, resynthFreshIDs) =
+        toMCTs resynthXAG initialInOrder initialOutOrder unravelFreshIDs
+
+      -- 6. reknit the circuit using the saved stitches
+      reknitCirc = reknit resynthMCTs stitches
+
+      -- 7. optimize the qubit use in the resulting circuit
+      (finCirc, finInputOutMap, finCareOutMap, finFreshIDs) =
+        reallocateQubits reknitCirc inputIDs careOutIDs resynthFreshIDs
+   in (finCirc, finCareOutMap, finInputOutMap, finFreshIDs)
+
+-- for now, do nothing
+expandPhase :: [ID] -> [ExtractionGates] -> ([ExtractionGates], [ID])
+expandPhase freshIDs circ = (circ, freshIDs)
+
+toMCTs :: XAG.Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
+toMCTs = undefined
+
+reallocateQubits ::
+  [ExtractionGates] ->
+  [ID] ->
+  [ID] ->
+  [ID] ->
+  ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
+reallocateQubits = undefined
