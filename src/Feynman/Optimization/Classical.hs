@@ -9,7 +9,7 @@ import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import Feynman.Synthesis.XAG.MinMultSat (resynthesizeMinMultSat)
-import Feynman.Synthesis.XAG.Util (fromMCTs)
+import Feynman.Synthesis.XAG.Util (fromMCTs, toMCTs)
 import Data.Maybe (fromMaybe)
 
 -- Basic outline of the process:
@@ -105,9 +105,6 @@ resynthesizeClassical circ inputIDs careOutIDs freshIDs =
 expandPhase :: [ID] -> [ExtractionGates] -> ([ExtractionGates], [ID])
 expandPhase freshIDs circ = (circ, freshIDs)
 
-toMCTs :: XAG.Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
-toMCTs = undefined
-
 reallocateQubits ::
   [ExtractionGates] ->
   [ID] ->
@@ -115,3 +112,4 @@ reallocateQubits ::
   [ID] ->
   ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
 reallocateQubits = undefined
+

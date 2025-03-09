@@ -2,7 +2,7 @@
 
 {-# HLINT ignore "Use second" #-}
 
-module Feynman.Synthesis.XAG.Util (fromSBools, fromMCTs) where
+module Feynman.Synthesis.XAG.Util (fromMCTs, fromSBools, toMCTs) where
 
 import Control.Exception (assert)
 import Control.Monad
@@ -120,3 +120,41 @@ addNode nodeF = do
   let newNode = nodeF (gsNextID gs)
   put $ GenState (gsNextID gs + 1) (newNode : gsNodes gs)
   return $ nodeID newNode
+
+data MCTState = MCTState
+  { msNodeMap :: Map Int ID,
+    msRemainIDs :: [ID],
+    msMCTsRev :: [ExtractionGates]
+  }
+
+toMCTs :: Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
+toMCTs xag inIDs outIDs idSource =
+  (reverse finMCTsRev, finIDSource)
+  where
+    (_, MCTState {msRemainIDs = finIDSource, msMCTsRev = finMCTsRev}) =
+      runState (mapM_ addMCTOf (nodes xag)) initMCTState
+    initMCTState = MCTState {msNodeMap = Map.empty, msRemainIDs = idSource, msMCTsRev = []}
+
+-- I apologize for how extremely terse this is but I couldn't pass it up
+addMCTOf :: Node -> State MCTState ID
+addMCTOf (Const nID False) = addMCTs [] nID
+addMCTOf (Const nID True) = addMCTs [[]] nID
+addMCTOf (Not nID xID) = addMCTs [[xID]] nID
+addMCTOf (Xor nID xID yID) = addMCTs [[xID], [yID]] nID
+addMCTOf (And nID xID yID) = addMCTs [[xID, yID]] nID
+
+addMCTs :: [[Int]] -> Int -> State MCTState ID
+addMCTs ctlNIDs nID = do
+  s <- get
+  let (mctID : remainIDSource) = msRemainIDs s
+      nodeMap = msNodeMap s
+      ctlIDs = map (map (nodeMap !)) ctlNIDs
+      mcts = map (`MCT` mctID) ctlIDs
+  put
+    ( s
+        { msRemainIDs = remainIDSource,
+          msNodeMap = Map.insert nID mctID nodeMap,
+          msMCTsRev = mcts ++ msMCTsRev s
+        }
+    )
+  return mctID

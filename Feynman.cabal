@@ -66,6 +66,8 @@ library
       Feynman.Synthesis.Pathsum.Util
       Feynman.Synthesis.Phase
       Feynman.Synthesis.Reversible
+      Feynman.Synthesis.Reversible.Allocation
+      Feynman.Synthesis.Reversible.Allocation.ComputeFirst
       Feynman.Synthesis.Reversible.Gray
       Feynman.Synthesis.Reversible.Parallel
       Feynman.Synthesis.XAG
