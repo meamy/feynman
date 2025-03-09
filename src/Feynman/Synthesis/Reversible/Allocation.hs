@@ -1,13 +1,16 @@
 module Feynman.Synthesis.Reversible.Allocation where
 
+import Control.Exception (assert)
+import Data.Bifunctor (first)
+import Data.IntMap (IntMap)
+import Data.IntMap qualified as IntMap
+import Data.IntMultiSet (IntMultiSet)
+import Data.IntMultiSet qualified as IntMultiSet
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
-import Data.IntMultiSet (IntMultiSet, (\\))
-import Data.IntMultiSet qualified as IntMultiSet
-import Data.MultiMap (MultiMap)
-import Data.MultiMap qualified as MultiMap
+import Data.Tuple (swap)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
-import Data.Maybe (fromMaybe)
 
 newtype Computation = C Int deriving (Eq, Ord, Show)
 
@@ -28,53 +31,85 @@ isComputationReversed (C cid) = cid < 0
 newtype ComputedResultBag = CRB IntMultiSet deriving (Eq, Ord, Show)
 
 data AllocationProblem = AllocationProblem
-  { computations :: MultiMap Computation (ComputedResultBag, ComputedResultBag),
+  { computations :: IntMap (ComputedResultBag, ComputedResultBag),
     requiredResults :: ComputedResultBag,
     permittedResults :: ComputedResultBag,
-    initialResults :: ComputedResultBag
+    initialState :: ComputationState
   }
 
 newtype ComputationState = CS IntMultiSet
 
 unC (C i) = i
+
 unCR (CR i) = i
+
 unCRB (CRB ms) = ms
+
 unCS (CS ms) = ms
 
 emptyResults = CRB IntMultiSet.empty
 
-resultsAsSet :: ComputedResultBag -> Set ComputedResult
-resultsAsSet (CRB bag) = Set.fromList (map CR (IntMultiSet.elems bag))
+computationEffectsToList :: AllocationProblem -> [(Computation, (ComputedResultBag, ComputedResultBag))]
+computationEffectsToList p = map (first C) (IntMap.toList (computations p))
 
-missingFrom :: ComputationState -> ComputedResultBag -> ComputedResultBag
-missingFrom (CS has) (CRB needs) = CRB (needs \\ has)
+problemFrom ::
+  [(Computation, (ComputedResultBag, ComputedResultBag))] ->
+  [ComputedResult] ->
+  Set ComputedResult ->
+  [ComputedResult] ->
+  AllocationProblem
+problemFrom effects required permitted initial =
+  AllocationProblem
+    { computations = IntMap.fromList (map (first unC) effects),
+      requiredResults = CRB (IntMultiSet.fromList (map unCR required)),
+      permittedResults = CRB (IntMultiSet.fromList (map unCR (Set.toList permitted))),
+      initialState = CS (IntMultiSet.fromList (map unCR initial))
+    }
 
-alreadyHave :: ComputationState -> ComputedResultBag -> ComputedResultBag
-alreadyHave (CS has) (CRB needs) = CRB (IntMultiSet.intersection has needs)
+computationEffects :: AllocationProblem -> Computation -> (ComputedResultBag, ComputedResultBag)
+computationEffects p (C ci)
+  | ci < 0 = swap (findEffects (-ci))
+  | otherwise = findEffects ci
+  where
+    findEffects i =
+      assert (IntMap.member i (computations p)) $
+        computations p IntMap.! i
+
+resultsToSet :: ComputedResultBag -> Set ComputedResult
+resultsToSet (CRB bag) = Set.fromList (map CR (IntMultiSet.elems bag))
+
+-- preserves occurrence counts
+resultsToList :: ComputedResultBag -> [ComputedResult]
+resultsToList (CRB bag) = map CR (IntMultiSet.toList bag)
+
+resultCount :: ComputedResult -> ComputedResultBag -> Int
+resultCount (CR check) (CRB bag) = IntMultiSet.occur check bag
+
+withoutAncillas :: ComputedResultBag -> ComputedResultBag
+withoutAncillas (CRB bag) = CRB (IntMultiSet.deleteAll 0 bag)
+
+withoutResults :: ComputedResultBag -> ComputedResultBag -> ComputedResultBag
+withoutResults (CRB aBag) (CRB bBag) = CRB (aBag IntMultiSet.\\ bBag)
 
 inBoth :: ComputedResultBag -> ComputedResultBag -> ComputedResultBag
 inBoth (CRB aBag) (CRB bBag) = CRB (IntMultiSet.intersection aBag bBag)
 
-afterApplication :: ComputationState -> ComputedResultBag -> ComputedResultBag -> ComputedResultBag
-afterApplication (CS has) (CRB needs) (CRB yields) = CRB ((has \\ needs) `IntMultiSet.union` yields)
+stateToSet :: ComputationState -> Set ComputedResult
+stateToSet (CS state) = Set.fromList (map CR (IntMultiSet.elems state))
 
-canApply :: ComputationState -> ComputedResultBag -> Bool
-canApply (CS has) (CRB needs) = (needs \\ has) == IntMultiSet.empty
+missingFrom :: ComputationState -> ComputedResultBag -> ComputedResultBag
+missingFrom (CS has) (CRB needs) = CRB (needs IntMultiSet.\\ has)
 
-resultBagFromList :: [ComputedResult] -> ComputedResultBag
-resultBagFromList = CRB . IntMultiSet.fromList . map unCR
-
-resultBagToList :: ComputedResultBag -> [ComputedResult]
-resultBagToList = map CR . IntMultiSet.toList . unCRB
-
-allComputed :: ComputedResultBag -> ComputationState -> Bool
-allComputed (CRB wants) (CS has) = has `IntMultiSet.isSubsetOf` wants
+afterApply :: ComputationState -> ComputedResultBag -> ComputedResultBag -> ComputedResultBag
+afterApply (CS has) (CRB needs) (CRB yields) =
+  CRB (IntMultiSet.union (has IntMultiSet.\\ needs) yields)
 
 computedCount :: ComputedResult -> ComputationState -> Int
 computedCount (CR check) (CS has) = IntMultiSet.occur check has
 
-addComputed :: ComputedResult -> ComputationState -> ComputationState
-addComputed (CR got) (CS has) = CS (IntMultiSet.insert got has)
-
-removeComputed :: ComputedResult -> ComputationState -> ComputationState
-removeComputed (CR lost) (CS has) =CS (IntMultiSet.delete lost has)
+applyComputation :: AllocationProblem -> Computation -> ComputationState -> ComputationState
+applyComputation p c (CS has) =
+  assert (IntMultiSet.deleteAll 0 (needs IntMultiSet.\\ has) == IntMultiSet.empty) $
+    CS (IntMultiSet.union (has IntMultiSet.\\ needs) yields)
+  where
+    (CRB needs, CRB yields) = computationEffects p c

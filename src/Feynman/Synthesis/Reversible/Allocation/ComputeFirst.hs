@@ -3,15 +3,17 @@ module Feynman.Synthesis.Reversible.Allocation.ComputeFirst
   )
 where
 
+import Control.Exception (assert)
 import Control.Monad (foldM)
 import Control.Monad.State.Strict
+import Data.Bifunctor (second)
 import Data.Foldable (foldl')
 import Data.Map.Strict (Map, (!))
 import Data.Map.Strict qualified as Map
-import Data.MultiMap qualified as MultiMap
 import Data.Set (Set, (\\))
 import Data.Set qualified as Set
 import Feynman.Synthesis.Reversible.Allocation
+import Data.Maybe (mapMaybe)
 
 -- Conditions required by this allocation strategy:
 -- 1. there must be computations in the problem sufficient to meet the
@@ -19,7 +21,38 @@ import Feynman.Synthesis.Reversible.Allocation
 -- 2. all the initialResults must be in the permittedResults
 
 computeFirstAllocate :: AllocationProblem -> Maybe [Computation]
-computeFirstAllocate = undefined
+computeFirstAllocate p =
+  ensureComputedCounts
+    cfprob
+    Set.empty
+    (requiredResults p)
+    emptyResults
+    (CFS (initialState p) [])
+    >>= (Just . reverse . stepsRev)
+  where
+    cfprob =
+      CFP
+        { problem = p,
+          copyCs = filteredEffects asCopyEffect,
+          singleCs = filteredEffects asSingleEffect
+        }
+    filteredEffects f =
+       Map.fromList . mapMaybe (uncurry f) . computationEffectsToList $ p
+    -- a copy effect duplicates one specific result using only ancillas
+    asCopyEffect c (needs, yields)
+      | length nl == 1 && yl == [nlh, nlh] = Just (nlh, c)
+      | otherwise = Nothing
+      where
+        nl = resultsToList (withoutAncillas needs)
+        yl = resultsToList yields
+        nlh = head nl
+    -- a single effect produces exactly one new result
+    asSingleEffect c (needs, yields)
+      | length gainedl == 1 = Just (gainedh, c)
+      | otherwise = Nothing
+      where
+        gainedl = resultsToList (withoutAncillas (withoutResults yields needs))
+        gainedh = head gainedl
 
 -- ComputeFirst, because first we compute everything we want, then we
 -- uncompute the things we don't want.
@@ -54,43 +87,57 @@ data ComputeFirstState
     stepsRev :: [Computation]
   }
 
-addStep :: Computation -> ComputeFirstState -> Maybe ComputeFirstState
-addStep c s@(CFS {stepsRev = sr}) = Just (s {stepsRev = c : sr})
+addStep :: ComputeFirstProblem -> Computation -> ComputeFirstState -> Maybe ComputeFirstState
+addStep cfprob c s@(CFS {cmptState = cs, stepsRev = sr})
+  | withoutAncillas (missingFrom cs needs) == emptyResults =
+      Just (s {cmptState = applyComputation (problem cfprob) c cs, stepsRev = c : sr})
+  | otherwise = Nothing
+  where
+    (needs, yields) = computationEffects (problem cfprob) c
 
-ensureComputed :: ComputeFirstProblem -> ComputedResultBag -> ComputedResult -> ComputeFirstState -> Maybe ComputeFirstState
-ensureComputed cfprob wantKeep res st
+ensureComputedCounts :: ComputeFirstProblem -> Set ComputedResult -> ComputedResultBag -> ComputedResultBag -> ComputeFirstState -> Maybe ComputeFirstState
+ensureComputedCounts cfprob wantSet needs yields st =
+  -- insert dups to satisfy needs counts, wantAndWillLose
+  -- we must already have at least one of everything we need
+  foldM (flip (ensureComputedAtAll cfprob depWantSet)) st (resultsToSet needs)
+    >>= adjustComputedCounts
+  where
+    depWantSet = Set.union wantSet (resultsToSet needs)
+    adjustComputedCounts st' =
+      assert ((resultsToSet needs \\ haveSet) == Set.empty) $
+        foldM (\s r -> addStep cfprob (copyCs cfprob ! r) s) st' (wantAndWillLose ++ needsDupList)
+      where
+        -- in the event some computation needs multiple of the same result, we
+        -- may need to duplicate it since we only ensured there was at least 1
+        needsDupList =
+          concatMap (uncurry replicate)
+            . filter ((> 0) . fst)
+            . map (\r -> (resultCount r needs - computedCount r (cmptState st'), r))
+            . Set.toList
+            . resultsToSet
+            $ needs
+        -- things we have, that we want to keep, that we will lose (unless we
+        -- duplicate them an extra time)
+        -- we use sets because the multiplicity isn't important, in fact we
+        -- would prefer to duplicate things just before they're actually
+        -- needed to minimize qubit use
+        wantAndWillLose = Set.toList (wantAndHave \\ willHave)
+        willHave = resultsToSet (afterApply (cmptState st') needs yields)
+        wantAndHave = Set.intersection haveSet wantSet
+        haveSet = stateToSet (cmptState st')
+
+ensureComputedAtAll :: ComputeFirstProblem -> Set ComputedResult -> ComputedResult -> ComputeFirstState -> Maybe ComputeFirstState
+ensureComputedAtAll cfprob wantSet res st
   -- already computed?
   | computedCount res (cmptState st) > 0 = return st
   -- try computing each dependency
-  | unmetNeeds == emptyResults = computeResult
-  | otherwise = ensureDependenciesAndRetry
+  | otherwise =
+      ensureComputedCounts cfprob wantSet needs yields st
+        >>= addStep cfprob cmpt
   where
     -- The computation that gets us res
     cmpt = singleCs cfprob ! res
-    (needs, yields) = head (computations (problem cfprob) MultiMap.! cmpt)
-    unmetNeeds = missingFrom (cmptState st) needs
-
-    computeResult = do
-      -- insert dups to satisfy needs counts
-      foldM (\s r -> addStep (copyCs cfprob ! r) s) st wantAndWillLose
-      -- insert dups for wantAndWillLose
-      -- insert computation
-      -- insert annihilates to reduce counts not in wants
-      return st
-      where
-        -- things we have, that we want to keep, that we will lose -- to be dup'd
-        -- we use sets because the multiplicity isn't important, in fact we would
-        -- prefer to duplicate things just before they're actually needed to
-        -- minimize qubit use
-        wantAndWillLose = Set.toList (wantAndHave Set.\\ willHave)
-        willHave = resultsAsSet (afterApplication (cmptState st) needs yields)
-        wantAndHave = resultsAsSet (alreadyHave (cmptState st) wantKeep)
-
-    ensureDependenciesAndRetry =
-      foldM (flip (ensureComputed cfprob depWants)) st []
-        >>= ensureComputed cfprob wantKeep res
-      where
-        depWants = wantKeep
+    (needs, yields) = computationEffects (problem cfprob) cmpt
 
 ensureUncomputed :: ComputeFirstProblem -> ComputationState -> ComputedResult -> [Computation] -> [Computation]
 ensureUncomputed = undefined

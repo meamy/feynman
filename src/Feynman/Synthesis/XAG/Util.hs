@@ -129,18 +129,54 @@ data MCTState = MCTState
 
 toMCTs :: Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
 toMCTs xag inIDs outIDs idSource =
-  (reverse finMCTsRev, finIDSource)
+  (reverse finMCTsRev, msRemainIDs mctUniqState)
   where
-    (_, MCTState {msRemainIDs = finIDSource, msMCTsRev = finMCTsRev}) =
-      runState (mapM_ addMCTOf (nodes xag)) initMCTState
-    initMCTState = MCTState {msNodeMap = Map.empty, msRemainIDs = idSource, msMCTsRev = []}
+    finMCTsRev = deferSwaps ++ msMCTsRev mctUniqState
+    -- Note we init the "seen" set with inputs -- our Swapper generation
+    -- assumes that nodes it finds mapped are internal IDs, which are safe to
+    -- swap. Inputs aren't, in general; and putting them in this set makes the
+    -- algorithm duplicate them into a fresh ancilla before swapping.
+    ((_, deferSwaps), mctUniqState) =
+      runState
+        ( foldM
+            uniquifyAndMapOutput
+            (Set.fromList (inputIDs xag), [])
+            (zip (outputIDs xag) outIDs)
+        )
+        mctState
+    -- While our gen makes sure to map the XAG completely, it doesn't pay any
+    -- mind to where the outputs end up. Also, one computation node may
+    -- represent multiple outputs; with classical logic this fanout isn't
+    -- relevant, but MCT graph outputs must be unique, or you end up trying
+    -- to do different operations on the same qubit at the same time.
+    uniquifyAndMapOutput (seen, deferSwaps) (nID, outID)
+      | Set.member nID seen = do
+          -- We use a junk nID of (-1) because there is not actually a node
+          newID <- addMCTs [[nID]] (-1)
+          return (seen, Swapper newID outID : deferSwaps)
+      | otherwise = do
+          nodeMap <- gets msNodeMap
+          let mappedID = nodeMap ! nID
+              newSeen = Set.insert nID seen
+          -- It seems like it would be a miracle if the penOutID matched outID
+          -- already, maybe inputs passed through a trivial graph
+          if mappedID /= outID
+            then return (newSeen, Swapper mappedID outID : deferSwaps)
+            else return (newSeen, deferSwaps)
+    (_, mctState) = runState (mapM_ addMCTOf (nodes xag)) initMCTState
+    initMCTState =
+      MCTState
+        { msNodeMap = Map.fromList (zip (inputIDs xag) inIDs),
+          msRemainIDs = idSource,
+          msMCTsRev = []
+        }
 
 -- I apologize for how extremely terse this is but I couldn't pass it up
 addMCTOf :: Node -> State MCTState ID
 addMCTOf (Const nID False) = addMCTs [] nID
 addMCTOf (Const nID True) = addMCTs [[]] nID
-addMCTOf (Not nID xID) = addMCTs [[xID]] nID
-addMCTOf (Xor nID xID yID) = addMCTs [[xID], [yID]] nID
+addMCTOf (Not nID xID) = addMCTs [[], [xID]] nID
+addMCTOf (Xor nID xID yID) = addMCTs [[yID], [xID]] nID
 addMCTOf (And nID xID yID) = addMCTs [[xID, yID]] nID
 
 addMCTs :: [[Int]] -> Int -> State MCTState ID

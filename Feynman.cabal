@@ -322,6 +322,7 @@ test-suite FeynmanSpecs
       Specs.GraphSpec
       Specs.SynthesisPathsumCliffordSpec
       Specs.SynthesisPathsumUnitarySpec
+      Specs.SynthesisReversibleAllocationSpec
       Specs.SynthesisXAGUtilSpec
       Specs.TestUtil
   hs-source-dirs:
