@@ -110,6 +110,8 @@ library
     , integer-gmp
     , minisat-solver
     , mtl
+    , multimap
+    , multiset
     , parsec
     , parsec3-numbers
     , random
