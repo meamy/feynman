@@ -8,9 +8,10 @@ import Control.Monad (foldM)
 import Control.Monad.State.Strict
 import Data.Bifunctor (second)
 import Data.Foldable (foldl')
+import Data.IntMap qualified as IntMap
 import Data.Map.Strict (Map, (!))
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromJust, isJust)
 import Data.Set (Set, (\\))
 import Data.Set qualified as Set
 import Debug.Trace (trace)
@@ -23,20 +24,22 @@ import Feynman.Synthesis.Reversible.Allocation
 
 computeFirstAllocate :: AllocationProblem -> Maybe [Computation]
 computeFirstAllocate p =
-  -- trace (" " ++ show ()) $
-  trace ("cfprob copyCs " ++ show (copyCs cfprob)) $
-    trace ("cfprob singleCs " ++ show (singleCs cfprob)) $
-      trace ("prob computations " ++ show (computations p)) $
-        trace ("prob permittedResults " ++ show (permittedResults p)) $
-          trace ("prob requiredResults " ++ show (requiredResults p)) $
-            trace ("prob initialState " ++ show (initialState p)) $
-              ensureComputedCounts
-                cfprob
-                Set.empty
-                (requiredResults p)
-                emptyResults
-                (CFS (initialState p) [])
-                >>= (Just . reverse . stepsRev)
+  let indentList :: (Show a) => [a] -> String
+      indentList = unlines . map (("  " ++) . show)
+   in -- trace (" " ++ show ()) $
+      trace ("prob computations\n" ++ (indentList . IntMap.toList . computations $ p)) $
+        trace ("prob requiredResults\n" ++ (indentList . resultsToList . requiredResults $ p)) $
+          trace ("prob permittedResults\n" ++ (indentList . resultsToList . permittedResults $ p)) $
+            trace ("prob initialState\n" ++ (indentList . stateToList . initialState $ p)) $
+              trace ("cfprob copyCs\n" ++ (indentList . Map.toList . copyCs $ cfprob)) $
+                trace ("cfprob singleCs\n" ++ (indentList . Map.toList . singleCs $ cfprob)) $
+                  ensureComputedCounts
+                    cfprob
+                    Set.empty
+                    (requiredResults p)
+                    emptyResults
+                    (CFS (initialState p) [])
+                    >>= (Just . reverse . stepsRev)
   where
     cfprob =
       CFP
@@ -56,7 +59,7 @@ computeFirstAllocate p =
         nlh = head nl
     -- a single effect produces exactly one new result
     asSingleEffect c (needs, yields)
-      | length gainedl == 1 = Just (gainedh, c)
+      | length gainedl == 1, Set.notMember gainedh (resultsToSet needs) = Just (gainedh, c)
       | otherwise = Nothing
       where
         gainedl = resultsToList (withoutAncillas (withoutResults yields needs))
@@ -84,8 +87,8 @@ data ComputeFirstProblem
     -- consume ancillas with no other dependencies; note that inverted, these
     -- can uncopy and return extra outputs to 0
     copyCs :: Map ComputedResult Computation,
-    -- singleCs are computations that produce exactly one specific new result,
-    -- but may consume anything
+    -- singleCs are computations that produce exactly one specific result,
+    -- but may consume anything EXCEPT the result being produced
     singleCs :: Map ComputedResult Computation
   }
 
@@ -97,21 +100,38 @@ data ComputeFirstState
 
 addStep :: ComputeFirstProblem -> Computation -> ComputeFirstState -> Maybe ComputeFirstState
 addStep cfprob c s@(CFS {cmptState = cs, stepsRev = sr})
-  | withoutAncillas (missingFrom cs needs) == emptyResults =
+  | trace ("addStep " ++ show c ++ ", " ++ show needs ++ " -> " ++ show yields) False = undefined
+  | hasAll cs needs =
       Just (s {cmptState = applyComputation (problem cfprob) c cs, stepsRev = c : sr})
-  | otherwise = Nothing
+  | otherwise, trace ("  > needs not met by " ++ show cs) True = Nothing
   where
-    (needs, yields) = computationEffects (problem cfprob) c
+    (needsWithAnc, yields) = computationEffects (problem cfprob) c
+    needs = withoutAncillas needsWithAnc
 
 ensureComputedCounts :: ComputeFirstProblem -> Set ComputedResult -> ComputedResultBag -> ComputedResultBag -> ComputeFirstState -> Maybe ComputeFirstState
-ensureComputedCounts cfprob wantSet needs yields st =
-  -- insert dups to satisfy needs counts, wantAndWillLose
-  -- we must already have at least one of everything we need
-  foldM (flip (ensureComputedAtAll cfprob depWantSet)) st (resultsToSet needs)
-    >>= adjustComputedCounts
+ensureComputedCounts cfprob wantSet needs yields st
+  | trace
+      ( "ensureComputedCounts\n  want="
+          ++ show (Set.toList wantSet)
+          ++ "\n  needs="
+          ++ show (resultsToList needs)
+          ++ "\n  yields="
+          ++ show (resultsToList yields)
+          ++ "\n  state="
+          ++ show (stateToList (cmptState st))
+      )
+      False =
+      undefined
+  | otherwise =
+      -- insert dups to satisfy needs counts, wantAndWillLose
+      -- we must already have at least one of everything we need
+      foldM (flip (ensureComputedAtAll cfprob depWantSet)) st (resultsToSet needs)
+        >>= adjustComputedCounts
   where
     depWantSet = Set.union wantSet (resultsToSet needs)
-    adjustComputedCounts st' =
+    adjustComputedCounts st'
+      | trace ("  > adjustComputedCounts by " ++ show needsDupList) False = undefined
+      | otherwise =
       assert ((resultsToSet needs \\ haveSet) == Set.empty) $
         foldM
           ( \s r ->
@@ -143,17 +163,33 @@ ensureComputedCounts cfprob wantSet needs yields st =
 
 ensureComputedAtAll :: ComputeFirstProblem -> Set ComputedResult -> ComputedResult -> ComputeFirstState -> Maybe ComputeFirstState
 ensureComputedAtAll cfprob wantSet res st
+  | trace
+      ( "ensureComputedAtAll\n  want="
+          ++ show (Set.toList wantSet)
+          ++ "\n  res="
+          ++ show res
+          ++ "\n  state="
+          ++ show (stateToList (cmptState st))
+      )
+      False =
+      undefined
   -- already computed?
-  | computedCount res (cmptState st) > 0 = return st
+  | computedCount res (cmptState st) > 0, trace ("  > already available") True = return st
   -- try computing each dependency
-  | Map.member res (singleCs cfprob) =
-      ensureComputedCounts cfprob wantSet (withoutAncillas needs) yields st
-        >>= addStep cfprob cmpt
+  | isJust cmpt, trace ("  > computing " ++ show cmpt ++ ", " ++ show needs ++ " -> " ++ show yields) True =
+      ensureComputedCounts cfprob (Set.union wantSet (resultsToSet needs)) needs yields st
+        >>= addStep cfprob (fromJust cmpt)
   | otherwise = trace ("need to compute " ++ show res ++ " but can't") Nothing
   where
     -- The computation that gets us res
-    cmpt = singleCs cfprob ! res
-    (needs, yields) = computationEffects (problem cfprob) cmpt
+    cmpt = Map.lookup res (singleCs cfprob)
+    (needsWithAnc, yields) = computationEffects (problem cfprob) (fromJust cmpt)
+    needs = withoutAncillas needsWithAnc
+
+
+  -- | isJust cmpt, null $ stateToSet (cmptState st) \\ resultsToSet needs =
+  --     ensureComputedCounts cfprob wantSet needs yields st
+  --       >>= addStep cfprob (fromJust cmpt)
 
 ensureUncomputed :: ComputeFirstProblem -> ComputationState -> ComputedResult -> [Computation] -> [Computation]
 ensureUncomputed = undefined

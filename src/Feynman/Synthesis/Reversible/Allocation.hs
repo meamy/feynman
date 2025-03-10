@@ -78,7 +78,7 @@ computationEffects p (C ci)
         computations p IntMap.! i
 
 resultsToSet :: ComputedResultBag -> Set ComputedResult
-resultsToSet (CRB bag) = Set.fromList (map CR (IntMultiSet.elems bag))
+resultsToSet = Set.fromList . resultsToList
 
 -- preserves occurrence counts
 resultsToList :: ComputedResultBag -> [ComputedResult]
@@ -101,10 +101,13 @@ inBoth :: ComputedResultBag -> ComputedResultBag -> ComputedResultBag
 inBoth (CRB aBag) (CRB bBag) = CRB (IntMultiSet.intersection aBag bBag)
 
 stateToSet :: ComputationState -> Set ComputedResult
-stateToSet (CS state) = Set.fromList (map CR (IntMultiSet.elems state))
+stateToSet = Set.fromList . stateToList
 
-missingFrom :: ComputationState -> ComputedResultBag -> ComputedResultBag
-missingFrom (CS has) (CRB needs) = CRB (needs IntMultiSet.\\ has)
+stateToList :: ComputationState -> [ComputedResult]
+stateToList (CS state) = map CR (IntMultiSet.elems state)
+
+hasAll :: ComputationState -> ComputedResultBag -> Bool
+hasAll (CS has) (CRB needs) = (needs IntMultiSet.\\ has) == IntMultiSet.empty
 
 afterApply :: ComputationState -> ComputedResultBag -> ComputedResultBag -> ComputedResultBag
 afterApply (CS has) (CRB needs) (CRB yields) =
