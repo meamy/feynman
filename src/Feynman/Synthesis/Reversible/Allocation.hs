@@ -37,7 +37,7 @@ data AllocationProblem = AllocationProblem
     initialState :: ComputationState
   }
 
-newtype ComputationState = CS IntMultiSet
+newtype ComputationState = CS IntMultiSet deriving (Eq, Ord, Show)
 
 unC (C i) = i
 
@@ -55,16 +55,18 @@ computationEffectsToList p = map (first C) (IntMap.toList (computations p))
 problemFrom ::
   [(Computation, (ComputedResultBag, ComputedResultBag))] ->
   [ComputedResult] ->
-  Set ComputedResult ->
+  [ComputedResult] ->
   [ComputedResult] ->
   AllocationProblem
 problemFrom effects required permitted initial =
   AllocationProblem
     { computations = IntMap.fromList (map (first unC) effects),
       requiredResults = CRB (IntMultiSet.fromList (map unCR required)),
-      permittedResults = CRB (IntMultiSet.fromList (map unCR (Set.toList permitted))),
+      permittedResults = CRB (IntMultiSet.fromList allPermittedI),
       initialState = CS (IntMultiSet.fromList (map unCR initial))
     }
+  where
+    allPermittedI = Set.toList . Set.fromList . map unCR $ required ++ permitted
 
 computationEffects :: AllocationProblem -> Computation -> (ComputedResultBag, ComputedResultBag)
 computationEffects p (C ci)
@@ -81,6 +83,10 @@ resultsToSet (CRB bag) = Set.fromList (map CR (IntMultiSet.elems bag))
 -- preserves occurrence counts
 resultsToList :: ComputedResultBag -> [ComputedResult]
 resultsToList (CRB bag) = map CR (IntMultiSet.toList bag)
+
+-- preserves occurrence counts
+resultsFromList :: [ComputedResult] -> ComputedResultBag
+resultsFromList = CRB . IntMultiSet.fromList . map unCR
 
 resultCount :: ComputedResult -> ComputedResultBag -> Int
 resultCount (CR check) (CRB bag) = IntMultiSet.occur check bag

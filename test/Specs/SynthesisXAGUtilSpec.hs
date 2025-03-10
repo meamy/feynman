@@ -64,15 +64,6 @@ prop_XAGToMCTsEvalsEquivalent = do
 
   return $ mctRes == xagRes
 
-mctIDs :: ExtractionGates -> [ID]
-mctIDs (MCT controls target) = target : controls
-mctIDs (Swapper x y) = [x, y]
-mctIDs gate = error (show gate ++ " in MCT list")
-
-makeTruthTable :: (Eq t, Num t) => t -> [[Bool]]
-makeTruthTable 0 = [[]]
-makeTruthTable n = [b : moreB | b <- [False, True], moreB <- makeTruthTable (n - 1)]
-
 spec :: Spec
 spec = do
   let ?feynmanControl = defaultControl {fcfTrace_Graph = True}

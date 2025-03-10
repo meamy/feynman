@@ -10,10 +10,11 @@ import Data.Bifunctor (second)
 import Data.Foldable (foldl')
 import Data.Map.Strict (Map, (!))
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Data.Set (Set, (\\))
 import Data.Set qualified as Set
+import Debug.Trace (trace)
 import Feynman.Synthesis.Reversible.Allocation
-import Data.Maybe (mapMaybe)
 
 -- Conditions required by this allocation strategy:
 -- 1. there must be computations in the problem sufficient to meet the
@@ -22,13 +23,20 @@ import Data.Maybe (mapMaybe)
 
 computeFirstAllocate :: AllocationProblem -> Maybe [Computation]
 computeFirstAllocate p =
-  ensureComputedCounts
-    cfprob
-    Set.empty
-    (requiredResults p)
-    emptyResults
-    (CFS (initialState p) [])
-    >>= (Just . reverse . stepsRev)
+  -- trace (" " ++ show ()) $
+  trace ("cfprob copyCs " ++ show (copyCs cfprob)) $
+    trace ("cfprob singleCs " ++ show (singleCs cfprob)) $
+      trace ("prob computations " ++ show (computations p)) $
+        trace ("prob permittedResults " ++ show (permittedResults p)) $
+          trace ("prob requiredResults " ++ show (requiredResults p)) $
+            trace ("prob initialState " ++ show (initialState p)) $
+              ensureComputedCounts
+                cfprob
+                Set.empty
+                (requiredResults p)
+                emptyResults
+                (CFS (initialState p) [])
+                >>= (Just . reverse . stepsRev)
   where
     cfprob =
       CFP
@@ -37,10 +45,10 @@ computeFirstAllocate p =
           singleCs = filteredEffects asSingleEffect
         }
     filteredEffects f =
-       Map.fromList . mapMaybe (uncurry f) . computationEffectsToList $ p
+      Map.fromList . mapMaybe (uncurry f) . computationEffectsToList $ p
     -- a copy effect duplicates one specific result using only ancillas
     asCopyEffect c (needs, yields)
-      | length nl == 1 && yl == [nlh, nlh] = Just (nlh, c)
+      | length nl == 1, yl == [nlh, nlh] = Just (nlh, c)
       | otherwise = Nothing
       where
         nl = resultsToList (withoutAncillas needs)
@@ -62,8 +70,8 @@ computeFirstAllocate p =
 -- I think it still give us a correct algorithm.
 
 -- copyCs and singleCs are expected to be complete, meaning:
--- - copyCs should have an entry for every result BESIDES the ones in the
---   problem's initialResults
+-- - copyCs should minimally have an entry for every result that can be
+--   incidentally consumed by a computation that produces some other result
 -- - singleCs should be derived from a computation DAG, and given unbounded
 --   ancillas it should be possible to compute everything in the graph by
 --   going through it in topological order (with the caveat that some
@@ -105,7 +113,14 @@ ensureComputedCounts cfprob wantSet needs yields st =
     depWantSet = Set.union wantSet (resultsToSet needs)
     adjustComputedCounts st' =
       assert ((resultsToSet needs \\ haveSet) == Set.empty) $
-        foldM (\s r -> addStep cfprob (copyCs cfprob ! r) s) st' (wantAndWillLose ++ needsDupList)
+        foldM
+          ( \s r ->
+              if Map.member r (copyCs cfprob)
+                then addStep cfprob (copyCs cfprob ! r) s
+                else trace ("need to duplicate " ++ show r ++ " but can't") Nothing
+          )
+          st'
+          (filter (/= zeroAncilla) (wantAndWillLose ++ needsDupList))
       where
         -- in the event some computation needs multiple of the same result, we
         -- may need to duplicate it since we only ensured there was at least 1
@@ -131,9 +146,10 @@ ensureComputedAtAll cfprob wantSet res st
   -- already computed?
   | computedCount res (cmptState st) > 0 = return st
   -- try computing each dependency
-  | otherwise =
-      ensureComputedCounts cfprob wantSet needs yields st
+  | Map.member res (singleCs cfprob) =
+      ensureComputedCounts cfprob wantSet (withoutAncillas needs) yields st
         >>= addStep cfprob cmpt
+  | otherwise = trace ("need to compute " ++ show res ++ " but can't") Nothing
   where
     -- The computation that gets us res
     cmpt = singleCs cfprob ! res

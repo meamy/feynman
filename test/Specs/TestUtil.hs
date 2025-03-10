@@ -32,6 +32,11 @@ evalMCTs gates initVals =
         xVal = ctx ! xID
         yVal = ctx ! yID
 
+mctIDs :: ExtractionGates -> [ID]
+mctIDs (MCT ys x) = x : ys
+mctIDs (Swapper x y) = [x, y]
+mctIDs gate = error (show gate ++ " in MCT list")
+
 evalSBool :: SBool Var -> [(Var, Bool)] -> Bool
 evalSBool sbool inputVals =
   foldl' (/=) False (map (all (Map.fromList inputVals !) . vars . snd) (toTermList sbool))
@@ -41,6 +46,10 @@ indent n = unlines . map (replicate n ' ' ++) . lines
 
 idGen :: [ID]
 idGen = ['@' : show i | i <- [1 ..]]
+
+makeTruthTable :: (Eq t, Num t) => t -> [[Bool]]
+makeTruthTable 0 = [[]]
+makeTruthTable n = [b : moreB | b <- [False, True], moreB <- makeTruthTable (n - 1)]
 
 genQubitParams :: Int -> Gen [ID]
 genQubitParams n = do

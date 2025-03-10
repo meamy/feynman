@@ -1,16 +1,22 @@
 module Feynman.Optimization.Classical where
 
+import Control.Monad.State.Strict
+import Data.Bifunctor (bimap, second)
+import Data.Foldable (foldl')
 import Data.Map (Map, (!))
 import Data.Map qualified as Map
+import Data.Maybe (fromMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Debug.Trace (trace)
 import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Util
+import Feynman.Synthesis.Reversible.Allocation
+import Feynman.Synthesis.Reversible.Allocation.ComputeFirst (computeFirstAllocate)
 import Feynman.Synthesis.XAG.Graph qualified as XAG
 import Feynman.Synthesis.XAG.MinMultSat (resynthesizeMinMultSat)
 import Feynman.Synthesis.XAG.Util (fromMCTs, toMCTs)
-import Data.Maybe (fromMaybe)
 
 -- Basic outline of the process:
 -- 1. expand controlled phase controls into classical logic
@@ -67,7 +73,8 @@ resynthesizeClassical circ inputIDs careOutIDs freshIDs =
         foldReferences (flip Set.insert) Set.empty mcts
           Set.\\ unimportantOuts
 
-      -- 1. expand controlled phase gates in the circuit graph
+      -- 1. expand controlled phase gates in the circuit graph to MCT into
+      --    ancilla + uncontrolled phase
       (exPhaseGraph, exPhaseFreshIDs) = expandPhase freshIDs circ
 
       -- 2. unravel the circuit graph to get just the parts we can process
@@ -97,9 +104,10 @@ resynthesizeClassical circ inputIDs careOutIDs freshIDs =
       reknitCirc = reknit resynthMCTs stitches
 
       -- 7. optimize the qubit use in the resulting circuit
+      maybeFinRealloc = reallocateQubits reknitCirc inputIDs careOutIDs resynthFreshIDs
       (finCirc, finInputOutMap, finCareOutMap, finFreshIDs) =
-        reallocateQubits reknitCirc inputIDs careOutIDs resynthFreshIDs
-   in (finCirc, finCareOutMap, finInputOutMap, finFreshIDs)
+        fromMaybe (error "Qubit final allocation failed") maybeFinRealloc
+   in (finCirc, finInputOutMap, finCareOutMap, finFreshIDs)
 
 -- for now, do nothing
 expandPhase :: [ID] -> [ExtractionGates] -> ([ExtractionGates], [ID])
@@ -110,6 +118,134 @@ reallocateQubits ::
   [ID] ->
   [ID] ->
   [ID] ->
-  ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
-reallocateQubits = undefined
+  Maybe ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
+reallocateQubits circ inIDs outIDs idSource =
+  -- trace ("inputRes " ++ show inputRes) $
+  -- trace ("initRes " ++ show (take 3 initRes)) $
+  -- trace ("gtcsRemainCmpt " ++ show (take 3 (gtcsRemainCmpt gtcs))) $
+  -- trace ("gtcsRemainRes " ++ show (take 3 (gtcsRemainRes gtcs))) $
+  -- trace ("gtcsQubits " ++ show (gtcsQubits gtcs)) $
+  -- trace ("gtcsPhaseRes " ++ show (gtcsPhaseRes gtcs)) $
+  -- trace ("gtcsComputations " ++ show (gtcsComputations gtcs)) $
+  -- trace ("phaseRes " ++ show (phaseRes)) $
+  -- trace ("outRes " ++ show (outRes)) $
+  -- trace ("computations " ++ show computations) $
+  -- trace ("prob computations " ++ show (Feynman.Synthesis.Reversible.Allocation.computations prob)) $
+  -- trace ("prob permittedResults " ++ show (permittedResults prob)) $
+  -- trace ("prob requiredResults " ++ show (requiredResults prob)) $
+  -- trace ("prob initialState " ++ show (initialState prob)) $
+  allocation
+    >>= \seq ->
+      ( do
+          let initCtx = Map.fromList (zip inputRes inIDs)
+              gates = foldr processComputation [] seq
+          return (gates, zip inIDs inIDs, undefined, idSource)
+          -- finMCTs, finInIDs, finOutIDs, finIDSource
+      )
+  where
+    processComputation = undefined
+    allocation = computeFirstAllocate prob
 
+    prob = problemFrom computations (outRes ++ phaseRes) inputRes inputRes
+    computations =
+      map
+        (second (bimap resultsFromList resultsFromList))
+        (gtcsComputations gtcs)
+    outRes = map (gtcsQubits gtcs !) outIDs
+    phaseRes = Set.toList (gtcsPhaseRes gtcs)
+
+    (_, gtcs) =
+      runState
+        (mapM_ gateToComputation circ >>= addDups inputRes)
+        ( defaultGTCState
+            { gtcsRemainRes = initRes,
+              gtcsQubits = Map.fromList (zip inIDs inputRes)
+            }
+        )
+    (inputRes, initRes) = splitAt (length inIDs) freshResults
+
+data GTCState = GTCState
+  { gtcsRemainCmpt :: [Computation],
+    gtcsRemainRes :: [ComputedResult],
+    gtcsQubits :: Map ID ComputedResult,
+    gtcsPhaseRes :: Set ComputedResult,
+    gtcsComputations :: [(Computation, ([ComputedResult], [ComputedResult]))],
+    gtcsCmptToGates :: [(Computation, [ID] -> ExtractionGates)]
+  }
+
+defaultGTCState :: GTCState
+defaultGTCState =
+  GTCState
+    { gtcsRemainCmpt = freshComputations,
+      gtcsRemainRes = freshResults,
+      gtcsQubits = Map.empty,
+      gtcsPhaseRes = Set.empty,
+      gtcsComputations = [],
+      gtcsCmptToGates = []
+    }
+
+addDups :: [ComputedResult] -> () -> State GTCState ()
+addDups inputRes _ = do
+  cmpts <- gets gtcsComputations
+  phaseRes <- gets gtcsPhaseRes
+  -- all
+  let allRes =
+        foldl'
+          (\rs (_, (_, ys)) -> Set.union rs (Set.fromList ys))
+          (Set.fromList inputRes)
+          cmpts
+      hasDup = Set.fromList . map (\(_, (_, y : ys)) -> y) . filter isDup $ cmpts
+  mapM_ addDup (allRes Set.\\ hasDup Set.\\ phaseRes)
+  where
+    isDup (_, (ns, ys)) =
+      let noAncN = filter (/= zeroAncilla) ns
+       in (length noAncN == 1) && ys == noAncN ++ noAncN
+    addDup rx =
+      modify
+        ( \st ->
+            let (c : remainCmpt) = gtcsRemainCmpt st
+             in st
+                  { gtcsComputations = (c, ([rx, zeroAncilla], [rx, rx])) : gtcsComputations st,
+                    gtcsCmptToGates = (c, \[x, a] -> MCT [x] a) : gtcsCmptToGates st,
+                    gtcsRemainCmpt = remainCmpt
+                  }
+        )
+
+gateToComputation :: ExtractionGates -> State GTCState ()
+gateToComputation gate =
+  case gate of
+    Hadamard x -> do
+      rx <- getQubit x
+      r <- addComputation (\r -> (([rx], [r]), \[x] -> Hadamard x))
+      setQubit x r
+    Phase theta ys -> do
+      rys <- mapM getQubit ys
+      r <- addComputation (\r -> ((rys, r : rys), \(_ : ys) -> Phase theta ys))
+      return ()
+    MCT ys x -> do
+      rx <- getQubit x
+      rys <- mapM getQubit ys
+      r <- addComputation (\r -> ((rx : rys, r : rys), \(x : ys) -> MCT ys x))
+      setQubit x r
+    Swapper x y -> return ()
+
+setQubit :: ID -> ComputedResult -> State GTCState ()
+setQubit x r = modify (\st -> st {gtcsQubits = Map.insert x r (gtcsQubits st)})
+
+getQubit :: ID -> State GTCState ComputedResult
+getQubit x = (! x) <$> gets gtcsQubits
+
+addComputation :: (ComputedResult -> (([ComputedResult], [ComputedResult]), [ID] -> ExtractionGates)) -> State GTCState ComputedResult
+addComputation f = do
+  st <- get
+  let (r : remainRes) = gtcsRemainRes st
+      (c : remainCmpt) = gtcsRemainCmpt st
+      (desc, toGates) = f r
+  put
+    st
+      { gtcsRemainCmpt = remainCmpt,
+        gtcsRemainRes = remainRes,
+        gtcsComputations = (c, desc) : gtcsComputations st,
+        gtcsCmptToGates = (c, toGates) : gtcsCmptToGates st
+      }
+  return r
