@@ -6,6 +6,10 @@ import Data.Foldable (foldl')
 import Data.Map (Map, (!))
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe)
+import Data.MultiSet (MultiSet)
+import Data.MultiSet qualified as MultiSet
+import Data.Multimap (Multimap)
+import Data.Multimap qualified as Multimap
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Debug.Trace (trace)
@@ -119,7 +123,7 @@ reallocateQubits ::
   [ID] ->
   [ID] ->
   Maybe ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
-reallocateQubits circ inIDs outIDs idSource =
+reallocateQubits circ inIDs outIDs idSource = do
   -- trace ("inputRes " ++ show inputRes) $
   -- trace ("initRes " ++ show (take 3 initRes)) $
   -- trace ("gtcsRemainCmpt " ++ show (take 3 (gtcsRemainCmpt gtcs))) $
@@ -134,43 +138,162 @@ reallocateQubits circ inIDs outIDs idSource =
   -- trace ("prob permittedResults " ++ show (permittedResults prob)) $
   -- trace ("prob requiredResults " ++ show (requiredResults prob)) $
   -- trace ("prob initialState " ++ show (initialState prob)) $
-  allocation
-    >>= \seq ->
-      ( do
-          let initCtx = Map.fromList (zip inputRes inIDs)
-              gates = foldr processComputation [] seq
-          return (gates, zip inIDs inIDs, undefined, idSource)
-          -- finMCTs, finInIDs, finOutIDs, finIDSource
-      )
+  let (inputRes, initRemainRes) = splitAt (length inIDs) freshResults
+      (_, gtcs) =
+        runState
+          (mapM_ gateToComputation circ >>= addDups inputRes)
+          ( defaultGTCState
+              { gtcsRemainRes = initRemainRes,
+                gtcsQubits = Map.fromList (zip inIDs inputRes)
+              }
+          )
+      outputRes = map (gtcsQubits gtcs !) inIDs
+
+      prob = problemFrom computations (outRes ++ phaseRes) inputRes inputRes
+      computations =
+        map
+          (second (bimap resultsFromList resultsFromList))
+          (gtcsComputations gtcs)
+      outRes = map (gtcsQubits gtcs !) outIDs
+      phaseRes = Set.toList (gtcsPhaseRes gtcs)
+
+      allocation = computeFirstAllocate prob
+
+  computationSeq <- allocation
+
+  let !foo =
+        trace ("computationsSeq: " ++ show computationSeq) $
+          trace ("gates: " ++ show (reverse gatesRev)) $
+            4 + 4
+
+      initQAS = foldr (uncurry updateQubitAssignment) defaultQAS (zip inIDs inputRes)
+      (finQAS, gatesRev) = foldl' (assignQubitsToComputation gtcs) (initQAS, []) computationSeq
+      outIDsMapping = zip outIDs (map (head . (qaResultQubitsMap finQAS Multimap.!)) outputRes)
+
+  -- finMCTs, finInIDs, finOutIDs, finIDSource
+  return (reverse gatesRev, zip inIDs inIDs, outIDsMapping, qaRemainIDs finQAS)
   where
-    processComputation = undefined
-    allocation = computeFirstAllocate prob
+    assignQubitsToComputation gtcs (qas, gatesRev) c
+      | trace ("assignQubitsToComputation " ++ show needs ++ ":" ++ show qubitsIn ++ " -> " ++ show yields ++ ":" ++ show qubitsOut ++ " -- " ++ show gates) False = undefined
+      | otherwise =
+        (qas'', reverse gates ++ gatesRev)
+        where
+          -- do the input assignment, get gates, update mapping
+          -- qubitsIn foldr chosen specifically for correct output list order
+          (qubitsIn, _) = foldr assignQubitFrom ([], qaResultQubitsMap qas') needs
+          (gates, qubitsOut) = toGates qubitsIn
+          qas'' = foldr (uncurry updateQubitAssignment) qas' (zip qubitsOut yields)
 
-    prob = problemFrom computations (outRes ++ phaseRes) inputRes inputRes
-    computations =
-      map
-        (second (bimap resultsFromList resultsFromList))
-        (gtcsComputations gtcs)
-    outRes = map (gtcsQubits gtcs !) outIDs
-    phaseRes = Set.toList (gtcsPhaseRes gtcs)
+          -- allocate any fresh ancillas not already available
+          qas' = ensureAncillaQubits (length (filter (== zeroAncilla) needs)) qas
 
-    (_, gtcs) =
-      runState
-        (mapM_ gateToComputation circ >>= addDups inputRes)
-        ( defaultGTCState
-            { gtcsRemainRes = initRes,
-              gtcsQubits = Map.fromList (zip inIDs inputRes)
-            }
-        )
-    (inputRes, initRes) = splitAt (length inIDs) freshResults
+          -- prepare: get needs, yields; toGates function
+          -- needs and yields here are specifically WITH ancillas
+          (needs, yields) = Map.fromList (gtcsComputations gtcs) ! c
+          toGates = Map.fromList (gtcsCmptToGates gtcs) ! c
+
+    assignQubitFrom res (assignments, resMap)
+      | trace ("assignQubitFrom " ++ show res ++ " (" ++ show assignments ++ ", " ++ show resMap ++ ")") False = undefined
+      | otherwise =
+          let qID = head (resMap Multimap.! res)
+          in (qID : assignments, Multimap.deleteWithValue res qID resMap)
+
+    updateQubitAssignment :: ID -> ComputedResult -> QubitAssignmentState -> QubitAssignmentState
+    updateQubitAssignment qID res qas
+      | trace ("updateQubitAssignment " ++ qID ++ " " ++ show res ++ " ..qas") False = undefined
+      | qID == phaseQubitID = qas {qaPhaseResults = MultiSet.insert res (qaPhaseResults qas)}
+      | otherwise =
+          let resultQubitsMap = case Map.lookup qID (qaQubitResultMap qas) of
+                Just oldRes -> Multimap.deleteWithValue oldRes qID (qaResultQubitsMap qas)
+                Nothing -> qaResultQubitsMap qas
+           in qas
+                { qaQubitResultMap = Map.insert qID res (qaQubitResultMap qas),
+                  qaResultQubitsMap = Multimap.insert res qID resultQubitsMap
+                }
+
+    ensureAncillaQubits n qas =
+      let haveAncCount = length (qaResultQubitsMap qas Multimap.! zeroAncilla)
+          allocCount = max 0 (n - haveAncCount)
+          (freshAncIDs, remainIDs) = splitAt allocCount (qaRemainIDs qas)
+          qas' = qas {qaRemainIDs = remainIDs}
+       in foldl' (\s qID -> updateQubitAssignment qID zeroAncilla s) qas' freshAncIDs
+
+    defaultQAS =
+      QAState
+        { qaRemainIDs = idSource,
+          qaResultQubitsMap = Multimap.empty,
+          qaQubitResultMap = Map.empty,
+          qaPhaseResults = MultiSet.empty
+        }
+
+data QubitAssignmentState = QAState
+  { qaRemainIDs :: [ID],
+    qaResultQubitsMap :: Multimap ComputedResult ID,
+    qaQubitResultMap :: Map ID ComputedResult,
+    qaPhaseResults :: MultiSet ComputedResult
+  }
 
 data GTCState = GTCState
   { gtcsRemainCmpt :: [Computation],
     gtcsRemainRes :: [ComputedResult],
     gtcsQubits :: Map ID ComputedResult,
     gtcsPhaseRes :: Set ComputedResult,
+    -- The relationship between gtcsComputations and gtcsCmptToGates is
+    -- slightly confusing. If you're implementing new cmptToGates, a useful
+    -- way to keep it straight is remember that these things are both modeling
+    -- the computations as transformations, and in this algorithm, we're not
+    -- concerned with the semantics of the transformations. That's the job of
+    -- the allocation solver, to find a valid and efficient order that
+    -- accomplishes the overall goal. Here, we are only concerned with
+    -- matching the parts of the circuit model to the allocator's simplified
+    -- model exactly, so that the solution is validly expressed.
+
+    -- The allocation solver is working from gtcsComputations, and then when
+    -- we build a circuit from that solution, we're following along with
+    -- gtcsCmptToGates, and so they have to match up exactly. The contract
+    -- for the functions in gtcsCmptToGates is that the "needs" list of the
+    -- computations tuple (fst) is used to map (in order!) the qubit IDs that
+    -- currently hold the needed results. That mapped list is passed to the
+    -- matching function; and then that function in turn returns a list that
+    -- maps (again, in order) back to the "yields" list (snd), saying which
+    -- qubit now contains the expected result.
+
+    -- An example, because that's probably a little confusing. Let's imagine
+    -- we are implementing some solution. This is just an ordered list of
+    -- computations and uncomputations -- as with any pebbling problem we
+    -- don't identify precisely which qubit is mapped where, so each
+    -- computation is just a label to a node in the computation graph. We are
+    -- processing a computation which represents an MCT on some particular
+    -- computed results.
+
+    -- Suppose this particular MCT has the gtcsComputation needs/yields
+    --   ([r2, r6, r4], [r7, r6, r4]),
+    -- and the corresponding gtcsCmptToGates function
+    --   \xys@(x : ys) -> (MCT ys x, xys).
+    -- Suppose we have assignment
+    --   q0=r6, q1=r2, q2=r1, q3=r4;
+    -- we will call that toGates with
+    --   ["q1", "q0", "q3"],
+    -- and it returns to us,
+    --   (MCT ["q0", "q3"] "q1", ["q1", "q0", "q3"]).
+    -- We translate the (second) list back into the updated mapping:
+    --   q1 -> r7, q0 -> r6, q3 -> r4
+
+    -- Note we don't update q2 because it's not mentioned, so it keeps its
+    -- computed result r1; and q0 and q3 only got updated to the same
+    -- assignments they already had. The net effect is just that q1 goes from
+    -- r2 to r7: which is exactly what the needs/yields describes, and also
+    -- what we expect from that MCT gate! HUZZAH
+
+    -- There are more details to the whole implementation, like there's a
+    -- phantom "phase" qubit that has special behaviour, but the gist to
+    -- remember here is the contract of computations and cmptToGates does not
+    -- directly relate needs to yields, or the qubit list parameter to the
+    -- qubit list return; the relationship is explicitly between needs and the
+    -- parameter, and between the return and yields.
+
     gtcsComputations :: [(Computation, ([ComputedResult], [ComputedResult]))],
-    gtcsCmptToGates :: [(Computation, [ID] -> ExtractionGates)]
+    gtcsCmptToGates :: [(Computation, [ID] -> ([ExtractionGates], [ID]))]
   }
 
 defaultGTCState :: GTCState
@@ -206,26 +329,29 @@ addDups inputRes _ = do
             let (c : remainCmpt) = gtcsRemainCmpt st
              in st
                   { gtcsComputations = (c, ([rx, zeroAncilla], [rx, rx])) : gtcsComputations st,
-                    gtcsCmptToGates = (c, \[x, a] -> MCT [x] a) : gtcsCmptToGates st,
+                    gtcsCmptToGates = (c, \[x, a] -> ([MCT [x] a], [x, a])) : gtcsCmptToGates st,
                     gtcsRemainCmpt = remainCmpt
                   }
         )
+
+phaseQubitID :: String
+phaseQubitID = "*"
 
 gateToComputation :: ExtractionGates -> State GTCState ()
 gateToComputation gate =
   case gate of
     Hadamard x -> do
       rx <- getQubit x
-      r <- addComputation (\r -> (([rx], [r]), \[x] -> Hadamard x))
+      r <- addComputation (\r -> (([rx], [r]), \[x] -> ([Hadamard x], [x])))
       setQubit x r
     Phase theta ys -> do
       rys <- mapM getQubit ys
-      r <- addComputation (\r -> ((rys, r : rys), \(_ : ys) -> Phase theta ys))
+      r <- addComputation (\r -> ((rys, r : rys), \ys -> ([Phase theta ys], phaseQubitID : ys)))
       return ()
     MCT ys x -> do
       rx <- getQubit x
       rys <- mapM getQubit ys
-      r <- addComputation (\r -> ((rx : rys, r : rys), \(x : ys) -> MCT ys x))
+      r <- addComputation (\r -> ((rx : rys, r : rys), \xys@(x : ys) -> ([MCT ys x], xys)))
       setQubit x r
     Swapper x y -> return ()
 
@@ -235,7 +361,7 @@ setQubit x r = modify (\st -> st {gtcsQubits = Map.insert x r (gtcsQubits st)})
 getQubit :: ID -> State GTCState ComputedResult
 getQubit x = (! x) <$> gets gtcsQubits
 
-addComputation :: (ComputedResult -> (([ComputedResult], [ComputedResult]), [ID] -> ExtractionGates)) -> State GTCState ComputedResult
+addComputation :: (ComputedResult -> (([ComputedResult], [ComputedResult]), [ID] -> ([ExtractionGates], [ID]))) -> State GTCState ComputedResult
 addComputation f = do
   st <- get
   let (r : remainRes) = gtcsRemainRes st

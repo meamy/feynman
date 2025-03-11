@@ -60,7 +60,7 @@ library:
   - integer-gmp
   - minisat-solver
   - mtl
-  - multimap
+  - multi-containers
   - multiset
   - parsec
   - parsec3-numbers

@@ -105,8 +105,9 @@ addStep cfprob c s@(CFS {cmptState = cs, stepsRev = sr})
       Just (s {cmptState = applyComputation (problem cfprob) c cs, stepsRev = c : sr})
   | otherwise, trace ("  > needs not met by " ++ show cs) True = Nothing
   where
-    (needsWithAnc, yields) = computationEffects (problem cfprob) c
+    (needsWithAnc, yieldsWithAnc) = computationEffects (problem cfprob) c
     needs = withoutAncillas needsWithAnc
+    yields = withoutAncillas yieldsWithAnc
 
 ensureComputedCounts :: ComputeFirstProblem -> Set ComputedResult -> ComputedResultBag -> ComputedResultBag -> ComputeFirstState -> Maybe ComputeFirstState
 ensureComputedCounts cfprob wantSet needs yields st
@@ -183,8 +184,9 @@ ensureComputedAtAll cfprob wantSet res st
   where
     -- The computation that gets us res
     cmpt = Map.lookup res (singleCs cfprob)
-    (needsWithAnc, yields) = computationEffects (problem cfprob) (fromJust cmpt)
+    (needsWithAnc, yieldsWithAnc) = computationEffects (problem cfprob) (fromJust cmpt)
     needs = withoutAncillas needsWithAnc
+    yields = withoutAncillas yieldsWithAnc
 
 
   -- | isJust cmpt, null $ stateToSet (cmptState st) \\ resultsToSet needs =
