@@ -550,6 +550,29 @@ applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
   pp' = pp + distribute (theta) (foldr (*) 1 (map (ovals!!) xs))
 
 {----------------------------
+ Spiders
+ ----------------------------}
+
+-- | Z spider with /n/ inputs and /m/ outputs
+zSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+zSpider a n m = Pathsum (2*n) n m (n+1) pp (replicate m z) where
+  z   = ofVar (PVar n)
+  pp  = distribute (a) z + distribute 1 (foldr (+) 0 tms)
+  tms = [ofVar (PVar i) * (ofVar (IVar i) + z) | i <- [0..n-1]]
+
+-- | X spider with /n/ inputs and /m/ outputs
+xSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+xSpider a n m = hIn .> (zSpider a n m) .> hOut where
+  hIn  = foldr (<>) 0 (replicate n hgate)
+  hOut = foldr (<>) 0 (replicate m hgate)
+
+-- | (a phase variant of the) H spider with /n/ inputs and /m/ outputs
+hSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+hSpider a n m = Pathsum 0 n m m pp ovals where
+  ovals = [ofVar (PVar j) | j <- [0..m-1]]
+  pp    = distribute a $ foldr (*) 1 $ [ofVar (IVar i) | i <- [0..n-1]] ++ ovals
+
+{----------------------------
  Channels
  ----------------------------}
 
