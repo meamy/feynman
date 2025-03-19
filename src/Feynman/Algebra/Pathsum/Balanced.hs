@@ -626,6 +626,12 @@ substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
  Operators
  ----------------------------}
 
+-- | Return the projector for a state
+projector :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+projector sop@(Pathsum a b c d e f)
+  | b /= 0 = error "Projector must be applied to a state"
+  | otherwise = dagger sop .> sop
+
 -- | Return the dual of a path sum
 dualize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 dualize sop@(Pathsum a b c d e f) = inSOP .> midSOP .> outSOP
@@ -888,6 +894,16 @@ matchHHProduct sop = do
   vars <- case toTermList (1 + p) of
     [(_, m)] -> return . Set.toList . vars $ m
     _        -> []
+  return (v, vars)
+
+-- | Fully reducible instance of the HH product. Equivalent to HHProduct
+--   followed by a series of HH rules when there are no input or free variables
+matchHHProduct' :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
+matchHHProduct' sop = do
+  (v, p) <- matchHH sop
+  vars <- case toTermList (1 + p) of
+    [(_, m)] -> return . Set.toList . vars $ m
+    _        -> []
   case all isP vars of
     True  -> return (v, vars)
     False -> mzero
@@ -989,7 +1005,20 @@ applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
 
 -- | Apply an HH product rule. Does not check if the instance is valid
 applyHHProduct :: (Eq g, Abelian g) => Var -> [Var] -> Pathsum g -> Pathsum g
-applyHHProduct (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-1) e' f') (reverse $ sort vs)
+applyHHProduct (PVar i) vs (Pathsum a b c d e f) = Pathsum a' b c d' e' f
+  where m  = length vs
+        a' = a + 2*(m-1)
+        d' = d + (m-1)
+        e' = foldr (+) (renameMonotonic varShift . remVar (PVar i) $ e) constraints
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+        constraints = [ofVar (PVar i) * (1 + ofVar v) | (i,v) <- zip [d-1..] vs]
+
+-- | Apply a fully reducible HH product. Does not check if the instance is valid
+applyHHProduct' :: (Eq g, Abelian g) => Var -> [Var] -> Pathsum g -> Pathsum g
+applyHHProduct' (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-1) e' f') (reverse $ sort vs)
   where e' = renameMonotonic varShift . remVar (PVar i) $ e
         f' = map (renameMonotonic varShift) f
         varShift (PVar j)
@@ -1086,6 +1115,18 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
     Omega y p        -> go $ applyOmega y p sop
     HHSolved y z p   -> go $ applyHHSolved y z p sop
     _                -> sop
+
+{--------------------------
+ Equivalence
+ --------------------------}
+
+-- | Checks whether two arbitrary path sums are equal by vectorizing them
+(~~) :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g -> Bool
+(~~) a b = grind (vectorize a) == grind (vectorize b)
+
+-- | Checks whether two arbitrary path sums are equal up to global phase
+(~~*) :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g -> Bool
+(~~*) a b = grind (vectorize (a <> dagger a)) == grind (vectorize (b <> dagger b))
 
 {--------------------------
  Simulation
