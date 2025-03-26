@@ -28,6 +28,7 @@ import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
+import Feynman.Optimization.SSO (sso)
 import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
 import Feynman.Verification.Symbolic
 
@@ -72,6 +73,7 @@ data Pass = Triv
           | CZ
           | CX
           | Decompile
+          | SSO
 
 data Options = Options { 
   passes :: [Pass],
@@ -101,6 +103,9 @@ decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
           in
             decl { DotQC.body = resynthesize $ DotQC.body decl }
 
+symbolicOptDotQC :: DotQC.DotQC -> DotQC.DotQC
+symbolicOptDotQC = DotQC.circuitToDotQC . sso . DotQC.dotQCToCircuit
+
 dotQCPass :: Pass -> (DotQC.DotQC -> DotQC.DotQC)
 dotQCPass pass = case pass of
   Triv        -> id
@@ -118,6 +123,7 @@ dotQCPass pass = case pass of
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
+  SSO         -> symbolicOptDotQC
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =
@@ -185,6 +191,7 @@ qasmPass pureCircuit pass = case pass of
   CZ          -> QASM2.applyOpt (\_ _ -> expandCNOT) pureCircuit
   CX          -> QASM2.applyOpt (\_ _ -> expandCZ) pureCircuit
   Decompile   -> id
+  SSO         -> id
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM passes verify pureCircuit fname src = do
@@ -231,6 +238,7 @@ qasm3Pass pureCircuit pass = case pass of
   CZ          -> id
   CX          -> id
   Decompile   -> id
+  SSO         -> id
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
 runQASM3 passes verify pureCircuit fname src = do
@@ -354,6 +362,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs
   "-czcx"        -> parseArgs doneSwitches options {passes = CX:passes options} xs
   "-decompile"   -> parseArgs doneSwitches options {passes = Decompile:passes options} xs
+  "-sso"         -> parseArgs doneSwitches options {passes = SSO:passes options} xs
   "-O2"          -> parseArgs doneSwitches options {passes = o2 ++ passes options} xs
   "-O3"          -> parseArgs doneSwitches options {passes = o3 ++ passes options} xs
   "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs

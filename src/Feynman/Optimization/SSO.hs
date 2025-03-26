@@ -55,7 +55,7 @@ sso circ =
 
 -- | Turns a symbolic execution into an operator
 operatorize :: [ID] -> Pathsum DMod2 -> Pathsum DMod2
-operatorize xs = bind (reverse xs)
+operatorize = bind
 
 -- | simulates a declaration
 simulateDecl :: Ctx -> Decl -> Pathsum DMod2
@@ -109,9 +109,9 @@ optimizeDecl ctx (Decl name params body) = (Decl name params body', operatorize 
       ps <- get
       let ps'  = evalState (applyPrimitive g ps) paramMap
       put ps'
-      if equal ps ps' then return (Gate (Uninterp "skip" [])) else return stmt
+      if equal ps ps' then return (Gate (Uninterp "nop" [])) else return stmt
 
-    Seq xs      -> fmap Seq $ mapM go xs
+    Seq xs      -> fmap (Seq . filter (/= (Gate (Uninterp "nop" [])))) $ mapM go xs
 
     Call f args ->
       let embedF = \i -> paramMap!(args!!i)
@@ -120,7 +120,7 @@ optimizeDecl ctx (Decl name params body) = (Decl name params body', operatorize 
         ps <- get
         let ps' = ps .> psF
         put ps'
-        if equal ps ps' then return (Gate (Uninterp "skip" [])) else return stmt
+        if equal ps ps' then return (Gate (Uninterp "nop" [])) else return stmt
 
     Repeat i stmt ->
       let psStmt = summarizeLoop i stmt in do
@@ -153,9 +153,9 @@ optimize ctx qubits inputs stmt = evalState (go stmt) initPS where
       ps <- get
       let ps'  = evalState (applyPrimitive g ps) qubitMap
       put ps'
-      if equal ps ps' then return (Gate (Uninterp "skip" [])) else return stmt
+      if equal ps ps' then return (Gate (Uninterp "nop" [])) else return stmt
 
-    Seq xs      -> fmap Seq $ mapM go xs
+    Seq xs      -> fmap (Seq . filter (/= (Gate (Uninterp "nop" [])))) $ mapM go xs
 
     Call f args ->
       let embedF = \i -> qubitMap!(args!!i)
@@ -164,7 +164,7 @@ optimize ctx qubits inputs stmt = evalState (go stmt) initPS where
         ps <- get
         let ps' = ps .> psF
         put ps'
-        if equal ps ps' then return (Gate (Uninterp "skip" [])) else return stmt
+        if equal ps ps' then return (Gate (Uninterp "nop" [])) else return stmt
 
     Repeat i stmt -> go (Seq $ replicate i stmt)
 

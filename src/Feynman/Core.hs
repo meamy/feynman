@@ -94,6 +94,7 @@ data Stmt =
   | Seq [Stmt]
   | Call ID [ID]
   | Repeat Int Stmt
+  deriving (Eq)
 
 data Decl = Decl { name   :: ID,
                    params :: [ID],
@@ -359,12 +360,12 @@ instance Show Primitive where
 instance Show Stmt where
   show (Gate gate)               = show gate
   show (Seq lst)                 = intercalate "\n" (map show lst)
-  show (Call id args)            = show id ++ showLst args
-  show (Repeat i (Call id args)) = show id ++ "^" ++ show i ++ showLst args
+  show (Call id args)            = id ++ " " ++ showLst args
+  show (Repeat i (Call id args)) = id ++ "^" ++ " " ++ show i ++ showLst args
   show (Repeat i stmt)           = "BEGIN^" ++ show i ++ "\n" ++ show stmt ++ "\n" ++ "END"
 
 instance Show Decl where
-  show decl = "BEGIN " ++ putName (name decl) ++ showLst (params decl) ++ "\n"
+  show decl = "BEGIN " ++ putName (name decl) ++ " " ++ showLst (params decl) ++ "\n"
               ++ show (body decl) ++ "\n"
               ++ "END"
     where putName "main" = ""

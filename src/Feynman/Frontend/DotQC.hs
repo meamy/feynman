@@ -6,6 +6,7 @@ import Feynman.Core (ID,
                      Angle(..),
                      dyadicPhase,
                      continuousPhase)
+import qualified Feynman.Core as Core
 import Feynman.Algebra.Base
 import Feynman.Synthesis.Pathsum.Unitary (ExtractionGates(..))
 
@@ -25,13 +26,11 @@ import Text.Parsec.Char hiding (space)
 import Text.Parsec.Number
 import Control.Monad
 
-type Nat = Word
-
 {- Data structures -}
 
 data Gate =
-    Gate ID Nat [ID]
-  | ParamGate ID Nat Angle [ID] deriving (Eq)
+    Gate ID Int [ID]
+  | ParamGate ID Int Angle [ID] deriving (Eq)
 
 data Decl = Decl { name   :: ID,
                    params :: [ID],
@@ -124,6 +123,67 @@ toGatelist :: DotQC -> [Gate]
 toGatelist circ = case find (\decl -> name decl == "main") (decls $ inlineAll circ) of
   Nothing   -> []
   Just decl -> body decl
+
+-- Returns the internal Circuit representation of a .qc file
+dotQCToCircuit :: DotQC -> Core.Circuit
+dotQCToCircuit circ = Core.Circuit (qubits circ) (inputs circ) acc where
+
+  acc = reverse . snd $ foldl' go (Map.empty,[]) (decls circ)
+
+  go :: (Map ID Int, [Core.Decl]) -> Decl -> (Map ID Int, [Core.Decl])
+  go (ctx, acc) (Decl f p b) =
+    let stmt = bodyToStmt ctx b in
+      (Map.insert f (length p) ctx, (Core.Decl f p stmt):acc)
+
+  bodyToStmt :: Map ID Int -> [Gate] -> Core.Stmt
+  bodyToStmt ctx b = Core.Seq $ map (gateToStmt ctx) b
+
+  gateToStmt :: Map ID Int -> Gate -> Core.Stmt
+  gateToStmt ctx (Gate g 1 p) = case (g,p) of
+    ("H", [x])      -> Core.Gate $ H x
+    ("X", [x])      -> Core.Gate $ X x
+    ("Y", [x])      -> Core.Gate $ Y x
+    ("Z", [x])      -> Core.Gate $ Z x
+    ("Z", [x,y])    -> Core.Gate $ CZ x y
+    ("S", [x])      -> Core.Gate $ S x
+    ("P", [x])      -> Core.Gate $ S x
+    ("S*", [x])     -> Core.Gate $ Sinv x
+    ("P*", [x])     -> Core.Gate $ Sinv x
+    ("T", [x])      -> Core.Gate $ T x
+    ("T*", [x])     -> Core.Gate $ Tinv x
+    ("tof", [x])    -> Core.Gate $ X x
+    ("tof", [x,y])  -> Core.Gate $ CNOT x y
+    ("cnot", [x,y]) -> Core.Gate $ CNOT x y
+    ("swap", [x,y]) -> Core.Gate $ Swap x y
+    ("cz", [x,y])   -> Core.Gate $ CZ x y
+    _ | Map.member g ctx && ctx!g == length p -> Core.Call g p
+    _ | otherwise                             -> Core.Gate $ Uninterp g p
+  gateToStmt ctx (Gate g i p) = Core.Repeat i (gateToStmt ctx (Gate g 1 p))
+
+  gateToStmt ctx (ParamGate g 1 theta p) = case (g, p) of
+    ("Rz", [x]) -> Core.Gate $ Rz theta x
+    ("Rx", [x]) -> Core.Gate $ Rx theta x
+    ("Ry", [x]) -> Core.Gate $ Ry theta x
+    _           -> Core.Gate $ Uninterp (g ++ "(" ++ show theta ++ ")") p
+  gateToStmt ctx (ParamGate g i theta p) = Core.Repeat i (gateToStmt ctx (ParamGate g 1 theta p))
+    
+-- Returns the dotQC representation of a circuit
+circuitToDotQC :: Core.Circuit -> DotQC
+circuitToDotQC circ = DotQC (Core.qubits circ) (Core.inputs circ) (Set.empty) acc where
+
+  acc = reverse $ foldl' go [] (Core.decls circ)
+
+  go :: [Decl] -> Core.Decl -> [Decl]
+  go acc (Core.Decl f p s) =
+    let body = stmtToBody s in
+      (Decl f p body):acc
+
+  stmtToBody :: Core.Stmt -> [Gate]
+  stmtToBody stmt = case stmt of
+    Core.Gate primGate -> [gateFromCliffordT primGate]
+    Core.Seq xs        -> concatMap stmtToBody xs
+    Core.Call g p      -> [Gate g 1 p]
+    Core.Repeat i s    -> concat $ replicate i (stmtToBody s)
 
 inv :: Gate -> Maybe Gate
 inv gate@(Gate g i p) =
