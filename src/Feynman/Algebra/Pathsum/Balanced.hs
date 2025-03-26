@@ -376,6 +376,22 @@ tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = distribute (-half*half) (ofVar (IVar 0))
 
+-- | Alternate T gate
+tgateAlt :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+tgateAlt = Pathsum 2 1 1 2 p [ofVar (IVar 0)]
+  where p = lift (x*y + y*z) + distribute (half*half) z
+        x = ofVar (IVar 0)
+        y = ofVar (PVar 0)
+        z = ofVar (PVar 1)
+
+-- | Alternate T* gate
+tdggateAlt :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+tdggateAlt = Pathsum 2 1 1 2 p [ofVar (IVar 0)]
+  where p = lift (x*y + y*z) + distribute (-half*half) z
+        x = ofVar (IVar 0)
+        y = ofVar (PVar 0)
+        z = ofVar (PVar 1)
+
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
