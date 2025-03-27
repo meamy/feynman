@@ -9,12 +9,23 @@ Portability : portable
 
 module Feynman.Optimization.Clifford(simplifyCliffords,simplifyCliffords') where
 
-import Feynman.Core(Primitive(..),
+import Data.Map (Map)
+import qualified Data.Map as Map
+
+import Control.Monad
+import Control.Monad.State.Strict
+
+import Feynman.Core(ID,
+                    Primitive(..),
                     AnnotatedPrimitive,
                     annotate,
                     annotateWith,
                     unannotate,
-                    ids)
+                    ids,
+                    discretize)
+import Feynman.Algebra.Base
+import Feynman.Algebra.Pathsum.Balanced
+import Feynman.Verification.Symbolic
 import Feynman.Synthesis.Pathsum.Clifford(resynthesizeClifford)
 
 {-----------------------------------
@@ -93,3 +104,39 @@ simplifyCliffords' circ = go mx [] ([], []) circ where
     | otherwise                          =
       let (mx', circ') = finalize mx (c, t) in
         go mx' (acc ++ circ') ([(gate,l)], []) xs
+
+{-----------------------------------
+ Almost-Clifford optimization
+ -----------------------------------}
+
+-- | Normalizes parameterized gates to Z-axis
+normalizeGates :: [Primitive] -> [Primitive]
+normalizeGates = concatMap go where
+  go (Rx theta x) = [H x, Rz theta x, H x]
+  go (Ry theta x) = [Sinv x, H x, Rz theta x, H x, S x]
+  go gate         = [gate]
+
+-- | Symbolically simulates a Clifford+phase circuit, pushing non-Clifford
+--   phases onto distinct variables
+simulateClifford' :: [ID] -> [ID] -> [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+simulateClifford' qubits inputs circ = evalState st Map.empty where
+  st = do
+    init   <- makeInitial qubits inputs
+    return $ foldM go (ket init) circ
+
+  go sop (gate,l) = case gate of
+    T x -> do
+      i <- findOrAlloc x
+      return $ applyPhaseGadget (dMod2 1 2) ("l" ++ show l) i sop
+    Tinv x -> do
+      i <- findOrAlloc x
+      return $ applyPhaseGadget (dMod2 7 2) ("l" ++ show l) i sop
+    Rz theta x -> do
+      i <- findOrAlloc x
+      return $ applyPhaseGadget (discretize theta) ("l" ++ show l) i sop
+    Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
+
+-- | Implements an optimization algorithm morally equivalent
+--   to phase gadget merging and optimization in the ZX calculus
+--optimizeModuloClifford :: [Primitive] -> [Primitive]
+--optimizeModuloClifford =

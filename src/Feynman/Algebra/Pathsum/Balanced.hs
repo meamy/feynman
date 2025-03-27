@@ -565,6 +565,14 @@ applyMCRz :: (Eq g, Abelian g, Dyadic g) => g -> [Int] -> Pathsum g -> Pathsum g
 applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
   pp' = pp + distribute (theta) (foldr (*) 1 (map (ovals!!) xs))
 
+-- | apply a gadgetized phase gate
+applyPhaseGadget :: (Eq g, Abelian g, Dyadic g) =>
+                    g -> String -> Int -> Pathsum g -> Pathsum g
+applyPhaseGadget a v i (Pathsum s d o p pp ov) = Pathsum (s+2) d o (p+1) pp' ov
+  where y   = ofVar $ PVar p
+        z   = ofVar $ FVar v
+        pp' = pp + lift (ov!!i * y + y*z) + distribute a z
+
 {----------------------------
  Spiders
  ----------------------------}
