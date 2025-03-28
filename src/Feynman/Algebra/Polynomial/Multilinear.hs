@@ -37,6 +37,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   toTermList,
   vars,
   getConstant,
+  getCoeff,
   isZero,
   isMono,
   isConst,
@@ -266,6 +267,10 @@ toTermList = map swap . Map.toList . getTerms
 -- | Retrieve the constant term
 getConstant :: (Ord (Monomial v repr), Eq r, Num r) => Multilinear v r repr -> r
 getConstant = Map.findWithDefault 0 (Monomial Set.empty) . getTerms
+
+-- | Retrieve the coefficient of a monomial
+getCoeff :: Ord (Monomial v repr) => Monomial v repr -> Multilinear v r repr -> Maybe r
+getCoeff m = Map.lookup m . getTerms
 
 {- Tests -}
 

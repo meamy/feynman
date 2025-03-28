@@ -12,6 +12,11 @@ module Feynman.Optimization.Clifford(simplifyCliffords,simplifyCliffords') where
 import Data.Map (Map)
 import qualified Data.Map as Map
 
+import Data.Set (Set)
+import qualified Data.Set as Set
+
+import Data.Foldable
+
 import Control.Monad
 import Control.Monad.State.Strict
 
@@ -22,9 +27,16 @@ import Feynman.Core(ID,
                     annotateWith,
                     unannotate,
                     ids,
-                    discretize)
+                    discretize,
+                    Angle(..))
+
 import Feynman.Algebra.Base
+import Feynman.Algebra.Polynomial hiding (Var)
+import Feynman.Algebra.Polynomial.Multilinear
 import Feynman.Algebra.Pathsum.Balanced
+
+import Feynman.Synthesis.Phase
+
 import Feynman.Verification.Symbolic
 import Feynman.Synthesis.Pathsum.Clifford(resynthesizeClifford)
 
@@ -139,5 +151,53 @@ simulateClifford' qubits inputs circ = evalState st Map.empty where
 
 -- | Implements an optimization algorithm morally equivalent
 --   to phase gadget merging and optimization in the ZX calculus
---optimizeModuloClifford :: [Primitive] -> [Primitive]
---optimizeModuloClifford =
+optimizeModuloClifford :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+optimizeModuloClifford q i = unannotate . go . annotate . normalizeGates where
+  go circ =
+    let sop     = grind $ simulateClifford' q i circ
+        gadgets = mergeGadgets . getGadgets $ sop
+        subs    = genSubstLst gadgets
+    in
+      optimize subs circ
+
+  phaseOf :: Var -> Pathsum DMod2 -> DMod2
+  phaseOf z sop = case getCoeff (monomial [z]) (phasePoly sop) of
+    Nothing -> 0
+    Just a  -> a
+
+  getGadgets :: Pathsum DMod2 -> [((Var, DMod2), SBool Var)]
+  getGadgets sop = matchHH sop >>= processPhase where
+    processPhase (_, p) = case find isF (vars p) of
+      Nothing -> []
+      Just z  -> [((z, phaseOf z sop), dropConstant $ p + ofVar z)]
+
+  mergeGadgets :: [((Var, DMod2), SBool Var)] -> Map (SBool Var) (Set Var, DMod2)
+  mergeGadgets = foldr addToMap Map.empty where
+    addToMap ((z,a), p) = Map.insertWith mergeF p (Set.singleton z, a)
+    mergeF (z,a) (z',a') = (Set.union z z', a + a')
+
+  genSubstLst :: Map (SBool Var) (Set Var, DMod2) -> Map Int DMod2
+  genSubstLst  = foldr processSet Map.empty . Map.elems where
+    processSet (s,theta) mp = Map.insert s1 theta $ foldr (\si -> Map.insert si 0) mp sx where
+
+      s' :: Set Int
+      s' = Set.map (\s -> read (drop 1 (unF s))) s
+
+      s1 = head $ Set.toList s'
+      sx = tail $ Set.toList s'
+
+  optimize opts circ = concatMap processGate circ where
+    processGate (g,l) = case Map.lookup l opts of
+      Nothing    -> [(g,l)]
+      Just theta -> synthesizeGate g (Discrete theta)
+
+  synthesizeGate g 0     = []
+  synthesizeGate g theta = zip (synthesizePhase (getTarget g) theta) [0..] where
+    getTarget gate = case gate of
+      T x    -> x
+      S x    -> x
+      Z x    -> x
+      Tinv x -> x
+      Sinv x -> x
+      Rz _ x -> x
+      
