@@ -910,7 +910,7 @@ matchHH sop = msum . (map (maybeToList . go)) $ internalPaths sop
 --   \(\dots(\sum_y (-1)^{y(z \oplus f)})\dots = \dots[z \gets f]\)
 matchHHSolve :: (Eq g, Periodic g) => Pathsum g -> [(Var, Var, SBool Var)]
 matchHHSolve sop = do
-  (v, p)   <- matchHH sop
+  (v, p)   <- filter (not . any isF . vars . snd) $ matchHH sop
   (v', p') <- solveForX p
   case v' of
     PVar _ -> return (v, v', p')
@@ -1147,7 +1147,7 @@ grind sop = case sop of
   Zero y         -> applyZero y sop
   Elim y         -> grind $ applyElim y sop
   Omega y p      -> grind $ applyOmega y p sop
-  HHLinear y z p -> grind $ applyHHSolved y z p sop
+  --HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
   _              -> sop
 

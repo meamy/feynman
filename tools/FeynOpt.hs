@@ -69,6 +69,7 @@ data Pass = Triv
           | CNOTMin
           | TPar
           | Cliff
+          | ZXopt
           | CZ
           | CX
           | Decompile
@@ -115,6 +116,7 @@ dotQCPass pass = case pass of
   CNOTMin     -> optimizeDotQC minCNOT
   TPar        -> optimizeDotQC tpar
   Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
+  ZXopt       -> optimizeDotQC optimizeModuloCliffords
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
@@ -351,6 +353,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-cnotmin"     -> parseArgs doneSwitches options {passes = CNOTMin:passes options} xs
   "-tpar"        -> parseArgs doneSwitches options {passes = TPar:passes options} xs
   "-clifford"    -> parseArgs doneSwitches options {passes = Cliff:passes options} xs
+  "-zxopt"       -> parseArgs doneSwitches options {passes = ZXopt:passes options} xs
   "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs
   "-czcx"        -> parseArgs doneSwitches options {passes = CX:passes options} xs
   "-decompile"   -> parseArgs doneSwitches options {passes = Decompile:passes options} xs

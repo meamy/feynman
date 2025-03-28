@@ -7,7 +7,9 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Optimization.Clifford(simplifyCliffords,simplifyCliffords') where
+module Feynman.Optimization.Clifford(simplifyCliffords,
+                                     simplifyCliffords',
+                                     optimizeModuloCliffords) where
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -32,13 +34,15 @@ import Feynman.Core(ID,
 
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial hiding (Var)
-import Feynman.Algebra.Polynomial.Multilinear
+import Feynman.Algebra.Polynomial.Multilinear hiding (lift)
 import Feynman.Algebra.Pathsum.Balanced
 
 import Feynman.Synthesis.Phase
 
 import Feynman.Verification.Symbolic
 import Feynman.Synthesis.Pathsum.Clifford(resynthesizeClifford)
+
+import qualified Debug.Trace as Trace
 
 {-----------------------------------
  Utilities
@@ -134,9 +138,13 @@ simulateClifford' :: [ID] -> [ID] -> [AnnotatedPrimitive] -> Pathsum DMod2
 simulateClifford' qubits inputs circ = evalState st Map.empty where
   st = do
     init   <- makeInitial qubits inputs
-    foldM go (ket init) circ
+    foldM go (close $ ket init) circ
 
   go sop (gate,l) = case gate of
+    CNOT x y -> do
+      i <- findOrAlloc x
+      j <- findOrAlloc y
+      return $ applyH j . applyCZ i j . applyH j $ sop
     T x -> do
       i <- findOrAlloc x
       return $ applyPhaseGadget (dMod2 1 2) ("l" ++ show l) i sop
@@ -147,18 +155,18 @@ simulateClifford' qubits inputs circ = evalState st Map.empty where
       i <- findOrAlloc x
       return $ applyPhaseGadget (fromDyadic $ discretize theta) ("l" ++ show l) i sop
     Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
-    _   -> applyPrimitive gate sop
+    _   -> applyPrimitive gate sop 
 
 -- | Implements an optimization algorithm morally equivalent
 --   to phase gadget merging and optimization in the ZX calculus
-optimizeModuloClifford :: [ID] -> [ID] -> [Primitive] -> [Primitive]
-optimizeModuloClifford q i = unannotate . go . annotate . normalizeGates where
+optimizeModuloCliffords :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+optimizeModuloCliffords q i = unannotate . go . annotate . normalizeGates where
   go circ =
     let sop     = grind $ simulateClifford' q i circ
         gadgets = mergeGadgets . getGadgets $ sop
         subs    = genSubstLst gadgets
     in
-      optimize subs circ
+      Trace.trace ("Circuit: " ++ show circ ++ "\nGadgets:" ++ show gadgets ++ "\nSubs:" ++ show subs ++ "\nsop:" ++ show sop) $ optimize subs circ
 
   phaseOf :: Var -> Pathsum DMod2 -> DMod2
   phaseOf z sop = case getCoeff (monomial [z]) (phasePoly sop) of
@@ -200,4 +208,5 @@ optimizeModuloClifford q i = unannotate . go . annotate . normalizeGates where
       Tinv x -> x
       Sinv x -> x
       Rz _ x -> x
+      _      -> error $ "Uh-oh, gate " ++ show gate
       
