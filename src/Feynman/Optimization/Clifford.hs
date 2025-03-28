@@ -118,11 +118,11 @@ normalizeGates = concatMap go where
 
 -- | Symbolically simulates a Clifford+phase circuit, pushing non-Clifford
 --   phases onto distinct variables
-simulateClifford' :: [ID] -> [ID] -> [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+simulateClifford' :: [ID] -> [ID] -> [AnnotatedPrimitive] -> Pathsum DMod2
 simulateClifford' qubits inputs circ = evalState st Map.empty where
   st = do
     init   <- makeInitial qubits inputs
-    return $ foldM go (ket init) circ
+    foldM go (ket init) circ
 
   go sop (gate,l) = case gate of
     T x -> do
@@ -133,8 +133,9 @@ simulateClifford' qubits inputs circ = evalState st Map.empty where
       return $ applyPhaseGadget (dMod2 7 2) ("l" ++ show l) i sop
     Rz theta x -> do
       i <- findOrAlloc x
-      return $ applyPhaseGadget (discretize theta) ("l" ++ show l) i sop
+      return $ applyPhaseGadget (fromDyadic $ discretize theta) ("l" ++ show l) i sop
     Uninterp name _      -> error $ "Gate " ++ name ++ " not supported"
+    _   -> applyPrimitive gate sop
 
 -- | Implements an optimization algorithm morally equivalent
 --   to phase gadget merging and optimization in the ZX calculus
