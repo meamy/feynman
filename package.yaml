@@ -1,0 +1,159 @@
+spec-version: 0.36.0
+
+name:                Feynman
+version:             0.1.0.0
+github:              "meamy/feynman"
+license:             BSD-3-Clause
+license-file:        LICENSE.md
+author:              "Matthew Amy"
+maintainer:          "matt.e.amy@gmail.com"
+copyright:           "2016 Matthew Amy"
+
+extra-source-files:
+- README.md
+
+synopsis:            Quantum circuit optimization and verification tools
+category:            Quantum
+
+description: |
+  Feynman is a toolkit for quantum circuit analysis in the path integral
+  model of quantum mechanics. The toolkit comprises synthesis, 
+  optimization and verification methods based around representations of 
+  circuit actions as sums-over-paths.
+
+dependencies:
+- base >= 4.9 && < 5
+
+ghc-options:
+- -O2
+
+language: Haskell2010
+
+default-extensions:
+- GADTs
+- ExistentialQuantification
+- FlexibleContexts
+- FlexibleInstances
+
+library:
+  source-dirs: src
+  build-tools:
+  - alex
+  - happy
+  dependencies:
+  - QuickCheck
+  - array
+  - bv
+  - bytestring
+  - containers
+  - fast-digits
+  - fin
+  - ghc-prim
+  - integer-gmp
+  - minisat-solver
+  - mtl
+  - parsec
+  - parsec3-numbers
+  - random
+  - vec
+  when:
+    condition: false
+    exposed-modules:
+    - Feynman.Algebra.Abstract
+    - Feynman.Algebra.Pathsum.Generic
+    - Feynman.Frontend.OpenQASM3.Semantics
+    - Feynman.Verification.SOP
+
+executables:
+  feynopt:
+    main:        FeynOpt.hs
+    source-dirs: tools
+    other-modules:
+    - Benchmarks
+    dependencies:
+    - Feynman
+    - QuickCheck
+    - ansi-terminal
+    - array
+    - base
+    - bv
+    - bytestring
+    - containers
+    - deepseq
+    - directory
+    - filepath
+    - random
+  
+  feynver:
+    main:        FeynVerify.hs
+    source-dirs: tools
+    other-modules: []
+    dependencies:
+    - Feynman
+    - QuickCheck
+    - ansi-terminal
+    - array
+    - base
+    - bv
+    - bytestring
+    - containers
+    - parsec
+    - transformers
+  
+  feynsim:
+    main:        FeynSim.hs
+    source-dirs: tools
+    other-modules: []
+    dependencies:
+    - Feynman
+    - QuickCheck
+    - ansi-terminal
+    - array
+    - base
+    - bv
+    - bytestring
+    - containers
+    - parsec
+    - transformers
+  
+  qc2qasm:
+    main:        QC2Qasm.hs
+    source-dirs: tools
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - bytestring
+    - filepath
+  
+  ar21:
+    main:        ar21.hs
+    source-dirs: scripts
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+  
+  abr22:
+    main:        abr22.hs
+    source-dirs: scripts
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+    - QuickCheck
+  
+  hs:
+    main:        hs.hs
+    source-dirs: scripts
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+    - QuickCheck
