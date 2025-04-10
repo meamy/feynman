@@ -13,11 +13,11 @@ import Debug.Trace (trace, traceM)
 import Feynman.Control
 import Feynman.Core
 import Feynman.Optimization.Classical
+import Feynman.Synthesis.Pathsum.Util (ExtractionGates (MCT))
 import Specs.TestUtil
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
-import Feynman.Synthesis.Pathsum.Util ( ExtractionGates(MCT) )
 
 prop_MCTsReallocateEvalsEquivalent :: (HasFeynmanControl) => Gen Bool
 prop_MCTsReallocateEvalsEquivalent = do
@@ -28,10 +28,7 @@ prop_MCTsReallocateEvalsEquivalent = do
       reallocation = reallocateQubits mcts allIDs allIDs idGen
       (resynthMCTs, inMap, outMap, _) = fromMaybe (error "reallocation failed") reallocation
 
-      reInIDs =
-        trace ("inMap: " ++ show inMap) $
-          trace ("outMap: " ++ show outMap) $
-            map (Map.fromList inMap !) allIDs
+      reInIDs = map (Map.fromList inMap !) allIDs
       reOutIDs = map (Map.fromList outMap !) allIDs
   trace ("reInIDs: " ++ show reInIDs) $ return ()
   trace ("reOutIDs: " ++ show reOutIDs) $ return ()
@@ -59,10 +56,7 @@ main = do
       reallocation = reallocateQubits mcts allIDs allIDs idGen
       (resynthMCTs, inMap, outMap, _) = fromMaybe (error "reallocation failed") reallocation
 
-      reInIDs =
-        trace ("inMap: " ++ show inMap) $
-          trace ("outMap: " ++ show outMap) $
-            map (Map.fromList inMap !) allIDs
+      reInIDs = map (Map.fromList inMap !) allIDs
       reOutIDs = map (Map.fromList outMap !) allIDs
   trace ("reInIDs: " ++ show reInIDs) $ return ()
   trace ("reOutIDs: " ++ show reOutIDs) $ return ()

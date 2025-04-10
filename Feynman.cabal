@@ -320,6 +320,7 @@ test-suite FeynmanSpecs
       Arbitrary.CliffordT
       Specs.AlgebraLinearSpec
       Specs.GraphSpec
+      Specs.SynthesisPathsumAncillaAwareSpec
       Specs.SynthesisPathsumCliffordSpec
       Specs.SynthesisPathsumUnitarySpec
       Specs.SynthesisReversibleAllocationSpec

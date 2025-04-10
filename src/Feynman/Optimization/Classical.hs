@@ -124,20 +124,6 @@ reallocateQubits ::
   [ID] ->
   Maybe ([ExtractionGates], [(ID, ID)], [(ID, ID)], [ID])
 reallocateQubits circ inIDs outIDs idSource = do
-  -- trace ("inputRes " ++ show inputRes) $
-  -- trace ("initRes " ++ show (take 3 initRes)) $
-  -- trace ("gtcsRemainCmpt " ++ show (take 3 (gtcsRemainCmpt gtcs))) $
-  -- trace ("gtcsRemainRes " ++ show (take 3 (gtcsRemainRes gtcs))) $
-  -- trace ("gtcsQubits " ++ show (gtcsQubits gtcs)) $
-  -- trace ("gtcsPhaseRes " ++ show (gtcsPhaseRes gtcs)) $
-  -- trace ("gtcsComputations " ++ show (gtcsComputations gtcs)) $
-  -- trace ("phaseRes " ++ show (phaseRes)) $
-  -- trace ("outRes " ++ show (outRes)) $
-  -- trace ("computations " ++ show computations) $
-  -- trace ("prob computations " ++ show (Feynman.Synthesis.Reversible.Allocation.computations prob)) $
-  -- trace ("prob permittedResults " ++ show (permittedResults prob)) $
-  -- trace ("prob requiredResults " ++ show (requiredResults prob)) $
-  -- trace ("prob initialState " ++ show (initialState prob)) $
   let (inputRes, initRemainRes) = splitAt (length inIDs) freshResults
       (_, gtcs) =
         runState
@@ -161,46 +147,36 @@ reallocateQubits circ inIDs outIDs idSource = do
 
   computationSeq <- allocation
 
-  let !foo =
-        trace ("computationsSeq: " ++ show computationSeq) $
-          trace ("gates: " ++ show (reverse gatesRev)) $
-            4 + 4
-
-      initQAS = foldr (uncurry updateQubitAssignment) defaultQAS (zip inIDs inputRes)
+  let initQAS = foldr (uncurry updateQubitAssignment) defaultQAS (zip inIDs inputRes)
       (finQAS, gatesRev) = foldl' (assignQubitsToComputation gtcs) (initQAS, []) computationSeq
       outIDsMapping = zip outIDs (map (head . (qaResultQubitsMap finQAS Multimap.!)) outputRes)
 
   -- finMCTs, finInIDs, finOutIDs, finIDSource
   return (reverse gatesRev, zip inIDs inIDs, outIDsMapping, qaRemainIDs finQAS)
   where
-    assignQubitsToComputation gtcs (qas, gatesRev) c
-      | trace ("assignQubitsToComputation " ++ show needs ++ ":" ++ show qubitsIn ++ " -> " ++ show yields ++ ":" ++ show qubitsOut ++ " -- " ++ show gates) False = undefined
-      | otherwise =
-        (qas'', reverse gates ++ gatesRev)
-        where
-          -- do the input assignment, get gates, update mapping
-          -- qubitsIn foldr chosen specifically for correct output list order
-          (qubitsIn, _) = foldr assignQubitFrom ([], qaResultQubitsMap qas') needs
-          (gates, qubitsOut) = toGates qubitsIn
-          qas'' = foldr (uncurry updateQubitAssignment) qas' (zip qubitsOut yields)
+    assignQubitsToComputation gtcs (qas, gatesRev) c =
+      (qas'', reverse gates ++ gatesRev)
+      where
+        -- do the input assignment, get gates, update mapping
+        -- qubitsIn foldr chosen specifically for correct output list order
+        (qubitsIn, _) = foldr assignQubitFrom ([], qaResultQubitsMap qas') needs
+        (gates, qubitsOut) = toGates qubitsIn
+        qas'' = foldr (uncurry updateQubitAssignment) qas' (zip qubitsOut yields)
 
-          -- allocate any fresh ancillas not already available
-          qas' = ensureAncillaQubits (length (filter (== zeroAncilla) needs)) qas
+        -- allocate any fresh ancillas not already available
+        qas' = ensureAncillaQubits (length (filter (== zeroAncilla) needs)) qas
 
-          -- prepare: get needs, yields; toGates function
-          -- needs and yields here are specifically WITH ancillas
-          (needs, yields) = Map.fromList (gtcsComputations gtcs) ! c
-          toGates = Map.fromList (gtcsCmptToGates gtcs) ! c
+        -- prepare: get needs, yields; toGates function
+        -- needs and yields here are specifically WITH ancillas
+        (needs, yields) = Map.fromList (gtcsComputations gtcs) ! c
+        toGates = Map.fromList (gtcsCmptToGates gtcs) ! c
 
-    assignQubitFrom res (assignments, resMap)
-      | trace ("assignQubitFrom " ++ show res ++ " (" ++ show assignments ++ ", " ++ show resMap ++ ")") False = undefined
-      | otherwise =
-          let qID = head (resMap Multimap.! res)
-          in (qID : assignments, Multimap.deleteWithValue res qID resMap)
+    assignQubitFrom res (assignments, resMap) =
+      let qID = head (resMap Multimap.! res)
+       in (qID : assignments, Multimap.deleteWithValue res qID resMap)
 
     updateQubitAssignment :: ID -> ComputedResult -> QubitAssignmentState -> QubitAssignmentState
     updateQubitAssignment qID res qas
-      | trace ("updateQubitAssignment " ++ qID ++ " " ++ show res ++ " ..qas") False = undefined
       | qID == phaseQubitID = qas {qaPhaseResults = MultiSet.insert res (qaPhaseResults qas)}
       | otherwise =
           let resultQubitsMap = case Map.lookup qID (qaQubitResultMap qas) of

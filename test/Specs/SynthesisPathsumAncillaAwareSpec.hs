@@ -1,4 +1,4 @@
-module Specs.SynthesisPathsumUnitarySpec where
+module Specs.SynthesisPathsumAncillaAwareSpec where
 
 import Control.Monad
 import Control.Monad.Writer.Lazy
@@ -7,10 +7,6 @@ import Data.Map (Map, (!))
 import Data.Maybe
 import qualified Data.Map as Map
 import Test.Hspec
-import Specs.TestUtil
-import Test.Hspec
-import Test.Hspec.QuickCheck
-import Test.QuickCheck
 
 --import qualified Feynman.Core as Core
 import Feynman.Algebra.Base
@@ -222,68 +218,3 @@ spec = do
   prop "Strength reduction is correct" prop_Strength_Reduction_Correctness
   prop "Each step of the synthesis algorithm is correct" prop_Frontier_Correctness
   prop "The overall algorithm is correct" prop_Extraction_Correctness
-
-
--- -- | Re-synthesizes a Clifford circuit and returns the results
--- synthesizeClifford :: [Primitive] -> IO Result
--- synthesizeClifford xs = do
---   start <- getCPUTime
---   let !count  = length xs
---   let !xs'    = resynthesizeClifford xs
---   let !count' = length xs'
---   end   <- getCPUTime
---   let t = (fromIntegral $ end - start) / 10^9
---   return $ Result True t (fromIntegral count) (fromIntegral count')
-
--- -- | Re-synthesizes a Clifford+T circuit and returns the results
--- synthesizeCliffordT :: HasFeynmanControl => [Primitive] -> IO Result
--- synthesizeCliffordT xs = do
---   start <- getCPUTime
---   let !count  = length xs
---   let !xs'    = resynthesizeCircuit xs
---   let !count' = maybe 0 length xs'
---   end   <- getCPUTime
---   let t = (fromIntegral $ end - start) / 10^9
---   return $ Result (isJust xs') t (fromIntegral count) (fromIntegral count')
-
--- -- | Generates random Clifford circuits, synthesizes them and prints statistics
--- cliffordTests :: Int -> Int -> Int -> IO ()
--- cliffordTests n k l = do
---   circuits <- mapM (\_ -> generateClifford n k) [1..l]
---   results  <- mapM synthesizeClifford circuits
---   let avgT = foldr (+) 0 (map time results) / (fromIntegral l)
---   let avgR = foldr (+) 0 (map reduction results) / (fromIntegral l)
---   putStrLn $ "  avg time: " ++ (show avgT)
---   putStrLn $ "  avg reduction: " ++ (show avgR)
---   where reduction result =
---           fromIntegral (before result - after result) / (fromIntegral $ before result) * 100
-  
--- -- | Generates random Clifford+T circuits, synthesizes them and prints statistics
--- cliffordTTests :: HasFeynmanControl => Int -> Int -> Int -> IO ()
--- cliffordTTests n k l = do
---   circuits <- mapM (\_ -> generateCliffordT n k) [1..l]
---   results  <- mapM synthesizeCliffordT circuits
---   let succ = filter success results
---   let perc = (fromIntegral (length succ) / fromIntegral l) * 100
---   let avgT = foldr (+) 0 (map time succ) / (fromIntegral $ length succ)
---   let avgR = foldr (+) 0 (map reduction succ) / (fromIntegral $ length succ)
---   putStrLn $ "  % successful: " ++ (show perc)
---   putStrLn $ "  avg time: " ++ (show avgT)
---   putStrLn $ "  avg reduction: " ++ (show avgR)
---   where reduction result =
---           fromIntegral (before result - after result) / (fromIntegral $ before result) * 100
-  
--- -- | Main script
--- main :: IO ()
--- main = do
---   putStrLn "...I am a synthesis bot, beep boop..."
---   putStrLn "...I will synthesize some circuits for you..."
---   putStrLn ""
---   putStrLn "Clifford synthesis tests (1000 random circuits, 20 qubits, 300 gates)"
---   cliffordTests 19 300 1000
---   putStrLn "Clifford synthesis tests (1000 random circuits, 20 qubits, 500 gates)"
---   cliffordTests 19 500 1000
---   putStrLn "Clifford synthesis tests (1000 random circuits, 50 qubits, 300 gates)"
---   cliffordTests 49 300 1000
---   putStrLn "Clifford synthesis tests (1000 random circuits, 50 qubits, 500 gates)"
---   cliffordTests 49 500 1000
