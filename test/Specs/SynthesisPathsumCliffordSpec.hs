@@ -1,6 +1,8 @@
 module Specs.SynthesisPathsumCliffordSpec where
 
 import Test.Hspec
+import Test.Hspec.QuickCheck
+import Test.QuickCheck
 
 import Feynman.Core
 import qualified Feynman.Core as Core
@@ -26,4 +28,7 @@ prop_Clifford_Extraction_Correct (Clifford xs) = go where
 
 
 spec :: Spec
-spec = return ()
+spec = do
+  prop "the path sum of a Clifford circuit is indeed Clifford" prop_Clifford_is_Clifford
+  prop "the path sum of a Clifford circuit is indeed Unitary" prop_Clifford_is_Unitary
+  prop "the path sum of a Clifford circuit is correctly extracted" prop_Clifford_Extraction_Correct
