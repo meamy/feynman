@@ -60,7 +60,6 @@ library
       Feynman.Optimization.StateFold
       Feynman.Optimization.Swaps
       Feynman.Optimization.TPar
-      Feynman.Synthesis.Pathsum.AncillaAware
       Feynman.Synthesis.Pathsum.Clifford
       Feynman.Synthesis.Pathsum.Unitary
       Feynman.Synthesis.Pathsum.Util
@@ -70,6 +69,7 @@ library
       Feynman.Synthesis.Reversible.Allocation.ComputeFirst
       Feynman.Synthesis.Reversible.Gray
       Feynman.Synthesis.Reversible.Parallel
+      Feynman.Synthesis.Reversible.XAG
       Feynman.Synthesis.XAG
       Feynman.Synthesis.XAG.Graph
       Feynman.Synthesis.XAG.MinMultSat
@@ -320,7 +320,6 @@ test-suite FeynmanSpecs
       Arbitrary.CliffordT
       Specs.AlgebraLinearSpec
       Specs.GraphSpec
-      Specs.SynthesisPathsumAncillaAwareSpec
       Specs.SynthesisPathsumCliffordSpec
       Specs.SynthesisPathsumUnitarySpec
       Specs.SynthesisReversibleAllocationSpec

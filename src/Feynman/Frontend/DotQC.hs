@@ -7,7 +7,6 @@ import Feynman.Core (ID,
                      dyadicPhase,
                      continuousPhase)
 import Feynman.Algebra.Base
-import qualified Feynman.Synthesis.Pathsum.AncillaAware as AncillaAware
 import qualified Feynman.Synthesis.Pathsum.Unitary as Unitary
 import Feynman.Synthesis.Pathsum.Util
 

@@ -11,7 +11,7 @@ module Feynman.Synthesis.Pathsum.Unitary where
 
 import Data.Semigroup ((<>))
 import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe, isJust)
-import Data.List ((\\), find)
+import Data.List ((\\), find, isPrefixOf)
 import Data.Map (Map, (!))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -23,9 +23,12 @@ import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Strict (StateT, get, gets, put, runState, evalState, evalStateT)
 
+import qualified Debug.Trace
+
 import qualified Feynman.Core as Core
 
-import Feynman.Core (ID, Primitive(..), Angle(..), dagger, removeSwaps)
+import Feynman.Core (ID, Primitive(..), Angle(..), dagger, removeSwaps, HasFeynmanControl)
+import Feynman.Control
 import Feynman.Circuits (cs, ccx)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Linear (F2Vec, bitI)
@@ -45,12 +48,12 @@ import Feynman.Verification.Symbolic
  Types
  -----------------------------------}
 
-type Ctx = (Map Int ID, Map ID Int)
+data Ctx = Ctx {indexToID :: Map Int ID, idToIndex :: Map ID Int, curPrefixI :: Int}
 type ExtractionState a = StateT Ctx (Writer [ExtractionGates]) a
 
 -- | Create a bidirectional context from a mapping from IDs to indices
-mkctx :: Map ID Int -> (Map Int ID, Map ID Int)
-mkctx ctx = (Map.fromList . map (\(a, b) -> (b, a)) . Map.toList $ ctx, ctx)
+mkctx :: Map ID Int -> Ctx
+mkctx ctx = Ctx (Map.fromList . map (\(a, b) -> (b, a)) . Map.toList $ ctx) ctx 1
 
 -- | Deprecated, need a type class
 daggerDep :: [ExtractionGates] -> [ExtractionGates]
@@ -65,13 +68,24 @@ daggerDep = reverse . map daggerGateDep where
  Utilities
  -----------------------------------}
 
+freshPrefix :: ExtractionState ID
+freshPrefix = do
+  st <- get
+  let curI = curPrefixI st
+  let ctx = idToIndex st
+  let pfx = "@" ++ show curI ++ "_"
+  put (st { curPrefixI = curI + 1 })
+  case Map.lookupGE pfx ctx of
+    Nothing -> return pfx
+    Just (used, _) -> if not (pfx `isPrefixOf` used) then return pfx else freshPrefix
+
 -- | ID for the ith variable
 qref :: Int -> ExtractionState ID
-qref i = gets ((! i) . fst)
+qref i = gets ((! i) . indexToID)
 
 -- | index for a qubit ID
 qidx :: ID -> ExtractionState Int
-qidx q = gets ((! q) . snd)
+qidx q = gets ((! q) . idToIndex)
 
 -- | Takes a map from Ints expressed as a list to a map on IDs
 reindex :: [a] -> ExtractionState (Map ID a)
@@ -172,6 +186,30 @@ findSubstitutions xs sop = find go candidates where
   choose i (x:xs) = (choose i xs) ++ (map (x:) $ choose (i-1) xs)
   reducibles      = filter (not . isJust . toBooleanPoly . (flip quotVar) (phasePoly sop)) xs
 
+-- | Apply a circuit to a state
+applyExtract :: Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
+applyExtract sop xs = do
+  ctx <- gets idToIndex
+  return $ foldl (absorbGate ctx) sop xs
+  where absorbGate ctx sop gate =
+          let index xs = ((Map.fromList $ zip [0..] [ctx!x | x <- xs])!)
+          in case gate of
+            Hadamard x     -> sop .> embed hgate (outDeg sop - 1) (index [x]) (index [x])
+            Swapper x y    -> sop .> embed swapgate (outDeg sop - 2) (index [x, y]) (index [x, y])
+            Phase theta xs -> sop .> embed (rzNgate theta (length xs))
+                                           (outDeg sop - length xs)
+                                           (index xs)
+                                           (index xs)
+            MCT xs x       -> sop .> embed (mctgate $ length xs)
+                                           (outDeg sop - length xs - 1)
+                                           (index $ xs ++ [x])
+                                           (index $ xs ++ [x])
+
+traceU :: (HasFeynmanControl) => String -> a -> a
+traceU msg val
+  | ctlEnabled fcfTrace_Synthesis_Pathsum_Unitary = Debug.Trace.trace msg val
+  | otherwise = val
+
 {-----------------------------------
  Passes
  -----------------------------------}
@@ -189,7 +227,7 @@ affineSimplifications sop = do
   output <- linearize $ outVals sop
   let circ = removeSwaps . dagger $ simplifyAffine output
   tell $ map toMCT circ
-  ctx <- gets snd
+  ctx <- gets idToIndex
   return $ sop .> computeActionInCtx circ ctx
 
 -- | Simplify the phase polynomial by applying phase gates
@@ -204,8 +242,14 @@ affineSimplifications sop = do
 --   may be to factorize the phase polynomial as pQ + R and substitute
 --   so that we have yQ + R, but this is a bit trickier and I need to check
 --   whether this will break some cases...
-phaseSimplifications :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-phaseSimplifications sop = do
+phaseSimplifications :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplifications
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = phaseSimplificationsMCRz
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz
+
+phaseSimplificationsMCRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplificationsMCRz sop = do
   let (subs, localSOP) = changeFrame sop
   ctx <- ketToScope localSOP
   let poly = collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP
@@ -213,6 +257,16 @@ phaseSimplifications sop = do
   let localSOP' = localSOP { phasePoly = phasePoly localSOP - poly }
   return $ revertFrame subs localSOP'
   where synthesizePhaseTerm (a, m) = tell [Phase (-a) (Set.toList $ vars m)]
+
+phaseSimplificationsMCTRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplificationsMCTRz = phaseSimplificationsMCRz
+
+phaseSimplificationsXAGRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplificationsXAGRz = phaseSimplificationsMCRz
+  -- assumes ids in ctx are [0..n-1], with no gaps
+  -- let idSBools = zip (Map.elems ctx) (map (rename (\(IVar i) -> revCtx ! i)) (outVals sop))
+  -- emitSBoolConstruction idSBools sop
+  -- else: emit affine synthesis
 
 -- | Simplify the output ket up to non-linear transformations
 --
@@ -245,20 +299,92 @@ nonlinearSimplifications = computeFixpoint where
 
 -- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
-finalize :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalize sop = do
-  ctx <- gets snd
+finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalize
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = finalizeAffineSynth
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = finalizeMCTSynth
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = finalizeXAGSynth
+
+finalizeAffineSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeAffineSynth sop = do
+  ctx <- gets idToIndex
   let input = Map.map (\i -> (bitI n i, False)) ctx
   let output = Map.map (\i -> bitvecOfPoly $ (outVals sop)!!i) ctx
   let circ = dagger $ affineSynth input output
-  tell $ map toMCT circ
-  ctx <- gets snd
-  return $ sop .> computeActionInCtx circ ctx
+  let gates = map toMCT circ
+  tell gates
+  applyExtract sop gates
   where n = inDeg sop
         bitvecOfPoly p = (foldr xor (bitI 0 0) . map bitvecOfVar . Set.toList $ vars p, getConstant p == 1)
         bitvecOfVar (IVar i) = bitI n i
         bitvecOfVar (PVar _) = error "Attempting to finalize a proper path-sum!"
         bitvecOfVar (FVar _) = error "Attempting to extract a path-sum with free variables!"
+
+finalizeMCTSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeMCTSynth sop = do
+  traceU ("finalizeMCTSynth " ++ show sop) $ return ()
+  prefix <- freshPrefix
+  -- ancID generates an ancilla ID to match a particular qubit ID
+  let ancID qID = prefix ++ "M" ++ qID
+  st <- get
+  let qIDs = Map.elems (indexToID st)
+  let ctx = foldr (uncurry Map.insert) (idToIndex st) (zip (map ancID qIDs) [outDeg sop..])
+  let revCtx = foldr (uncurry Map.insert) (indexToID st) (zip [outDeg sop..] (map ancID qIDs))
+  put (st {idToIndex=ctx, indexToID=revCtx})
+  traceU ("  prefix: " ++ prefix) $ return ()
+  let sopClassical = dropPhase sop
+  let sopClassicalInv = grind (PS.dagger sopClassical)
+  traceU ("  sopClassical: " ++ show sopClassical) $ return ()
+  traceU ("  sopClassicalInv: " ++ show sopClassicalInv) $ return ()
+  -- assumes ids in ctx are [0..n-1], with no gaps
+  let idSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassical))
+  let invIDSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassicalInv))
+  traceU ("  idSBools: " ++ show idSBools) $ return ()
+  traceU ("  invIDSBools: " ++ show invIDSBools) $ return ()
+  -- termMCTs gives the MCT computing one term (with inversion if needed)
+  let termMCTs target val termIDs
+        | val == 0 = [MCT termIDs target, MCT [] target]
+        | otherwise = [MCT termIDs target]
+  -- sboolMCTs gives a list of MCTs computing a particular SBool
+  let sboolMCTs targetID sbool =
+        concat [termMCTs targetID val (Set.toList (vars term))
+                | (val, term) <- toTermList sbool]
+  -- Compute the desired function, with the fresh ancillas as target
+  -- (reverse it because we generally are tell'ing the dagger of the circuit;
+  -- note for this implementation computing into fresh ancillas is Hermitian,
+  -- so self-inverse, therefore this is aesthetic more than functional)
+  let gates = reverse (concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) idSBools)
+  traceU ("  gates: " ++ show gates) $ return ()
+  -- Uncompute the inverse of the desired function, with input and output
+  -- reversed:
+  -- Since the function is reversible, computing the function from its input
+  -- into fresh qubits, and computing the inverse of the function from its
+  -- output into fresh qubits, both leave you with the same thing: the input
+  -- and the output, just in opposite places. We can exploit this to uncompute
+  -- the input by swapping (notionally) the input and output, and uncomputing
+  -- the inverse. This is the trick that people don't usually talk about from
+  -- section 3 of Bennett's 1989 paper (because they're preoccupied with
+  -- reversible pebbling which is in section 2).
+  let invGates = concatMap (\(qID, sbool) -> sboolMCTs qID (rename ancID sbool)) invIDSBools
+  traceU ("  invGates: " ++ show invGates) $ return ()
+  -- After the uncomputation of the inverse, the desired output needs to be in
+  -- the ancillas, and the inputs |0>'s, so we start by swapping everything
+  -- into place
+  tell [Swapper (ancID qID) qID | (qID, _) <- idSBools]
+  -- Emit the circuit
+  tell invGates
+  tell gates
+  -- And return the modified sop with our circuit applied: hopefully identity
+  applyExtract (tensor sop (identity (outDeg sop))) gates
+
+finalizeXAGSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeXAGSynth sop = do
+  ctx <- gets idToIndex
+  revCtx <- gets indexToID
+  -- assumes ids in ctx are [0..n-1], with no gaps
+  let idSBools = zip (Map.elems ctx) (map (rename (\(IVar i) -> revCtx ! i)) (outVals sop))
+  --emitSBoolConstruction idSBools sop
+  undefined
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -356,7 +482,7 @@ pushSwaps = reverse . snd . go (Map.empty, []) where
  -----------------------------------}
 
 -- | A single pass of the synthesis algorithm
-synthesizeFrontier :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizeFrontier sop = go (grind sop) where
   go sop
     | pathVars sop == 0 = synthesisPass sop >>= finalize
@@ -372,7 +498,7 @@ synthesizeFrontier sop = go (grind sop) where
       False -> strengthReduction sop' >>= synthesisPass >>= hLayer >>= normalize
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
-extractUnitary :: Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]
+extractUnitary :: (HasFeynmanControl) => Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]
 extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
   processWriter w = case runWriter w of
     (True, circ) -> Just $ daggerDep circ
@@ -384,7 +510,6 @@ extractUnitary ctx sop = processWriter $ evalStateT (go sop) ctx where
       else return $ isTrivial sop'
 
 -- | Resynthesizes a circuit
-resynthesizeCircuit :: [Primitive] -> Maybe [ExtractionGates]
+resynthesizeCircuit :: (HasFeynmanControl) => [Primitive] -> Maybe [ExtractionGates]
 resynthesizeCircuit xs = liftM pushSwaps $ extractUnitary (mkctx ctx) sop where
   (sop, ctx) = runState (computeAction xs) Map.empty
-

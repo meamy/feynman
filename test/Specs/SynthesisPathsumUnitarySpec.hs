@@ -15,6 +15,7 @@ import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced
 import qualified Feynman.Algebra.Pathsum.Balanced as PS
 import Feynman.Circuits
+import Feynman.Control
 import Feynman.Core
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Unitary
@@ -42,25 +43,6 @@ extractionAction gate = case gate of
   Hadamard _     -> hgate
   Phase theta xs -> rzNgate theta $ length xs
   MCT xs _       -> mctgate $ length xs
-
--- | Apply a circuit to a state
-applyExtract :: Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
-applyExtract sop xs = do
-  ctx <- gets snd
-  return $ foldl (absorbGate ctx) sop xs
-  where absorbGate ctx sop gate =
-          let index xs = ((Map.fromList $ zip [0..] [ctx!x | x <- xs])!)
-          in case gate of
-            Hadamard x     -> sop .> embed hgate (outDeg sop - 1) (index [x]) (index [x])
-            Swapper x y    -> sop .> embed swapgate (outDeg sop - 2) (index [x, y]) (index [x, y])
-            Phase theta xs -> sop .> embed (rzNgate theta (length xs))
-                                           (outDeg sop - length xs)
-                                           (index xs)
-                                           (index xs)
-            MCT xs x       -> sop .> embed (mctgate $ length xs)
-                                           (outDeg sop - length xs - 1)
-                                           (index $ xs ++ [x])
-                                           (index $ xs ++ [x])
 
 extract :: ExtractionState a -> Map ID Int -> (a, [ExtractionGates])
 extract st = runWriter . evalStateT st . mkctx
@@ -129,37 +111,37 @@ qftFull n = qft n ++ permute where
                 ["x" ++ show i | i <- reverse [(n+1)`div`2..(n-1)]]
 
 -- | Checks that the path sum of a Clifford+T circuit is indeed Unitary
-prop_Unitary_is_Unitary :: CliffordT -> Bool
+prop_Unitary_is_Unitary :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Unitary_is_Unitary (CliffordT xs) = isUnitary $ simpleAction xs
 
 -- | Checks that frame change is reversible
-prop_Frame_Reversible :: CliffordT -> Bool
+prop_Frame_Reversible :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Frame_Reversible (CliffordT xs) = sop == revertFrame subs localSOP where
   sop              = grind $ simpleAction xs
   (subs, localSOP) = changeFrame sop
 
 -- | Checks that extraction always succeeds for a unitary path sum
-prop_Clifford_plus_T_Extraction_Possible :: CliffordT -> Bool
+prop_Clifford_plus_T_Extraction_Possible :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Clifford_plus_T_Extraction_Possible (CliffordT xs) = isJust (resynthesizeCircuit xs)
 
 -- | Checks that the translation from Clifford+T to MCT is correct
-prop_Translation_Correct :: CliffordT -> Bool
+prop_Translation_Correct :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Translation_Correct (CliffordT xs) = grind sop == grind sop' where
   (sop, ctx) = runState (computeAction xs) Map.empty
   sop'       = fst $ extract (applyExtract (identity $ Map.size ctx) (map toExtraction xs)) ctx
 
 -- | Checks that affine simplifications are correct
-prop_Affine_Correctness :: CliffordT -> Bool
+prop_Affine_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Affine_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
   (sop', gates) = extract (affineSimplifications sop) ctx
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
 -- | Checks that phase simplifications are correct
-prop_Phase_Correctness :: CliffordT -> Bool
+prop_Phase_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Phase_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
-  (sop', gates) = extract (phaseSimplifications sop) ctx
+  (sop', gates) = let ?feynmanControl = defaultControl in extract (phaseSimplifications sop) ctx
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
 -- | Checks that nonlinear simplifications are correct
@@ -170,21 +152,21 @@ prop_Nonlinear_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
 -- | Checks that strength reduction is correct
-prop_Strength_Reduction_Correctness :: CliffordT -> Bool
+prop_Strength_Reduction_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Strength_Reduction_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
   (sop', gates) = extract (strengthReduction sop) ctx
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
 -- | Checks that each step of the synthesis algorithm is correct
-prop_Frontier_Correctness :: CliffordT -> Bool
+prop_Frontier_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Frontier_Correctness (CliffordT xs) = grind sop' == grind sop'' where
   (sop, ctx)    = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
   (sop', gates) = extract (synthesizeFrontier sop) ctx
   (sop'', _)    = extract (applyExtract sop gates) ctx
 
 -- | Checks that the overall algorithm is correct
-prop_Extraction_Correctness :: CliffordT -> Bool
+prop_Extraction_Correctness :: (HasFeynmanControl) => CliffordT -> Bool
 prop_Extraction_Correctness (CliffordT xs) = go where
   (sop, ctx) = (\(sop, ctx) -> (grind sop, ctx)) $ runState (computeAction xs) Map.empty
   gates      = extractUnitary (mkctx ctx) sop
@@ -210,6 +192,7 @@ ctx = mkctx $ initialctx
 
 spec :: Spec
 spec = do
+  let ?feynmanControl = defaultControl
   -- Failing tests commented out
   -- prop "The path sum of a Clifford+T circuit is indeed Unitary" prop_Unitary_is_Unitary
   prop "Frame change is reversible" prop_Frame_Reversible
