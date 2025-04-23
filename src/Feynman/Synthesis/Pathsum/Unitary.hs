@@ -328,14 +328,13 @@ finalizeMCTSynth sop = do
   let ancID qID = prefix ++ "M" ++ qID
   st <- get
   let qIDs = Map.elems (indexToID st)
-  let ctx = foldr (uncurry Map.insert) (idToIndex st) (zip (map ancID qIDs) [outDeg sop..])
-  let revCtx = foldr (uncurry Map.insert) (indexToID st) (zip [outDeg sop..] (map ancID qIDs))
+  let n = outDeg sop
+  let ctx = foldr (uncurry Map.insert) (idToIndex st) (zip (map ancID qIDs) [n..])
+  let revCtx = foldr (uncurry Map.insert) (indexToID st) (zip [n..] (map ancID qIDs))
   put (st {idToIndex=ctx, indexToID=revCtx})
   traceU ("  prefix: " ++ prefix) $ return ()
   let sopClassical = dropPhase sop
   let sopClassicalInv = grind (PS.dagger sopClassical)
-  traceU ("  sopClassical: " ++ show sopClassical) $ return ()
-  traceU ("  sopClassicalInv: " ++ show sopClassicalInv) $ return ()
   -- assumes ids in ctx are [0..n-1], with no gaps
   let idSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassical))
   let invIDSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassicalInv))
@@ -354,7 +353,6 @@ finalizeMCTSynth sop = do
   -- note for this implementation computing into fresh ancillas is Hermitian,
   -- so self-inverse, therefore this is aesthetic more than functional)
   let gates = reverse (concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) idSBools)
-  traceU ("  gates: " ++ show gates) $ return ()
   -- Uncompute the inverse of the desired function, with input and output
   -- reversed:
   -- Since the function is reversible, computing the function from its input
@@ -365,17 +363,19 @@ finalizeMCTSynth sop = do
   -- the inverse. This is the trick that people don't usually talk about from
   -- section 3 of Bennett's 1989 paper (because they're preoccupied with
   -- reversible pebbling which is in section 2).
-  let invGates = concatMap (\(qID, sbool) -> sboolMCTs qID (rename ancID sbool)) invIDSBools
-  traceU ("  invGates: " ++ show invGates) $ return ()
+  let invGates = concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) invIDSBools
   -- After the uncomputation of the inverse, the desired output needs to be in
   -- the ancillas, and the inputs |0>'s, so we start by swapping everything
   -- into place
-  tell [Swapper (ancID qID) qID | (qID, _) <- idSBools]
-  -- Emit the circuit
-  tell invGates
-  tell gates
+  let allGates = invGates ++ [Swapper (ancID qID) qID | (qID, _) <- idSBools] ++ gates
+  tell allGates
+  traceU ("  emitting:\n" ++ unlines (map (("    " ++) . show) allGates)) $ return ()
+  let extendedSOP = tensor sop (ket (replicate n 0))
+  extendedSOP' <- applyExtract extendedSOP allGates
+  let sop' = grind $ times extendedSOP' (tensor (identity n) (bra (replicate n 0)))
   -- And return the modified sop with our circuit applied: hopefully identity
-  applyExtract (tensor sop (identity (outDeg sop))) gates
+  put st
+  return sop'
 
 finalizeXAGSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeXAGSynth sop = do

@@ -45,6 +45,8 @@ import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
 
+import Debug.Trace (trace)
+
 import Benchmarks (runBenchmarks,
                    benchmarksSmall,
                    benchmarksMedium,
@@ -97,7 +99,7 @@ decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
           let circuitQubits  = DotQC.qubits qc ++ DotQC.params decl
               circuitInputs  = (Set.toList $ DotQC.inputs qc) ++ DotQC.params decl
               resynthesize c = case resynthesizeCircuit $ DotQC.toCliffordT c of
-                Nothing -> c
+                Nothing -> trace "WARNING: -decompile specified, but resynthesis failed" $ c
                 Just c' -> DotQC.fromExtractionBasis c'
           in
             decl { DotQC.body = resynthesize $ DotQC.body decl }
