@@ -9,14 +9,17 @@ Portability : portable
 
 module Feynman.Synthesis.Pathsum.Unitary where
 
-import Data.Semigroup ((<>))
-import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe, isJust)
+import Data.Bifunctor (first)
+import Data.Bits (xor)
+import Data.Foldable (foldl')
 import Data.List ((\\), find, isPrefixOf)
 import Data.Map (Map, (!))
+import Data.Maybe (mapMaybe, fromMaybe, fromJust, maybe, isJust)
+import Data.Semigroup ((<>))
 import Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
-import Data.Bits (xor)
+import Data.Tuple (swap)
 
 import Control.Applicative ((<|>))
 import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
@@ -248,6 +251,17 @@ phaseSimplifications
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz
 
+shavePseudoBoolean :: (HasFeynmanControl) => PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
+shavePseudoBoolean _ (-1) = []
+shavePseudoBoolean poly maxN =
+  traceU ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
+    (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
+  where
+    dyFrac = distribute (dMod2 1 maxN) sboolFrac
+    sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
+    oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
+    nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
+
 phaseSimplificationsMCRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsMCRz sop = do
   let (subs, localSOP) = changeFrame sop
@@ -259,14 +273,56 @@ phaseSimplificationsMCRz sop = do
   where synthesizePhaseTerm (a, m) = tell [Phase (-a) (Set.toList $ vars m)]
 
 phaseSimplificationsMCTRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-phaseSimplificationsMCTRz = phaseSimplificationsMCRz
+phaseSimplificationsMCTRz sop = do
+  let (subs, localSOP) = changeFrame sop
+  ctx <- ketToScope localSOP
+  let revCtx = (Map.fromList . map swap) (Map.toList ctx)
+  let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
+  -- TODO document why the local frame transformation is done
+  prefix <- freshPrefix
+  let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
+  -- Shavings, because we iteratively subtract out binary polynomials
+  -- for the pseudo-boolean, like shaving that precision level off,
+  -- from the highest power of 1 / 2^n to the lowest.
+  -- The takes a polynomial like 3 / 2^1 x_1 and separates it into
+  -- (1 / 2^1)(x_1) + (1 / 2^0)(x_1)
+  let sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
+  let mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
+  traceU ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
+  let (qVars, _) = unzip (Map.toAscList ctx)
+  let sboolMCTs targetID sbool = [MCT (Set.toList (vars term)) targetID | (_, term) <- toTermList sbool]
+  let sboolGates = concat [sboolMCTs ancN p | (ancN, _, p) <- sboolShavings]
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+  let ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
+  let rzGates = sboolGates ++ phaseGates ++ reverse sboolGates
+  traceU ("Phase SBools " ++ show sboolShavings) $ return ()
+  emitGates sop rzGates
 
 phaseSimplificationsXAGRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-phaseSimplificationsXAGRz = phaseSimplificationsMCRz
-  -- assumes ids in ctx are [0..n-1], with no gaps
-  -- let idSBools = zip (Map.elems ctx) (map (rename (\(IVar i) -> revCtx ! i)) (outVals sop))
-  -- emitSBoolConstruction idSBools sop
-  -- else: emit affine synthesis
+phaseSimplificationsXAGRz sop = do
+  let (subs, localSOP) = changeFrame sop
+  ctx <- ketToScope localSOP
+  let revCtx = (Map.fromList . map swap) (Map.toList ctx)
+  let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
+  -- TODO document why the local frame transformation is done
+  prefix <- freshPrefix
+  let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
+  -- Shavings, because we iteratively subtract out binary polynomials
+  -- for the pseudo-boolean, like shaving that precision level off,
+  -- from the highest power of 1 / 2^n to the lowest.
+  -- The takes a polynomial like 3 / 2^1 x_1 and separates it into
+  -- (1 / 2^1)(x_1) + (1 / 2^0)(x_1)
+  let sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
+  let mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
+  traceU ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
+  let (qVars, _) = unzip (Map.toAscList ctx)
+  let sboolMCTs targetID sbool = [MCT (Set.toList (vars term)) targetID | (_, term) <- toTermList sbool]
+  let sboolGates = concat [sboolMCTs ancN p | (ancN, _, p) <- sboolShavings]
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+  let ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
+  let rzGates = sboolGates ++ phaseGates ++ reverse sboolGates
+  traceU ("Phase SBools " ++ show sboolShavings) $ return ()
+  emitGates sop rzGates
 
 -- | Simplify the output ket up to non-linear transformations
 --
@@ -326,12 +382,9 @@ finalizeMCTSynth sop = do
   prefix <- freshPrefix
   -- ancID generates an ancilla ID to match a particular qubit ID
   let ancID qID = prefix ++ "M" ++ qID
-  st <- get
-  let qIDs = Map.elems (indexToID st)
+  revCtx <- gets indexToID
+  let qIDs = Map.elems revCtx
   let n = outDeg sop
-  let ctx = foldr (uncurry Map.insert) (idToIndex st) (zip (map ancID qIDs) [n..])
-  let revCtx = foldr (uncurry Map.insert) (indexToID st) (zip [n..] (map ancID qIDs))
-  put (st {idToIndex=ctx, indexToID=revCtx})
   traceU ("  prefix: " ++ prefix) $ return ()
   let sopClassical = dropPhase sop
   let sopClassicalInv = grind (PS.dagger sopClassical)
@@ -367,15 +420,31 @@ finalizeMCTSynth sop = do
   -- After the uncomputation of the inverse, the desired output needs to be in
   -- the ancillas, and the inputs |0>'s, so we start by swapping everything
   -- into place
-  let allGates = invGates ++ [Swapper (ancID qID) qID | (qID, _) <- idSBools] ++ gates
-  tell allGates
-  traceU ("  emitting:\n" ++ unlines (map (("    " ++) . show) allGates)) $ return ()
-  let extendedSOP = tensor sop (ket (replicate n 0))
-  extendedSOP' <- applyExtract extendedSOP allGates
-  let sop' = grind $ times extendedSOP' (tensor (identity n) (bra (replicate n 0)))
-  -- And return the modified sop with our circuit applied: hopefully identity
+  emitGates sop (invGates ++ [Swapper (ancID qID) qID | (qID, _) <- idSBools] ++ gates)
+
+emitGates :: (HasFeynmanControl) => Pathsum DMod2 -> [ExtractionGates] -> ExtractionState (Pathsum DMod2)
+emitGates sop gates = do
+  st <- get
+  let ancillaIDs = Set.toList (Set.fromList (concatMap (filter (`Map.notMember` idToIndex st) . targetIDs) gates))
+  let n = outDeg sop
+  let m = length ancillaIDs
+  traceU ("  emit - ancillaIDs: " ++ show ancillaIDs) $ return ()
+  let ctx = foldr (uncurry Map.insert) (idToIndex st) (zip ancillaIDs [outDeg sop..])
+  let revCtx = foldr (uncurry Map.insert) (indexToID st) (zip [outDeg sop..] ancillaIDs)
+  put (st { idToIndex = ctx, indexToID = revCtx })
+  tell gates
+  traceU ("  emitting:\n" ++ unlines (map (("    " ++) . show) gates)) $ return ()
+  let extendedSOP = tensor sop (ket (replicate m 0))
+  extendedSOP' <- applyExtract extendedSOP gates
+  let sop' = grind $ times extendedSOP' (tensor (identity n) (bra (replicate m 0)))
   put st
+  -- And return the modified sop with our circuit applied: hopefully identity
   return sop'
+  where targetIDs (MCT _ tgt) = [tgt]
+        targetIDs (Phase _ _) = []
+        targetIDs (Swapper tgtA tgtB) = [tgtA, tgtB]
+        targetIDs (Hadamard tgt) = [tgt]
+
 
 finalizeXAGSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeXAGSynth sop = do
@@ -422,7 +491,7 @@ strengthReduction sop = do
               return $ (substitute [x] (ofVar y + ofVar x) sop) .>
                        embed cxgate (outDeg sop - 2) f f
       foldM applySubst sop xs
-  
+
 -- | Hadamard step
 hLayer :: Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 hLayer sop = foldM go sop (zip [0..] $ outVals sop) where
