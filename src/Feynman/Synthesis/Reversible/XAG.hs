@@ -18,6 +18,7 @@ The parameters we can modulate are:
 -}
 
 -- returns ExtractionGates, unused ancilla names
+-- inputNames and outputNames must be disjoint
 inputSavingXAGSynth :: XAG.Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
 inputSavingXAGSynth funcXAG inputNames outputNames ancillaNames = undefined
 
