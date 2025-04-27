@@ -345,7 +345,7 @@ equivalentToTrivialReorder xCirc yCirc =
 
 makeFreshPrimitiveIDs :: [Primitive] -> [String]
 makeFreshPrimitiveIDs graph =
-  ["@" ++ show n | n <- [nextN ..]]
+  ['@' : show n | n <- [nextN ..]]
   where
     -- Scan the qubit names used by the graph, and find an n such that no ID
     -- with the prefix @(n + k), k >= 0, is in use -- this ensures no

@@ -39,12 +39,9 @@ prop_XAGToMCTsEvalsEquivalent :: (HasFeynmanControl) => Gen Bool
 prop_XAGToMCTsEvalsEquivalent = do
   xag <- generateXAG
 
-  let inOutIDs = [q i | i <- [1 .. max (length (XAG.inputIDs xag)) (length (XAG.outputIDs xag))]]
-  inOutIDs' <- shuffle inOutIDs
-  let inIDs = take (length (XAG.inputIDs xag)) inOutIDs'
-      outIDs = take (length (XAG.outputIDs xag)) inOutIDs'
+  let inIDs = map q [1 .. length (XAG.inputIDs xag)]
 
-      (mcts, _) = toMCTs xag inIDs outIDs idGen
+      (outIDs, mcts, _) = toMCTs xag inIDs idGen
       allIDsSet = foldl' Set.union Set.empty . map (Set.fromList . mctIDs) $ mcts
       ancillaIDs = Set.toList (allIDsSet \\ Set.fromList inIDs)
 
@@ -52,7 +49,7 @@ prop_XAGToMCTsEvalsEquivalent = do
 
       mctRes =
         map
-          ( (\m -> map (m !) outIDs)
+          ( (\m -> map (\k -> Map.findWithDefault False k m) outIDs)
               . Map.fromList
               . evalMCTs mcts
               . ([(a, False) | a <- ancillaIDs] ++)

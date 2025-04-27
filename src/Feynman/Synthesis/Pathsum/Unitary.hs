@@ -22,6 +22,7 @@ import qualified Data.Map as Map
 import Data.Tuple (swap)
 
 import Control.Applicative ((<|>))
+import Control.Exception (assert)
 import Control.Monad (foldM, mapM, mfilter, liftM, (>=>), msum)
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Strict (StateT, get, gets, put, runState, evalState, evalStateT)
@@ -44,11 +45,12 @@ import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
-
-import Feynman.Verification.Symbolic
-import Feynman.Synthesis.Reversible.XAG (inputSavingXAGSynth)
+import Feynman.Synthesis.Reversible.XAG (inputSavingXAGSynth, minimizeXAG, inputErasingXAGSynth)
 import qualified Feynman.Synthesis.XAG.Graph as XAG
-import Control.Exception (assert)
+import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
+import qualified Feynman.Synthesis.XAG.Simplify as XAG
+import Feynman.Synthesis.XAG.Util (fromSBools)
+import Feynman.Verification.Symbolic
 
 {-----------------------------------
  Types
@@ -79,7 +81,7 @@ freshPrefix = do
   st <- get
   let curI = curPrefixI st
   let ctx = idToIndex st
-  let pfx = "@" ++ show curI ++ "_"
+  let pfx = "_" ++ show curI ++ "_"
   put (st { curPrefixI = curI + 1 })
   case Map.lookupGE pfx ctx of
     Nothing -> return pfx
@@ -228,7 +230,7 @@ emitGates sop gates = do
   let sop' = grind $ times extendedSOP' (tensor (identity n) (bra (replicate m 0)))
   put st
   -- And return the modified sop with our circuit applied: hopefully identity
-  return sop'
+  return $ traceU ("  after apply: " ++ show sop') sop'
   where targetIDs (MCT _ tgt) = [tgt]
         targetIDs (Phase _ _) = []
         targetIDs (Swapper tgtA tgtB) = [tgtA, tgtB]
@@ -413,10 +415,10 @@ finalizeMCTSynth sop = do
   let n = outDeg sop
   traceU ("  prefix: " ++ prefix) $ return ()
   let sopClassical = dropPhase sop
-  let sopClassicalInv = grind (PS.dagger sopClassical)
+  let invopClassical = grind (PS.dagger sopClassical)
   -- assumes ids in ctx are [0..n-1], with no gaps
   let idSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassical))
-  let invIDSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassicalInv))
+  let invIDSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals invopClassical))
   traceU ("  idSBools: " ++ show idSBools) $ return ()
   traceU ("  invIDSBools: " ++ show invIDSBools) $ return ()
   -- termMCTs gives the MCT computing one term (with inversion if needed)
@@ -432,16 +434,7 @@ finalizeMCTSynth sop = do
   -- note for this implementation computing into fresh ancillas is Hermitian,
   -- so self-inverse, therefore this is aesthetic more than functional)
   let gates = reverse (concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) idSBools)
-  -- Uncompute the inverse of the desired function, with input and output
-  -- reversed:
-  -- Since the function is reversible, computing the function from its input
-  -- into fresh qubits, and computing the inverse of the function from its
-  -- output into fresh qubits, both leave you with the same thing: the input
-  -- and the output, just in opposite places. We can exploit this to uncompute
-  -- the input by swapping (notionally) the input and output, and uncomputing
-  -- the inverse. This is the trick that people don't usually talk about from
-  -- section 3 of Bennett's 1989 paper (because they're preoccupied with
-  -- reversible pebbling which is in section 2).
+  -- Uncompute the inverse of the desired function
   let invGates = concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) invIDSBools
   -- After the uncomputation of the inverse, the desired output needs to be in
   -- the ancillas, and the inputs |0>'s, so we start by swapping everything
@@ -452,149 +445,18 @@ finalizeXAGSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pat
 finalizeXAGSynth sop = do
   traceU ("finalizeXAGSynth " ++ show sop) $ return ()
   prefix <- freshPrefix
-  -- ancID generates an ancilla ID to match a particular qubit ID
-  let ancID qID = prefix ++ "M" ++ qID
   revCtx <- gets indexToID
   let qIDs = Map.elems revCtx
   let n = outDeg sop
   traceU ("  prefix: " ++ prefix) $ return ()
   let sopClassical = dropPhase sop
-  let sopClassicalInv = grind (PS.dagger sopClassical)
-  -- assumes ids in ctx are [0..n-1], with no gaps
-  let idSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassical))
-  let invIDSBools = zip qIDs (map (rename (\(IVar i) -> revCtx ! i)) (outVals sopClassicalInv))
-  traceU ("  idSBools: " ++ show idSBools) $ return ()
-  traceU ("  invIDSBools: " ++ show invIDSBools) $ return ()
-  -- termMCTs gives the MCT computing one term (with inversion if needed)
-  let termMCTs target val termIDs
-        | val == 0 = [MCT termIDs target, MCT [] target]
-        | otherwise = [MCT termIDs target]
-  -- Compute the desired function, with the fresh ancillas as target
-  -- (reverse it because we generally are tell'ing the dagger of the circuit)
-  let gates = reverse (concatMap (\(qID, sbool) -> inputSavingXAGSynth (ancID qID) sbool) idSBools)
-  -- Uncompute the inverse of the desired function, with input and output
-  -- reversed:
-  -- Since the function is reversible, computing the function from its input
-  -- into fresh qubits, and computing the inverse of the function from its
-  -- output into fresh qubits, both leave you with the same thing: the input
-  -- and the output, just in opposite places. We can exploit this to uncompute
-  -- the input by swapping (notionally) the input and output, and uncomputing
-  -- the inverse. This is the trick that people don't usually talk about from
-  -- section 3 of Bennett's 1989 paper (because they're preoccupied with
-  -- reversible pebbling which is in section 2).
-  let invGates = concatMap (\(qID, sbool) -> sboolMCTs (ancID qID) sbool) invIDSBools
-  -- After the uncomputation of the inverse, the desired output needs to be in
-  -- the ancillas, and the inputs |0>'s, so we start by swapping everything
-  -- into place
-  emitGates sop (invGates ++ [Swapper (ancID qID) qID | (qID, _) <- idSBools] ++ gates)
+  let invopClassical = grind (PS.dagger sopClassical)
 
--- minMultSatXAGTransformers :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph]
--- minMultSatXAGTransformers =
---   [ XAG.mergeStructuralDuplicates,
---     (\g -> fromMaybe g (XAG.resynthesizeMinMultSat g))
---   ]
-
-synthesizeSBoolsXAG :: (HasFeynmanControl) => [XAG.Graph -> XAG.Graph] -> String -> [(ID, SBool ID)] -> [ExtractionGates]
-synthesizeSBoolsXAG transformers prefix idSBools =
-  traceU ("XAG before transformation: " ++ show rawXAG) $
-    traceU ("XAG transformed: " ++ show finXAG) $
-      gates ++ copyOuts ++ swapOuts
-  where
-    swapOuts = [Swapper ancID qID | (ancID, (qID, _)) <- zip swapAncNames idSBools]
-    copyOuts = [MCT [outID] ancID | (outID, ancID) <- zip outNames swapAncNames]
-
-    swapAncNames = [prefix ++ "S" ++ show n | n <- [0 .. length outNames - 1]]
-
-    (gates, outNames) = xagToMCTs prefix finXAG allInputs
-    finXAG = foldr ($) rawXAG transformers
-    rawXAG = XAG.Graph {XAG.nodes = rawNodes, XAG.inputIDs = rawInIDs, XAG.outputIDs = rawOutIDs}
-
-    rawNodes :: [XAG.Node]
-    rawOutIDs :: [Int]
-    (rawNodes, rawOutIDs) = makeNodes firstFree idSBools
-      where makeNodes :: Int -> [(ID, SBool ID)] -> ([XAG.Node], [Int])
-            makeNodes startID [] = ([], [])
-            makeNodes startID ((outID, sbool) : remain) =
-              (sboolNodes ++ remainNodes, finTermID : remainOutIDs)
-              where
-                (remainNodes, remainOutIDs) = makeNodes nextStartID remain
-                sboolNodes :: [XAG.Node]
-                nextStartID :: Int
-                (nextStartID, finTermID, sboolNodes) = makeSBoolNodes startID (toTermList sbool)
-
-            makeSBoolNodes :: Int -> [(FF2, Monomial ID a)] -> (Int, Int, [XAG.Node])
-            makeSBoolNodes allocID ((val, m) : remain) =
-              (finAllocID, finTermID, termNodes ++ remainNodes)
-              where
-                (finAllocID, finTermID, remainNodes) =
-                  makeSBoolNodesCont termAllocID termID remain
-                (termAllocID, termID, termNodes) = makeTermNodes allocID (Set.toList (vars m))
-
-            makeSBoolNodesCont allocID polyID [] = (allocID, polyID, [])
-            makeSBoolNodesCont allocID polyID ((val, m) : remain)
-              | val == 1 = (finAllocID, finTermID, termNodes ++ xorNode : invNodes ++ remainNodes)
-              | otherwise = error "I thought inverted terms weren't used"
-              where
-                (finAllocID, finTermID, remainNodes) =
-                  makeSBoolNodesCont (finPolyID + 1) finPolyID remain
-                (finPolyID, invNodes) =
-                  if val == 1 then (termAllocID, [])
-                              else (termAllocID + 1, [XAG.Not (termAllocID + 1) termAllocID])
-                xorNode = XAG.Xor termAllocID polyID termID
-                (termAllocID, termID, termNodes) = makeTermNodes allocID (Set.toList (vars m))
-
-            makeTermNodes :: Int -> [ID] -> (Int, Int, [XAG.Node])
-            -- zero-length term disallowed
-            makeTermNodes allocID (mID : remain) = makeTermNodesCont allocID (idMap ! mID) remain
-
-            makeTermNodesCont allocID termID [] = (allocID, termID, [])
-            makeTermNodesCont allocID termID (mID : remain) =
-              (finAllocID, finTermID, XAG.And allocID termID (idMap ! mID) : remainNodes)
-              where
-                (finAllocID, finTermID, remainNodes) = makeTermNodesCont (allocID + 1) allocID remain
-
-    rawInIDs = [2..(firstFree - 1)]
-    firstFree = 2 + length allInputs
-    idMap = Map.fromList (zip allInputs [2 ..])
-    allInputs = Set.toAscList $
-      foldr Set.union Set.empty
-        (concatMap ((map (vars . snd) . toTermList) . snd) idSBools)
-
-xagToMCTs :: (HasFeynmanControl) => String -> XAG.Graph -> [ID] -> ([ExtractionGates], [ID])
-xagToMCTs prefix g qNames =
-  -- qNames, outNames disjoint
-  -- qNames labels every graph input
-  assert (all (`Set.notMember` Set.fromList qNames) outNames) $
-    assert (length (XAG.inputIDs g) == length qNames) $
-      (gates, outNames)
-  where
-    outNames = map (idMap !) (XAG.outputIDs g)
-
-    gates = concatMap nodeToMCTs (XAG.nodes g)
-
-    nodeToMCTs :: XAG.Node -> [ExtractionGates]
-    nodeToMCTs (XAG.Const nID False) = []
-    nodeToMCTs (XAG.Const nID True) = [MCT [] (idMap ! nID)]
-    nodeToMCTs (XAG.Not nID xID) = do
-      let thisNode = idMap ! nID
-          xNode = idMap ! xID
-       in [MCT [xNode] thisNode, MCT [] thisNode]
-    nodeToMCTs (XAG.And nID xID yID) = do
-      let thisNode = idMap ! nID
-          xNode = idMap ! xID
-          yNode = idMap ! yID
-       in [MCT [xNode, yNode] thisNode]
-    nodeToMCTs (XAG.Xor nID xID yID) =
-      let thisNode = idMap ! nID
-          xNode = idMap ! xID
-          yNode = idMap ! yID
-       in [MCT [xNode] thisNode, MCT [yNode] thisNode]
-
-    idMap = Map.fromList (zip (XAG.inputIDs g) qNames ++ nodeIDNames)
-    nodeIDNames = [(nID, prefix ++ "X" ++ show nID) | nID <- nodeIDs]
-    nodeIDs = map XAG.nodeID (XAG.nodes g)
-
-
+  let fwdXAG = minimizeXAG (fromSBools n (outVals sopClassical))
+  let revXAG = minimizeXAG (fromSBools n (outVals invopClassical))
+  let (xagGates, _) = inputErasingXAGSynth fwdXAG revXAG qIDs [prefix ++ show i | i <- [1..]]
+  -- reverse, because we generally are tell'ing the dagger of the circuit
+  emitGates sop (reverse xagGates)
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --
@@ -691,6 +553,7 @@ pushSwaps = reverse . snd . go (Map.empty, []) where
  Extraction
  -----------------------------------}
 
+{-
 -- | A single pass of the synthesis algorithm
 synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 synthesizeFrontier sop = go (grind sop) where
@@ -706,6 +569,38 @@ synthesizeFrontier sop = go (grind sop) where
     case pathVars sop' < pathVars sop of
       True  -> return sop'
       False -> strengthReduction sop' >>= synthesisPass >>= hLayer >>= normalize
+--}
+
+--{-
+-- | A single pass of the synthesis algorithm
+synthesizeFrontier :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+synthesizeFrontier sop =
+  traceU ("Synthesizing " ++ show sop) $
+    go (grind sop)
+  where
+    go sop
+      | pathVars sop == 0 = do
+        traceU ("finalizing, before synthesisPass: " ++ show sop) $ return ()
+        sop' <- synthesisPass sop
+        traceU ("finalizing, after synthesisPass: " ++ show sop') $ return ()
+        finalize sop'
+      | otherwise = do
+        traceU ("reducing, before synthesisPass: " ++ show sop) $ return ()
+        sop' <- synthesisPass sop
+        traceU ("reducing, after synthesisPass: " ++ show sop') $ return ()
+        reducePaths sop'
+    synthesisPass =
+      affineSimplifications
+        >=> phaseSimplifications
+        >=> nonlinearSimplifications
+        >=> phaseSimplifications
+    reducePaths sop = do
+      sop' <- hLayer sop >>= normalize
+      ( if pathVars sop' < pathVars sop
+          then return sop'
+          else strengthReduction sop' >>= synthesisPass >>= hLayer >>= normalize
+        )
+--}
 
 -- | Extract a Unitary path sum. Returns Nothing if unsuccessful
 extractUnitary :: (HasFeynmanControl) => Ctx -> Pathsum DMod2 -> Maybe [ExtractionGates]

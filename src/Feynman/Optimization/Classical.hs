@@ -101,8 +101,8 @@ resynthesizeClassical circ inputIDs careOutIDs freshIDs =
       -- 5. translate the resynthesized XAG back into a circuit
       -- This will allocate plenty ancillas, but we deal with that after the
       -- reknitting
-      (resynthMCTs, resynthFreshIDs) =
-        toMCTs resynthXAG initialInOrder initialOutOrder unravelFreshIDs
+      (resynthMCTs, resynthFreshIDs) = undefined
+        -- toMCTs resynthXAG initialInOrder initialOutOrder unravelFreshIDs
 
       -- 6. reknit the circuit using the saved stitches
       reknitCirc = reknit resynthMCTs stitches

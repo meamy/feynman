@@ -127,9 +127,11 @@ data MCTState = MCTState
     msMCTsRev :: [ExtractionGates]
   }
 
-toMCTs :: Graph -> [ID] -> [ID] -> ([ID], [ExtractionGates])
+toMCTs :: Graph -> [ID] -> [ID] -> ([ID], [ExtractionGates], [ID])
 toMCTs xag inIDs idSource =
-  (map (msNodeMap mctState !) (outputIDs xag), reverse (msMCTsRev mctState))
+  (map (msNodeMap mctState !) (outputIDs xag),
+    reverse (msMCTsRev mctState),
+    msRemainIDs mctState)
   where
     (_, mctState) = runState (mapM_ addMCTOf (nodes xag)) initMCTState
     initMCTState =
