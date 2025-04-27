@@ -94,15 +94,30 @@ optimizeDotQC f qc = qc { DotQC.decls = map go $ DotQC.decls qc }
             decl { DotQC.body = wrap (f circuitQubits circuitInputs) $ DotQC.body decl }
 
 decompileDotQC :: (HasFeynmanControl) => DotQC.DotQC -> DotQC.DotQC
-decompileDotQC qc = qc { DotQC.decls = map go $ DotQC.decls qc }
+decompileDotQC qc = qc { DotQC.decls = newDecls,
+                         DotQC.qubits = newQubits }
   where go decl =
-          let circuitQubits  = DotQC.qubits qc ++ DotQC.params decl
-              circuitInputs  = (Set.toList $ DotQC.inputs qc) ++ DotQC.params decl
-              resynthesize c = case resynthesizeCircuit $ DotQC.toCliffordT c of
+          let resynthesize c = case resynthesizeCircuit $ DotQC.toCliffordT c of
                 Nothing -> trace "WARNING: -decompile specified, but resynthesis failed" $ c
                 Just c' -> DotQC.fromExtractionBasis c'
           in
             decl { DotQC.body = resynthesize $ DotQC.body decl }
+        
+        -- All the qubits referenced by the gates in the decl, except for the params
+        declRefs :: DotQC.Decl -> Set.Set ID
+        declRefs (DotQC.Decl { DotQC.params = params, DotQC.body = body }) =
+          foldl' (flip Set.insert) Set.empty (concatMap gateRefs body) Set.\\ Set.fromList params
+        
+        -- All the qubits referenced by some particular gate
+        gateRefs (DotQC.Gate _ _ qbs) = qbs
+        gateRefs (DotQC.ParamGate _ _ _ qbs) = qbs
+
+        newDecls = map go $ DotQC.decls qc
+        decompileQubitSet = foldl' Set.union Set.empty (map declRefs newDecls)
+        -- The original qubits, plus any qubits in the decls that aren't in the original list
+        newQubits = DotQC.qubits qc ++ Set.toList (decompileQubitSet Set.\\ Set.fromList (DotQC.qubits qc))
+
+
 
 dotQCPass :: (HasFeynmanControl) => Pass -> (DotQC.DotQC -> DotQC.DotQC)
 dotQCPass pass = case pass of
