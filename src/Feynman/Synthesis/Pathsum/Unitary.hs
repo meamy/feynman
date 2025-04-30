@@ -81,7 +81,7 @@ freshPrefix = do
   st <- get
   let curI = curPrefixI st
   let ctx = idToIndex st
-  let pfx = "_" ++ show curI ++ "_"
+  let pfx = show curI ++ "A"
   put (st { curPrefixI = curI + 1 })
   case Map.lookupGE pfx ctx of
     Nothing -> return pfx
@@ -274,10 +274,11 @@ affineSimplifications sop = do
 --   so that we have yQ + R, but this is a bit trickier and I need to check
 --   whether this will break some cases...
 phaseSimplifications :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-phaseSimplifications
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = phaseSimplificationsMCRz
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz
+phaseSimplifications sop
+  | phasePoly (grind sop) == 0 = return sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = phaseSimplificationsMCRz sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz sop
 
 shavePseudoBoolean :: (HasFeynmanControl) => PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
 shavePseudoBoolean _ (-1) = []
@@ -384,10 +385,11 @@ nonlinearSimplifications = computeFixpoint where
 -- | Assuming the ket is in the form |A(x1...xn) + b>, synthesizes
 --   the transformation |x1...xn> -> |A(x1...xn) + b>
 finalize :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
-finalize
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = finalizeAffineSynth
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = finalizeMCTSynth
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = finalizeXAGSynth
+finalize sop
+  | isIdentity (dropPhase (grind sop)) = return sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = finalizeAffineSynth sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = finalizeMCTSynth sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = finalizeXAGSynth sop
 
 finalizeAffineSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeAffineSynth sop = do

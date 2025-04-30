@@ -16,7 +16,7 @@ inputSavingXAGSynth xag inputNames outputNames ancillaNames =
   (gates ++ zipWith (\q c -> MCT [q] c) rawOutNames copyNames, ancillaNames'')
   where
     (copyPrefix, ancillaNames') = (head ancillaNames, tail ancillaNames)
-    copyNames = map ((copyPrefix ++ "_") ++) inputNames
+    copyNames = map (copyPrefix ++) inputNames
     (rawOutNames, gates, ancillaNames'') = toMCTs xag inputNames ancillaNames'
 
 -- take a pair of a boolean function and its inverse, and synthesize input-erasing
@@ -53,7 +53,7 @@ inputErasingXAGSynth fwdXAG revXAG inoutNames ancillaNames =
   )
   where
     (copyPrefix, ancillaNames') = (head ancillaNames, tail ancillaNames)
-    copyNames = map ((copyPrefix ++ "_") ++) inoutNames
+    copyNames = map (copyPrefix ++) inoutNames
 
     (fwdOutIDs, xagGates, ancillaNames'') = toMCTs fwdXAG inoutNames ancillaNames'
     fwdCopyGates = zipWith (\q c -> MCT [q] c) fwdOutIDs copyNames
