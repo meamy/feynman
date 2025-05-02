@@ -12,8 +12,6 @@ module Feynman.Frontend.OpenQASM3.Lexer
 where
 
 import Data.Char (chr)
-import Debug.Trace (trace)
-import Feynman.Frontend.OpenQASM3.Ast
 import Feynman.Frontend.OpenQASM3.Syntax
 
 }
@@ -326,11 +324,9 @@ data Lexeme = Lexeme {lexemeSource :: SourceRef, lexemeToken :: Token}
   deriving (Eq, Read, Show)
 
 makeLexeme :: Token -> AlexInput -> Int -> Alex Lexeme
--- makeLexeme token (_, _, _, str) len | trace ("makeLexeme from \"" ++ (take len str) ++ "\"") False = undefined
 makeLexeme token ((AlexPn _ l c), _, _, str) len = return (Lexeme (TextRef {sourceModule="", sourceLine=l, sourceColumn=Just c}) token)
 
 makeLexemeCat :: (String -> Token) -> AlexInput -> Int -> Alex Lexeme
--- makeLexemeCat mkToken (_, _, _, str) len | trace ("makeLexemeCat from \"" ++ (take len str) ++ "\"") False = undefined
 makeLexemeCat mkToken ((AlexPn _ l c), _, _, str) len = return (Lexeme (TextRef {sourceModule="", sourceLine=l, sourceColumn=Just c}) $ mkToken (take len str))
 
 alexEOF = return (Lexeme NilRef EofToken)

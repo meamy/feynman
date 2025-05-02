@@ -2,8 +2,10 @@
 
 module Feynman.Frontend.OpenQASM3.Syntax
   ( ParseNode,
+    Node (..),
     Token (..),
     Tag (..),
+    SourceRef(..),
     isEmptyStatement,
     pruneEmptyStatements,
     pretty,
@@ -37,13 +39,24 @@ where
 import Data.Char
 import Data.List (intercalate, stripPrefix)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Debug.Trace (trace)
-import Feynman.Frontend.OpenQASM3.Ast
+
 import Numeric
 import Text.Read (readMaybe)
 
+{- Syntax trees -}
+data SourceRef where
+  NilRef :: SourceRef
+  TextRef :: {sourceModule :: String, sourceLine :: Int, sourceColumn :: Maybe Int} -> SourceRef
+  deriving (Eq, Read, Show)
+
+data Node t c where
+  NilNode :: Node t c
+  Node :: {tag :: t, children :: [Node t c], context :: c} -> Node t c
+  deriving (Eq, Read, Show)
+
 type ParseNode = Node Tag SourceRef
 
+{- Tokens -}
 data Token
   = EofToken
   | OpenqasmToken
@@ -269,6 +282,10 @@ data Tag
   | ArgumentDefinition -- [{Scalar,Qubit,Creg,Qreg,*ArrayRef}TypeSpec, Identifier]
   | List -- [element..]
   deriving (Eq, Read, Show)
+
+isNilNode :: Node t c -> Bool
+isNilNode NilNode = True
+isNilNode _ = False
 
 isEmptyStatement :: Node Tag c -> Bool
 isEmptyStatement NilNode = True

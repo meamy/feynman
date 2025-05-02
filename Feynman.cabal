@@ -58,7 +58,6 @@ library
                        Feynman.Frontend.OpenQASM.Syntax
                        Feynman.Frontend.OpenQASM.Lexer
                        Feynman.Frontend.OpenQASM.Parser
-                       Feynman.Frontend.OpenQASM3.Ast
                        Feynman.Frontend.OpenQASM3.Chatty
                        Feynman.Frontend.OpenQASM3.Lexer
                        Feynman.Frontend.OpenQASM3.Parser

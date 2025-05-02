@@ -9,17 +9,18 @@ import qualified Data.Map as Map
 import Numeric
 import Text.Read (readMaybe)
 
-import Feynman.Frontend.OpenQASM3.Ast
 import Feynman.Frontend.OpenQASM3.Syntax
-import Feynman.Core hiding (subst, Decl)
+import Feynman.Core hiding (subst)
 import Feynman.Synthesis.Phase
+
+data Qasm3Decl c = Qasm3Decl String [String] [String] (Node Tag c) deriving (Show)
 
 -- For disabling tracing until these transformations
 -- can be integrating with a logging monad
 trace :: String -> a -> a
 trace _ a = a
 
--- Adds unique id nuumbers to each node for identification
+-- | Adds unique id nuumbers to each node for identification
 decorateIDs :: Node Tag c -> Node Tag Int
 decorateIDs node = evalState (go node) 0 where
   go NilNode = return NilNode
@@ -28,8 +29,6 @@ decorateIDs node = evalState (go node) 0 where
     modify (+1)
     stmts' <- mapM go stmts
     return (Node t stmts' i)
-
-data Decl c = Decl String [String] [String] (Node Tag c) deriving (Show)
 
 -- | Retrieves the identifier from an identifier node
 --
@@ -123,7 +122,7 @@ inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
   go NilNode = return NilNode
   go node@(Node GateStmt [ident, params, args, stmts] c) = do
     stmts' <- go stmts
-    modify (Map.insert (getIdent ident) $ Decl (getIdent ident) (map getIdent $ getList params) (map getIdent $ getList args) stmts')
+    modify (Map.insert (getIdent ident) $ Qasm3Decl (getIdent ident) (map getIdent $ getList params) (map getIdent $ getList args) stmts')
     return NilNode
   go node@(Node GateCallStmt [modifiers, target, params, maybeTime, gateArgs] c)
     | getIdent target == "ccx" = do
@@ -149,7 +148,7 @@ inlineGateCalls node = squashScopes $ evalState (go node) Map.empty where
         ctx <- get
         case Map.lookup (getIdent target) ctx of
           Nothing                          -> return node
-          Just (Decl _ fparams fargs body) ->
+          Just (Qasm3Decl _ fparams fargs body) ->
             let substs = Map.fromList $ (zip fparams $ getList params) ++ (zip fargs $ getList gateArgs) in
               return $ subst substs body
   go (Node tag children c) = do
