@@ -49,6 +49,10 @@ data SourceRef where
   TextRef :: {sourceModule :: String, sourceLine :: Int, sourceColumn :: Maybe Int} -> SourceRef
   deriving (Eq, Read, Show)
 
+pp_source :: SourceRef -> String
+pp_source NilRef = "unknown"
+pp_source (TextRef mod line col) = "line " ++ show line ++ ", col " ++ col ++ " (" ++ mod ++ ")"
+
 data Node t c where
   NilNode :: Node t c
   Node :: {tag :: t, children :: [Node t c], context :: c} -> Node t c
@@ -281,6 +285,8 @@ data Tag
   | DefcalTarget {defcalTargetName :: String, defcalTargetTok :: Token} -- []
   | ArgumentDefinition -- [{Scalar,Qubit,Creg,Qreg,*ArrayRef}TypeSpec, Identifier]
   | List -- [element..]
+  -- Not a syntax element, used as the tag for a nil node
+  | NilTag
   deriving (Eq, Read, Show)
 
 isNilNode :: Node t c -> Bool
@@ -291,6 +297,21 @@ isEmptyStatement :: Node Tag c -> Bool
 isEmptyStatement NilNode = True
 isEmptyStatement (Node Statement (NilNode : _) _) = True
 isEmptyStatement _ = False
+
+-- | Returns the tag of a node
+getTag :: ParseNode -> Tag
+getTag NilNode    = NilTag
+getTag (Node t _ _) = t
+
+-- | Returns the tag of a node
+getChildren :: ParseNode -> [ParseNode]
+getChildren NilNode       = []
+getChildren (Node _ xs _) = xs
+
+-- | Returns the metadata
+getSource :: ParseNode -> SourceRef
+getSource NilNode      = NilRef
+getSource (Node _ _ c) = c
 
 pruneEmptyStatements :: Node Tag c -> Node Tag c
 pruneEmptyStatements NilNode = NilNode
