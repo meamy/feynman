@@ -24,8 +24,8 @@ data Type = TCBit       -- Symbolic
           | TQBit       -- Symbolic
           | TQReg Expr  -- Symbolic
           | TUInt Expr  -- Symbolic
-          | TAngle Expr -- Symbolic
-          | TBool       -- Symbolic
+          | TAngle
+          | TBool
           | TInt
           | TFloat
           | TCmplx
@@ -143,6 +143,86 @@ translateProg :: S.ParseNode -> Either ErrMsg Prog
 translateProg node = case node of
   S.Node (S.Program i j _) xs _ -> mapM translateStmt xs >>= return . Prog (i,j)
   _                             -> Left (Err "Malformed AST node: " ++ show node)
+
+-- | Type translations
+translateType :: S.ParseNode -> Either ErrMsg Type
+translateType node = case node of
+  S.Node S.BitTypeSpec [NilNode]  -> return $ TCBit
+  S.Node S.BitTypeSpec [exprnode] -> translateExpr exprnode >>= return . TCReg
+
+  S.Node S.IntTypeSpec _ -> return $ TInt
+
+  S.Node S.UIntTypeSpec [NilNode]  -> return $ TUInt (EInt 32)
+  S.Node S.UIntTypeSpec [exprnode] -> translateExpr exprnode >>= return . TUInt
+
+  S.Node S.FloatTypeSpec _ -> return $ TFloat
+
+  S.Node S.AngleTypeSpec _ -> return $ TAngle
+
+  S.Node S.BoolTypeSpec _ -> return $ TBool
+
+  S.Node S.DurationTypeSpec _ -> return $ TFloat
+
+  S.Node S.StretchTypeSpec _ -> return $ TFloat
+
+  S.Node S.ComplexTypeSpec _ -> return $ TCmplx
+
+  S.Node S.CRegTypeSpec [NilNode]  -> return $ TCBit
+  S.Node S.CRegTypeSpec [exprnode] -> translateExpr exprnode >>= return . TCReg
+
+  S.Node S.QRegTypeSpec [NilNode]  -> return $ TQBit
+  S.Node S.QRegTypeSpec [exprnode] -> translateExpr exprnode >>= return . TQReg
+
+  S.Node S.QubitTypeSpec [NilNode]  -> return $ TQBit
+  S.Node S.QubitTypeSpec [exprnode] -> translateExpr exprnode >>= return . TQReg
+
+  S.Node S.ArrayTypeSpec _ ->
+    Left (Err "Array types unsupported")
+
+  S.Node S.ReadonlyArrayRefTypeSpec _ ->
+    Left (Err "Array types unsupported")
+
+  S.Node S.MutableArrayRefTypeSpec _ ->
+    Left (Err "Array types unsupported")
+
+-- | Identifier translations
+translateIdent :: S.ParseNode -> Either ErrMsg ID
+translateIdent node = case node of
+  S.Node (S.Identifier id _) -> return id
+  _                          -> Left (Err "Malformed identifier: " ++ show node)
+
+-- | Access path translations
+translateAccessPath :: S.ParseNode -> Either ErrMsg AccessPath
+translateAccessPath node = case node of
+  S.Node (S.HardwareQubit idx _) -> return $ AVar ("$" ++ show idx)
+
+  S.Node S.IndexedIdentifier [idnode, idxlist] -> do
+    id <- translateIdent idnode
+    idxs <- inLst translateIndex idxlist
+    case idxs of
+      [idx] -> return $ AIndex id idx
+      _     -> Left (Err "Error at " ++ (pp_source c) ++ ": Multiple indices unsupported")
+
+  _                          -> Left (Err "Malformed access path: " ++ show node)
+
+-- | Index translations
+translateIndex :: S.ParseNode -> Either ErrMsg Index
+translateIndex node = case node of
+  S.Node S.RangeInitExpr [beginnode, stepnode, endnode] -> do
+    begin <- translateExpr beginnode
+    step <- (case stepnode of NilNode -> return Nothing; node -> translateExpr stepnode)
+    end <- translateExpr endnode
+    return $ ISlice begin step end
+
+  S.Node S.SetInitExpr exprs -> do
+    mapM translateExpr exprs >>= return . ISet
+    
+  S.Node _ _ -> do
+    idx <- translateExpr node
+    return $ IIndex idx
+
+-- | Translation of Expressions
+translateExpr :: S.ParseNode -> Either ErrMsg Expr
 
 -- | Translation of statements
 translateStmt S.ParseNode -> Either ErrMsg (Stmt SourceRef)
