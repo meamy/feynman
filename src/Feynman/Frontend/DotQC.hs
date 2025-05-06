@@ -425,7 +425,7 @@ parseID = try $ do
 parseParams = sepEndBy (many1 alphaNum) (many1 sep) 
 
 parseDiscrete = do
-  numerator <- option 1 nat
+  numerator <- option 1 int 
   string "pi"
   power <- option 0 (string "/2^" >> int)
   return $ dyadicPhase $ dyadic numerator power
