@@ -25,7 +25,7 @@ data Env = Env {
   pathsum :: Pathsum DMod2,
   binds :: [Map ID Binding],
   density :: Bool,
-  uninitialized :: [ID]
+  uninitialized :: [TypedID]
 } deriving (Show)
 
 data Binding =
@@ -84,12 +84,14 @@ getPSSize = gets psSize
 allocatePathsum :: ID -> Int -> State Env Int
 allocatePathsum v size = do
   offset <- getPSSize
-  ps' <- gets uninitialized >>= \tf -> case v `elem` tf of
-    True  -> return $ ket [ofVar (varOfOffset ("'" ++ v) (offset+i)) | i <- [0..size-1]]
-    False -> return $ ket (replicate size 0)
-  ps'' <- gets uninitialized >>= \tf -> case v `elem` tf of
-    True  -> return $ ket [ofVar (varOfOffset v (offset+i)) | i <- [0..size-1]]
-    False -> return $ ket (replicate size 0)
+  ps' <- gets uninitialized >>= \tf -> case v `lookup` tf of
+    Just (TypeAncilla _)  -> return $ ket (replicate size 0)
+    Just _  -> return $ ket [ofVar (varOfOffset ("'" ++ v) (offset+i)) | i <- [0..size-1]]
+    Nothing -> return $ ket (replicate size 0)
+  ps'' <- gets uninitialized >>= \tf -> case v `lookup` tf of
+    Just (TypeAncilla _)  -> return $ ket (replicate size 0)
+    Just _  -> return $ ket [ofVar (varOfOffset v (offset+i)) | i <- [0..size-1]]
+    Nothing -> return $ ket (replicate size 0)
   modify (allocate ps' ps'')
   return offset
   where
@@ -194,13 +196,20 @@ traceList nxs = reverse . List.sort . concatMap go . concatMap Map.toList . bind
 bindingList :: [TypedID] -> Env -> [String]
 bindingList nxs env = concatMap go nxs
   where go (v, _)  = case evalState (searchBinding v) env of
+          Just (QReg sz offset) -> [varOfOffset v i | i <- [offset..sz+offset-1]]
+          _                -> [v]
+
+bindingList' :: [TypedID] -> Env -> [String]
+bindingList' nxs env = concatMap go nxs
+  where go (v, _)  = case evalState (searchBinding v) env of
           Just (QReg sz _) -> [varOfOffset v i | i <- [0..sz-1]]
           _                -> [v]
 
 verifyProg' :: Spec -> Env -> Bool
 verifyProg' spec env =
-  let specPs     = grind $ channelize $ sopOfPSSpec spec env
-      initPS     = identity n
+  let mask       = channelize $ createAncillaMask spec
+      specPs     = grind $ channelize $ sopOfPSSpec spec env
+      initPS     = identity (inDeg mask)
       progPS     = case density env of
         False -> conjugate (pathsum env) <> pathsum env
         True  -> pathsum env
@@ -213,7 +222,8 @@ verifyProg' spec env =
         False -> outDeg (pathsum env)
         True -> outDeg (pathsum env) `div` 2
   in
-    (dropAmplitude $ grind $ closedPS .> (dagger specPs)) == initPS
+    Trace.trace (show . grind $ progPS) $
+      (dropAmplitude $ grind $ mask .> closedPS .> (dagger (mask .> specPs))) == initPS
 
 summarizeGate :: [ID] -> [UExp] -> State Env (Pathsum DMod2)
 summarizeGate qparams body = do
@@ -468,7 +478,7 @@ simControlled controls qexp = case qexp of
 
 simQASM :: QASM -> Env
 simQASM (QASM _ (Just spec) stmts) =
-  let env = execState (mapM_ simStmt stmts) (initEnv { density = True, uninitialized = fst . unzip $ inputs spec })
+  let env = execState (mapM_ simStmt stmts) (initEnv { density = True, uninitialized = inputs spec })
       result = case verifyProg' spec env of
         False -> "Failed!"
         True  -> "Success!"
@@ -522,7 +532,7 @@ castBoolean = cast go where
 
 sopOfPSSpec :: Spec -> Env -> Pathsum DMod2
 sopOfPSSpec (PSSpec args scalar pvars ampl ovals) env = (bind bindings . sumover sumvars $ sop)
-  where bindings      = bindingList args env
+  where bindings      = bindingList' args env
         (s, gphase)   = decomposeScalar scalar
         boundIDs      = args ++ pvars
         pp            = constant gphase + (castDMod2 $ polyOfMaybeExp boundIDs ampl)
@@ -583,6 +593,7 @@ lengthOfExp boundIDs = go
 expandOutput :: [TypedID] -> [Exp] -> [Exp]
 expandOutput boundIDs = concat . map (expandOutputExp boundIDs)
 
+{-
 expandOutputExp :: [TypedID] -> Exp -> [Exp]
 expandOutputExp boundIDs e = let l = lengthOfExp boundIDs e in
   map (expand e) [0..l-1]
@@ -600,3 +611,66 @@ expandOutputExp boundIDs e = let l = lengthOfExp boundIDs e in
       FloatExp _       -> exp
       IntExp _         -> exp
       PiExp            -> exp
+-}
+
+expandOutputExp :: [TypedID] -> Exp -> [Exp]
+expandOutputExp boundIDs e = let l = lengthOfExp boundIDs e in
+  expand e
+  where
+    typeOf exp = case exp of
+      VarExp v -> case lookup v boundIDs of
+                    Nothing -> error "Variable not bound"
+                    Just TypeQubit ->       TypeQubit
+                    Just (TypeInt n) ->     TypeInt n
+                    {- ancilla should not be allowed maybe? -}
+                    Just (TypeAncilla n) -> TypeInt n
+      BOpExp e1 _ e2 -> case (typeOf e1, typeOf e2) of
+                          (TypeQubit, t) -> t
+                          (t, TypeQubit) -> t
+                          (TypeInt n, TypeInt m) | n == m -> TypeInt n
+                          (TypeInt _, TypeInt _) -> error "length mismatch in spec"
+      FloatExp _ -> TypeQubit
+      IntExp _ -> TypeQubit
+      PiExp -> TypeQubit
+      OffsetExp _ _ -> TypeQubit
+      UOpExp _ e -> typeOf e
+
+    expand exp = case exp of
+      VarExp v -> case lookup v boundIDs of
+                    Nothing -> error "Variable not bound"
+                    Just TypeQubit ->       [VarExp v]
+                    Just (TypeInt n) ->     [OffsetExp v i | i <- [0..n-1]]
+                    {- ancilla should be 0? or offset v i -}
+                    Just (TypeAncilla n) -> [IntExp 0 | _ <- [0..n-1]]
+      BOpExp e1 bop e2 ->
+        case typeOf exp of
+          TypeQubit -> [exp]
+          TypeInt n -> [indexOf exp i | i <- [0..n-1]]
+      UOpExp uop e     -> map (UOpExp uop) $ expand e
+      OffsetExp _ _    -> [exp]
+      FloatExp _       -> [exp]
+      IntExp _         -> [exp]
+      PiExp            -> [exp]
+
+    indexOf exp (-1) = IntExp 0
+    indexOf exp index = case exp of
+      VarExp v -> case typeOf exp of
+                    TypeQubit -> exp
+                    TypeInt _ -> OffsetExp v index
+      {- would we ever want to have x:qubit + y:int[n]? what should that mean -}
+      BOpExp e1 bop e2    ->
+        case (typeOf e1, typeOf e2) of
+          (TypeQubit, _)         -> BOpExp e1 bop (indexOf e2 index)
+          (_, TypeQubit)         -> BOpExp (indexOf e1 index) bop e2
+          (TypeInt n, TypeInt _) -> 
+            case bop of
+              PlusOp -> BOpExp (BOpExp (indexOf e1 index) PlusOp (indexOf e2 index)) PlusOp (carryOf e1  e2 (index-1))
+              op     -> BOpExp (indexOf e1 index) op (indexOf e2 index)
+      UOpExp uop e        -> UOpExp uop (indexOf e index)
+
+    carryOf e1 e2 index
+      | index < 0 = IntExp 0
+      | index == 0 = BOpExp (indexOf e1 index) TimesOp (indexOf e2 index)
+      | otherwise  = 
+          BOpExp (BOpExp (indexOf e1 index) TimesOp (indexOf e2 index))
+            PlusOp (BOpExp (carryOf e1 e2 (index-1)) TimesOp (BOpExp (indexOf e1 (index)) PlusOp (indexOf e2 (index))))
