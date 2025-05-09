@@ -23,6 +23,7 @@ import qualified Feynman.Frontend.OpenQASM3.Chatty as QASM3Chatty
 import qualified Feynman.Frontend.OpenQASM3.Parser as QASM3Parser
 import qualified Feynman.Frontend.OpenQASM3.Syntax as QASM3Syntax
 import qualified Feynman.Frontend.OpenQASM3.Utils  as QASM3Utils
+import Feynman.Frontend.OpenQASM3.Core
 
 import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
@@ -253,6 +254,16 @@ runQASM3 passes verify pureCircuit fname src = do
           qasm'' <- return $ foldr (qasm3Pass pureCircuit) qasm' passes
           return (qasm', qasm'')
 
+runQASMTest :: String -> IO ()
+runQASMTest src = case QASM3Parser.parseString src of
+    QASM3Chatty.Failure _ err -> putStrLn $ "ERROR: " ++ err
+    QASM3Chatty.Value _ qasm -> do
+      putStrLn $ "Source: " ++ show qasm
+      case translateProg qasm of
+        Left (Err msg) -> putStrLn $ "ERROR: " ++ msg
+        Right prog     -> putStrLn $ show prog
+      
+
 generateInvariants :: String -> IO ()
 generateInvariants fname = case drop (length fname - 5) fname == ".qasm" of
   False -> putStrLn ("Must be a qasm file (" ++ fname ++ ")") >> printHelp
@@ -370,6 +381,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
   "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
   "POPL25QASM"   -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25QASM
+  "-qasm3test"   -> readFile (head xs) >>= runQASMTest
   f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
   f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
   where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]

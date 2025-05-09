@@ -127,7 +127,7 @@ data Stmt a =
   deriving (Show)
 
 -- Top level core QASM3 programs
-data Prog a = Prog Version [Stmt a]
+data Prog a = Prog Version [Stmt a] deriving (Show)
 
 {- Utilities -}
 
@@ -435,8 +435,8 @@ translateStmt node = case node of
     els <- translateStmt elsenode
     return $ SIf c cond thn els
 
-  S.Node (S.IncludeStmt path _) [] c ->
-    Left (Err $ "Error at " ++ (S.pp_source c) ++ ": include unsupported")
+  S.Node (S.IncludeStmt path _) [] c -> return $ SSkip c
+    --Left (Err $ "Error at " ++ (S.pp_source c) ++ ": include unsupported")
 
   S.Node S.InputIoDeclStmt [typenode, idnode] c -> do
     ty <- translateType typenode
