@@ -6,6 +6,7 @@ module Feynman.Frontend.OpenQASM3.Syntax
     Token (..),
     Tag (..),
     SourceRef(..),
+    pp_source,
     isEmptyStatement,
     pruneEmptyStatements,
     pretty,
@@ -51,7 +52,7 @@ data SourceRef where
 
 pp_source :: SourceRef -> String
 pp_source NilRef = "unknown"
-pp_source (TextRef mod line col) = "line " ++ show line ++ ", col " ++ col ++ " (" ++ mod ++ ")"
+pp_source (TextRef mod line col) = "line " ++ show line ++ ", col " ++ show col ++ " (" ++ show mod ++ ")"
 
 data Node t c where
   NilNode :: Node t c
