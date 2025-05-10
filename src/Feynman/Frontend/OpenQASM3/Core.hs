@@ -141,8 +141,9 @@ declID decl = case decl of
 
 -- | Applies a monadic computation to a list of nodes
 inLst :: (S.ParseNode -> Either ErrMsg b) -> S.ParseNode -> Either ErrMsg [b]
+inLst f S.NilNode            = return []
 inLst f (S.Node S.List xs c) = mapM f xs
-inLst f node                 = Left (Err $ "Malformed AST node: " ++ show node)
+inLst f node                 = Left (Err $ "Malformed list: " ++ show node)
 
 {- Translation passes -}
 
@@ -154,7 +155,7 @@ qasmToCore = translateProg
 translateProg :: S.ParseNode -> Either ErrMsg (Prog S.SourceRef)
 translateProg node = case node of
   S.Node (S.Program i j _) xs _ -> mapM translateStmt xs >>= return . Prog (i,j)
-  _                             -> Left (Err $ "Malformed AST node: " ++ show node)
+  _                             -> Left (Err $ "Malformed Program: " ++ show node)
 
 -- | Type translations
 translateType :: S.ParseNode -> Either ErrMsg (Type S.SourceRef)
@@ -291,7 +292,7 @@ translateExpr node = case node of
       [idx] -> return $ EIndex (EVar id) idx
       _     -> Left (Err $ "Error at " ++ (S.pp_source c) ++ ": Multiple indices unsupported")
 
-  _                          -> Left (Err $ "Malformed access path: " ++ show node)
+  _                          -> Left (Err $ "Malformed expression: " ++ show node)
 
   where intOfBitstring xs =
           foldr (+) 0 . map (\(b,i) -> if b then shift 1 i else 0) $ zip xs [0..]
@@ -315,13 +316,13 @@ translateModifier node = case node of
     expr <- translateExpr exprnode
     return $ MCtrl True (Just expr)
 
-  _                          -> Left (Err $ "Malformed access path: " ++ show node)
+  _                          -> Left (Err $ "Malformed modifier: " ++ show node)
 
 -- | Translation of Annotations
 translateAnnotation :: S.ParseNode -> Either ErrMsg Annotation
 translateAnnotation node = case node of
   S.Node (S.Annotation _ str _) [] c -> return str
-  _                                  -> Left (Err $ "Malformed access path: " ++ show node)
+  _                                  -> Left (Err $ "Malformed annotation: " ++ show node)
 
 -- | Translation of Arguments
 translateArg :: S.ParseNode -> Either ErrMsg (ID, Type S.SourceRef)
@@ -331,11 +332,13 @@ translateArg node = case node of
     id <- translateIdent idnode
     return $ (id, typ)
 
-  _                                  -> Left (Err $ "Malformed access path: " ++ show node)
+  _                                  -> Left (Err $ "Malformed argument: " ++ show node)
 
 -- | Translation of statements
 translateStmt :: S.ParseNode -> Either ErrMsg (Stmt S.SourceRef)
 translateStmt node = case node of
+  S.NilNode -> return $ SSkip S.NilRef
+  
   S.Node (S.Pragma str _) [] c -> return $ SPragma c str
 
   S.Node S.Statement [stmt] c -> translateStmt stmt
@@ -486,7 +489,7 @@ translateStmt node = case node of
     body <- translateStmt bodynode
     return $ SWhile c cond body
 
-  _                           -> Left (Err $ "Malformed AST node: " ++ show node)
+  _                           -> Left (Err $ "Malformed statement: " ++ show node)
 
 -- | Translation of unary operators
 translateUOp :: S.Token -> Either ErrMsg UOp
