@@ -14,45 +14,49 @@ import Feynman.Algebra.Base (Dyadic(..), DyadicRational, DMod2)
 
 {- Term-level syntax for path sums -}
 
-type Angle = DMod2
-
-data BOp = Plus | Minus | Times | Div | Mod
-         | And | Xor | Or | LShift | RShift | LRot | RRot
+data BOp = Plus | Minus | Times | Div | Mod | Pow
+         | LShift | RShift | LRot | RRot
          deriving (Show)
 
 data UOp = Neg | Wt | Exp | Sqrt deriving (Show)
 
 -- | Classical types which can be in superposition
-data Type = Bit | ZN Int deriving Show
+--
+--   Register types are interpreted as unsigned integers
+--   and can be dereferenced to get individual bits
+--
+--   The literals 0 and 1 are overloaded as both bits and
+--   integers
+data Type = Bit | Reg SExpr deriving Show
 
 -- | Sum-over-path expressions
-data SExpr = Var ID (Maybe Int)
-           | BLit Bool
+data SExpr = Var ID (Maybe SExpr)
+           | VarDec ID Type
            | ILit Int
            | RLit Double
            | Pi
            | BExp SExpr BOp SExpr
-           | UExp Uop SExpr
+           | UExp UOp SExpr
            -- Sum terms
            | Ket SExpr
-           | Fun ID Type SExpr
-           | Sum ID Type SExpr
-           | Comma SExpr SExpr
+           | Fun [(ID,Maybe Type)] SExpr
+           | Sum [(ID,Maybe Type)] SExpr
+           | Tensor SExpr SExpr
            | Compose SExpr SExpr
            | Dagger SExpr
            deriving (Show)
 
 -- | Assertions. Conjunctions of assertions are represented as lists
-data Assertion = Equals SOP SOP
+data Assertion = Equals SExpr SExpr
 
 {- Semantic checks -}
 
 {- Parsing -}
 {--
 
- Abstract
+  ################### Abstract
 
-  <expr> := 0 | 1 | <nat> | <real> | <var>([<nat>])?
+  <expr> := <int> | <real> | <var>([<nat>])?
           | <uop> <expr>
           | <expr> <uop> <expr>
           | ( <expr> )
@@ -64,12 +68,12 @@ data Assertion = Equals SOP SOP
           | <expr>`
 
   <uop>  := ! | ~ | - | popcount | exp | sqrt
-  <bop>  := + | - | * | / | % | | << | >> | <<< | >>>
-  <type> := bool | bit[<expr>] | uint[<expr>]
+  <bop>  := + | - | * | / | ^ | % | << | >> | <<< | >>>
+  <type> := bit | bit[<expr>] | uint[<expr>]
 
-  Concrete
+  ################### Concrete
 
-  <type> := bool | bit[<expr>] | uint[<expr>]
+  <type> := bit | bit[<expr>] | uint[<expr>]
 
   <specification> := <exprs> --> <exprs>
                    | <assertions>
@@ -77,10 +81,14 @@ data Assertion = Equals SOP SOP
   <assertions> := <assertion>
                 | <assertions> && <assertion>
 
-  <assertion> := <exprs> == <exprs>
+  <assertion> := <sexprs> == <sexprs>
 
-  <exprs> := <expr>
-           | <exprs> , <expr>
+  <sexprs> := <sexpr>
+            | <sexprs> , <sexpr>
+
+  <sexpr> := <expr>
+           | fun <decls> -> <sexpr>
+           | sum { <decls> } . <sexpr>
 
   <expr> := <term>
           | <expr> + <term>
@@ -90,12 +98,16 @@ data Assertion = Equals SOP SOP
   <term> := <factor>
           | <term> * <factor>
           | <term> / <factor>
+          | <term> ^ <factor>
 
-  <factor> := <atom>
-            | <factor> << <atom>
-            | <factor> <<< <atom>
-            | <factor> >> <atom>
-            | <factor> >>> <atom>
+  <factor> := <appl>
+            | <factor> << <appl>
+            | <factor> <<< <appl>
+            | <factor> >> <appl>
+            | <factor> >>> <appl>
+
+  <appl> := <atom>
+          | <appl> <atom>
 
   <atom> := <bool>
           | <nat>
@@ -106,8 +118,6 @@ data Assertion = Equals SOP SOP
           | ( expr )
           | | <exprs> >
           | < <exprs> |
-          | fun <decls> <var>(:<type>)? -> <expr>
-          | sum <decls> <var>(:<type>)? . <expr>
           | <atom>`
           | ! <atom>
           | ~ <atom>
