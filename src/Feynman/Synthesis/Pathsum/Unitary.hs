@@ -9,7 +9,7 @@ Portability : portable
 
 module Feynman.Synthesis.Pathsum.Unitary where
 
-import Data.Bifunctor (first, Bifunctor (second))
+import Data.Bifunctor (first)
 import Data.Bits (xor)
 import Data.Foldable (foldl')
 import Data.List ((\\), find, isPrefixOf)
@@ -563,32 +563,6 @@ pushSwaps = reverse . go (Map.empty, []) where
     Swapper q1 q2 ->
       let (q1', q2') = (get ctx q1, get ctx q2) in
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
-
-{--
--- | Push swaps to the end
-pushSwaps :: [ExtractionGates] -> [ExtractionGates]
-pushSwaps gates = reverse pushedGates ++ synthesizedSwaps where
-  get :: Map ID ID -> ID -> ID
-  get ctx q               = Map.findWithDefault q q ctx
-  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
-  go (ctx, acc) []        = (ctx, acc)
-  go (ctx, acc) (x:xs)    = case x of
-    Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
-    Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
-    MCT cs t      -> go (ctx, (MCT (map (get ctx) cs) (get ctx t)):acc) xs
-    Swapper q1 q2 ->
-      let (q1', q2') = (get ctx q1, get ctx q2) in
-        go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
-  (pushedCtx, pushedGates) = go (Map.empty, []) gates
-  synthesize :: (Map ID ID, [ExtractionGates]) -> [ID] -> [ExtractionGates]
-  synthesize (ctx, acc) [] = acc
-  synthesize (ctx, acc) (q:qs) =
-    let q' = get ctx q in
-      if q' == q
-      then synthesize (ctx, acc) qs
-      else synthesize (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc) qs
-  synthesizedSwaps = synthesize (pushedCtx, []) (Map.keys pushedCtx)
---}
 
 {-----------------------------------
  Extraction
