@@ -9,7 +9,7 @@ Portability : portable
 
 module Feynman.Synthesis.Pathsum.Unitary where
 
-import Data.Bifunctor (first)
+import Data.Bifunctor (first, Bifunctor (second))
 import Data.Bits (xor)
 import Data.Foldable (foldl')
 import Data.List ((\\), find, isPrefixOf)
@@ -532,17 +532,30 @@ synthesizeMCT i (x:xs) t   = circ ++ ccx x ("_anc" ++ show i) t ++ circ where
 
 -- | Push swaps to the end
 pushSwaps :: [ExtractionGates] -> [ExtractionGates]
-pushSwaps = reverse . snd . go (Map.empty, []) where
+pushSwaps = reverse . go (Map.empty, []) where
   get :: Map ID ID -> ID -> ID
   get ctx q               = Map.findWithDefault q q ctx
-  synthesize :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
-  synthesize q (ctx, acc) =
-    let q' = get ctx q in
-      if q' == q
-      then (ctx, acc)
-      else (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc)
-  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
-  go (ctx, acc) []        = foldr synthesize (ctx, acc) $ Map.keys ctx
+  -- Beware, the final synthesis of swaps is a bit subtle. The ctx map
+  -- expresses a permutation, and we decompose it into a series of orbits aka
+  -- cycles. When emitting the Swapper gates for each orbit, the order of the
+  -- swaps is important, because it determines which way around the orbit the
+  -- elements are cycling. If you reverse the order of two swaps, those
+  -- elements will cycle in the opposite direction from the others, and you
+  -- won't get the orbit you wanted.
+  synthesize :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates]
+  synthesize (ctx, acc)
+    | ctx == Map.empty = acc
+    | otherwise =
+      let q = head (Map.keys ctx)
+       in synthesize (synthesizeOrbit q q (ctx, acc))
+  synthesizeOrbit :: ID -> ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
+  synthesizeOrbit fin q (ctx, acc) =
+    let nextCtx = Map.delete q ctx
+        q' = get ctx q
+     in if q' == fin then (nextCtx, acc)
+          else synthesizeOrbit fin q' (nextCtx, (Swapper q q'):acc)
+  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> [ExtractionGates]
+  go (ctx, acc) []        = synthesize (ctx, acc)
   go (ctx, acc) (x:xs)    = case x of
     Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
     Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
@@ -550,6 +563,32 @@ pushSwaps = reverse . snd . go (Map.empty, []) where
     Swapper q1 q2 ->
       let (q1', q2') = (get ctx q1, get ctx q2) in
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
+
+{--
+-- | Push swaps to the end
+pushSwaps :: [ExtractionGates] -> [ExtractionGates]
+pushSwaps gates = reverse pushedGates ++ synthesizedSwaps where
+  get :: Map ID ID -> ID -> ID
+  get ctx q               = Map.findWithDefault q q ctx
+  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
+  go (ctx, acc) []        = (ctx, acc)
+  go (ctx, acc) (x:xs)    = case x of
+    Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
+    Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
+    MCT cs t      -> go (ctx, (MCT (map (get ctx) cs) (get ctx t)):acc) xs
+    Swapper q1 q2 ->
+      let (q1', q2') = (get ctx q1, get ctx q2) in
+        go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
+  (pushedCtx, pushedGates) = go (Map.empty, []) gates
+  synthesize :: (Map ID ID, [ExtractionGates]) -> [ID] -> [ExtractionGates]
+  synthesize (ctx, acc) [] = acc
+  synthesize (ctx, acc) (q:qs) =
+    let q' = get ctx q in
+      if q' == q
+      then synthesize (ctx, acc) qs
+      else synthesize (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc) qs
+  synthesizedSwaps = synthesize (pushedCtx, []) (Map.keys pushedCtx)
+--}
 
 {-----------------------------------
  Extraction
