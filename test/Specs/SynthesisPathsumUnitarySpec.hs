@@ -23,6 +23,9 @@ import Feynman.Synthesis.Pathsum.Util
 import Feynman.Verification.Symbolic
 
 import Arbitrary.CliffordT
+import qualified Debug.Trace
+import Data.List (sort)
+import qualified Data.Set as Set
 
 -- | Primitive to MCT gate
 toExtraction :: Primitive -> ExtractionGates
@@ -176,6 +179,38 @@ prop_Extraction_Correctness (CliffordT xs) = go where
       let sop' = grind $ fst $ extract (applyExtract (identity $ outDeg sop) xs') ctx in
         sop == sop' || isTrivial (grind $ sop .> PS.dagger sop')
 
+-- | Type for generating sequences of Swappers
+newtype OnlySwappers = OnlySwappers [ExtractionGates] deriving (Show, Eq)
+
+instance Arbitrary OnlySwappers where
+  arbitrary = do
+    l <- listOf $ genSwapper
+    return $ OnlySwappers l
+    where
+      n = 10
+      q idx = 'q' : show idx
+      genSwapper = do
+        x <- chooseInt (0, n)
+        y <- chooseInt (0, n) `suchThat` (/= x)
+        return $ Swapper (q x) (q y)
+
+prop_PushSwaps_Cases :: OnlySwappers -> Bool
+prop_PushSwaps_Cases (OnlySwappers gates) =
+  grind (toPathsum gates) == grind (toPathsum (pushSwaps gates))
+  where
+    allIDs (MCT ctls tgt) = tgt : ctls
+    allIDs (Phase _ ctls) = ctls
+    allIDs (Swapper tgtA tgtB) = [tgtA, tgtB]
+    allIDs (Hadamard tgt) = [tgt]
+
+    varIDs = Set.toList . Set.fromList . concatMap allIDs $ gates
+    nVars = length varIDs
+
+    toPathsum gs = fst (runWriter w)
+      where
+        ctx = mkctx (Map.fromList (zip varIDs [0..]))
+        w = evalStateT (applyExtract (identity nVars) gs) ctx
+
 q0 = "q0"
 q1 = "q1"
 q2 = "q2"
@@ -203,6 +238,7 @@ spec = do
   prop "Nonlinear simplifications are correct" prop_Nonlinear_Correctness
   -- prop "Strength reduction is correct" prop_Strength_Reduction_Correctness
   prop "Each step of the synthesis algorithm is correct" prop_Frontier_Correctness
+  prop "pushSwaps works correctly in edge cases" prop_PushSwaps_Cases
   -- prop "The overall algorithm is correct" prop_Extraction_Correctness
 
 
