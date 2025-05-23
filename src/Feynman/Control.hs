@@ -17,6 +17,7 @@ data FeynmanControl = FeynmanControl
     fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase :: Bool,
+    fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase :: Bool,
     fcfFeature_Synthesis_XAG_Direct :: Bool,
     fcfFeature_Synthesis_XAG_Strash :: Bool,
     fcfFeature_Synthesis_XAG_MinMultSat :: Bool
@@ -34,6 +35,7 @@ defaultControl =
       fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = True,
       fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = False,
       fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = False,
+      fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = False,
       fcfFeature_Synthesis_XAG_Direct = False,
       fcfFeature_Synthesis_XAG_Strash = False,
       fcfFeature_Synthesis_XAG_MinMultSat = False
@@ -55,7 +57,8 @@ reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc =
   fc
     { fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = False,
       fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = False,
-      fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = False
+      fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = False,
+      fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = False
     }
 
 reset_fcfFeature_Synthesis_XAG fc =
@@ -84,6 +87,8 @@ controlSwitchFunction "unitary-phase-mct-rz" =
   Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc) {fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = True})
 controlSwitchFunction "unitary-phase-xag-rz" =
   Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc) {fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = True})
+controlSwitchFunction "unitary-phase-xag-mbu-rz" =
+  Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc) {fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = True})
 controlSwitchFunction "xag-direct" =
   Just (\fc -> (reset_fcfFeature_Synthesis_XAG fc) {fcfFeature_Synthesis_XAG_Direct = True})
 controlSwitchFunction "xag-strash" =

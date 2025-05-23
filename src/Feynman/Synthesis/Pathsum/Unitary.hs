@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+
 {-|
 Module      : Unitary
 Description : Extraction of Unitary path sums to circuits
@@ -279,17 +281,7 @@ phaseSimplifications sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = phaseSimplificationsMCRz sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz sop
-
-shavePseudoBoolean :: (HasFeynmanControl) => PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
-shavePseudoBoolean _ (-1) = []
-shavePseudoBoolean poly maxN =
-  traceU ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
-    (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
-  where
-    dyFrac = distribute (dMod2 1 maxN) sboolFrac
-    sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
-    oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
-    nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = phaseSimplificationsXAGMBURz sop
 
 phaseSimplificationsMCRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsMCRz sop = do
@@ -301,57 +293,83 @@ phaseSimplificationsMCRz sop = do
   return $ revertFrame subs localSOP'
   where synthesizePhaseTerm (a, m) = tell [Phase (-a) (Set.toList $ vars m)]
 
+-- Shaving, because we iteratively subtract out binary polynomials for the
+-- pseudo-boolean, like shaving that precision level off, from the highest
+-- power of 1 / 2^n to the lowest.
+-- This takes e.g. 3 / 2^1 x_1 and separates it into a sum of components,
+-- (1 / 2^1)(x_1) and (1 / 2^0)(x_1) in this case.
+shavePseudoBoolean :: (HasFeynmanControl) => PseudoBoolean ID DMod2 -> Int -> [(Int, SBool ID)]
+shavePseudoBoolean _ (-1) = []
+shavePseudoBoolean poly maxN =
+  traceU ("Shaving " ++ show poly ++ ", n = " ++ show maxN ++ ": got " ++ show sboolFrac ++ ", remainder " ++ show (poly - dyFrac)) $
+    (maxN, sboolFrac) : shavePseudoBoolean (poly - dyFrac) (maxN - 1)
+  where
+    dyFrac = distribute (dMod2 1 maxN) sboolFrac
+    sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
+    oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
+    nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
+
+-- | Returns a list of triples of (suggested qubit ID, power, pseudo-boolean)
+--
+--   See the definition of shavePseudoBoolean for info about how the phase
+--   polynomial shaved; essentially for each "shaving" you want to apply phase
+--   of -e^(2 * pi * i / (2 ^ power)), controlled by the pseudo-boolean, to
+--   cancel the phase polynomial of the pathsum.
+shavePhase :: (HasFeynmanControl) => Pathsum DMod2 -> ID -> ExtractionState [(ID, Int, SBool ID)]
+shavePhase sop prefix = do
+  -- We don't need the subs because we update the pathsum by evaluating
+  -- TODO document why the local frame transformation is done
+  let (_, localSOP) = changeFrame sop
+  localCtx <- ketToScope localSOP
+  let poly = rename (localCtx !) (collectVars (Set.fromList . Map.keys $ localCtx) $ phasePoly localSOP)
+  let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
+  let sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
+  traceU ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
+  traceU ("Phase SBools " ++ show sboolShavings) $ return ()
+  return sboolShavings
+
 phaseSimplificationsMCTRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsMCTRz sop = do
-  let (subs, localSOP) = changeFrame sop
-  ctx <- ketToScope localSOP
-  let revCtx = (Map.fromList . map swap) (Map.toList ctx)
-  let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
-  -- TODO document why the local frame transformation is done
   prefix <- freshPrefix
-  let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
-  -- Shavings, because we iteratively subtract out binary polynomials
-  -- for the pseudo-boolean, like shaving that precision level off,
-  -- from the highest power of 1 / 2^n to the lowest.
-  -- The takes a polynomial like 3 / 2^1 x_1 and separates it into
-  -- (1 / 2^1)(x_1) + (1 / 2^0)(x_1)
-  let sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
-  let mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
-  traceU ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
-  let (qVars, _) = unzip (Map.toAscList ctx)
+  sboolShavings <- shavePhase sop prefix
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
   let sboolMCTs targetID sbool = [MCT (Set.toList (vars term)) targetID | (_, term) <- toTermList sbool]
   let sboolGates = concat [sboolMCTs ancN p | (ancN, _, p) <- sboolShavings]
-  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
-  let ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
-  let rzGates = sboolGates ++ phaseGates ++ reverse sboolGates
-  traceU ("Phase SBools " ++ show sboolShavings) $ return ()
+  let sboolDagGates = reverse sboolGates
+  let rzGates = sboolGates ++ phaseGates ++ sboolDagGates
   emitGates sop rzGates
 
 phaseSimplificationsXAGRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsXAGRz sop = do
-  let (subs, localSOP) = changeFrame sop
-  ctx <- ketToScope localSOP
-  let revCtx = (Map.fromList . map swap) (Map.toList ctx)
-  let poly = rename (ctx !) (collectVars (Set.fromList . Map.keys $ ctx) $ phasePoly localSOP)
-  -- TODO document why the local frame transformation is done
   prefix <- freshPrefix
-  let maxN = foldr ((\(Dy a n) lastN -> max n lastN) . unpack . fst) 0 (toTermList poly)
-  -- Shavings, because we iteratively subtract out binary polynomials
-  -- for the pseudo-boolean, like shaving that precision level off,
-  -- from the highest power of 1 / 2^n to the lowest.
-  -- The takes a polynomial like 3 / 2^1 x_1 and separates it into
-  -- (1 / 2^1)(x_1) + (1 / 2^0)(x_1)
-  let sboolShavings = [(prefix ++ "Rz" ++ show n, n, p) | (n, p) <- shavePseudoBoolean poly maxN, p /= 0]
-  let mctIDSet = foldl' (\idSet g -> case g of (MCT _ tID) -> Set.insert tID idSet; _ -> idSet) Set.empty
-  traceU ("Shaved " ++ show poly ++ ":" ++ concatMap (("\n  " ++) . show) sboolShavings) $ return ()
-  let (qVars, _) = unzip (Map.toAscList ctx)
-  let sboolMCTs targetID sbool = [MCT (Set.toList (vars term)) targetID | (_, term) <- toTermList sbool]
-  let sboolGates = concat [sboolMCTs ancN p | (ancN, _, p) <- sboolShavings]
+  ctx <- gets idToIndex
+  revCtx <- gets indexToID
+  sboolShavings <- shavePhase sop prefix
   let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
-  let ancIDSet = Set.union (mctIDSet sboolGates) (Set.fromList [ancN | (ancN, _, _ ) <- sboolShavings])
-  let rzGates = sboolGates ++ phaseGates ++ reverse sboolGates
-  traceU ("Phase SBools " ++ show sboolShavings) $ return ()
+  let sbools = [rename (IVar . (ctx !)) sbool | (_, _, sbool) <- sboolShavings]
+  traceU ("Phase SBools, using IVars " ++ show sbools) $ return ()
+  let xag = minimizeXAG (fromSBools (inDeg sop) sbools)
+  let (xagGates, _) = inputSavingXAGSynth xag (Map.elems revCtx) [ancN | (ancN, _, _ ) <- sboolShavings] [prefix ++ show i | i <- [1..]]
+  let xagDagGates = reverse xagGates
+  let rzGates = xagGates ++ phaseGates ++ xagDagGates
   emitGates sop rzGates
+
+phaseSimplificationsXAGMBURz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplificationsXAGMBURz sop = do
+  prefix <- freshPrefix
+  ctx <- gets idToIndex
+  sboolShavings <- shavePhase sop prefix
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+  let xag = minimizeXAG (fromSBools (length sboolShavings) [rename (IVar . (ctx !)) sbool | (_, _, sbool) <- sboolShavings])
+  let (xagGates, _) = inputSavingXAGSynth xag [] [ancN | (ancN, _, _ ) <- sboolShavings] [prefix ++ show i | i <- [1..]]
+  let xagDagGates = reverse xagGates
+  let rzGates = xagGates ++ phaseGates ++ xagDagGates
+  emitGates sop rzGates
+  where
+    factorize p = Set.foldr tryDiv ([], p) $ vars p
+      where tryDiv x  (acc, poly) =
+              let (q, r) = divVar poly x in
+                if isZero r then ((ofVar x):acc, q) else (acc, poly)
 
 -- | Simplify the output ket up to non-linear transformations
 --

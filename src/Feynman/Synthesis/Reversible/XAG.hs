@@ -13,11 +13,9 @@ import Feynman.Synthesis.XAG.Util (toMCTs)
 -- returns ExtractionGates, unused ancilla names
 inputSavingXAGSynth :: (HasFeynmanControl) => XAG.Graph -> [ID] -> [ID] -> [ID] -> ([ExtractionGates], [ID])
 inputSavingXAGSynth xag inputNames outputNames ancillaNames =
-  (gates ++ zipWith (\q c -> MCT [q] c) rawOutNames copyNames, ancillaNames'')
+  (gates ++ zipWith (\q c -> MCT [q] c) rawOutNames outputNames, ancillaNames')
   where
-    (copyPrefix, ancillaNames') = (head ancillaNames, tail ancillaNames)
-    copyNames = map (copyPrefix ++) inputNames
-    (rawOutNames, gates, ancillaNames'') = toMCTs xag inputNames ancillaNames'
+    (rawOutNames, gates, ancillaNames') = toMCTs xag inputNames ancillaNames
 
 -- take a pair of a boolean function and its inverse, and synthesize input-erasing
 -- returns ExtractionGates, unused ancilla names
