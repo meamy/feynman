@@ -32,6 +32,7 @@ library
                        Feynman.Algebra.Base,
                        Feynman.Algebra.Matroid,
                        Feynman.Algebra.Linear,
+                       Feynman.Algebra.AffineRel,
                        Feynman.Algebra.Polynomial,
                        Feynman.Algebra.Polynomial.Univariate,
                        Feynman.Algebra.Polynomial.Multilinear,
@@ -59,6 +60,12 @@ library
                        Feynman.Frontend.OpenQASM.VerificationSyntax
                        Feynman.Frontend.OpenQASM.Lexer
                        Feynman.Frontend.OpenQASM.Parser
+                       Feynman.Frontend.OpenQASM3.Ast
+                       Feynman.Frontend.OpenQASM3.Chatty
+                       Feynman.Frontend.OpenQASM3.Lexer
+                       Feynman.Frontend.OpenQASM3.Parser
+                       Feynman.Frontend.OpenQASM3.Syntax
+                       Feynman.Frontend.OpenQASM3.Utils
 
   build-tools:         alex, happy
   build-depends:       QuickCheck >= 2.8.2,
@@ -67,13 +74,14 @@ library
                        bv,
                        bytestring,
                        containers >= 0.6.3.1,
-                       mtl,
                        fast-digits >= 0.2.1.0,
                        fin >= 0.1.1,
                        ghc-prim >= 0.5.0.0,
                        integer-gmp >= 1.0.0.1,
+                       mtl,
                        parsec >= 3.0,
                        parsec3-numbers,
+                       random,
                        vec
   default-language:    Haskell2010
   
@@ -91,14 +99,15 @@ executable feynopt
   build-depends:       Feynman,
                        QuickCheck >= 2.8.2,
                        ansi-terminal,
-                       filepath,
-                       directory,
                        array >= 0.5.1.0,
                        base,
                        bv,
                        bytestring,
                        containers >= 0.6.3.1,
-                       deepseq
+                       deepseq,
+                       directory,
+                       filepath,
+                       random
   default-language:    Haskell2010
 
 executable feynver

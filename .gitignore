@@ -12,7 +12,7 @@ feynver
 # folders
 dist/
 .cabal-sandbox/
-benchmarks/opt/
+tmp/
 
 # misc
 TAGS

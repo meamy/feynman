@@ -87,12 +87,14 @@ data Primitive =
   | Uninterp ID [ID]
   deriving (Eq)
 
+type AnnotatedPrimitive = (Primitive, Loc)
+
 data Stmt =
     Gate Primitive
   | Seq [Stmt]
   | Call ID [ID]
   | Repeat Int Stmt
-   
+
 data Decl = Decl { name   :: ID,
                    params :: [ID],
                    body   :: Stmt }
@@ -101,6 +103,19 @@ data Circuit = Circuit { qubits :: [ID],
                          inputs :: Set ID,
                          decls  :: [Decl] }
 
+{- Flow-agnostic while programs -}
+
+data WStmt a =
+    WSkip a
+  | WGate a Primitive
+  | WSeq a [WStmt a]
+  | WReset a ID
+  | WMeasure a ID
+  | WIf a (WStmt a) (WStmt a)
+  | WWhile a (WStmt a)
+  deriving (Eq)
+
+{- Utilities -}
 foldCirc f b c = foldl (foldStmt f . body) b (decls c)
 
 foldStmt f (Seq st)      b = f (Seq st) (foldr (foldStmt f) b st)
@@ -189,6 +204,16 @@ ids = Set.toList . foldr f Set.empty
           Ry theta x    -> [x]
           Uninterp s xs -> xs
 
+idsW :: WStmt a -> [ID]
+idsW = Set.toList . go where
+  go (WSkip _)      = Set.empty
+  go (WGate _ g)    = Set.fromList $ ids [g]
+  go (WSeq _ xs)    = Set.unions $ map go xs
+  go (WReset _ x)   = Set.singleton x
+  go (WMeasure _ x) = Set.singleton x
+  go (WIf _ s1 s2)  = Set.union (go s1) (go s2)
+  go (WWhile _ s)   = go s
+
 converge :: Eq a => (a -> a) -> a -> a
 converge f a
   | a' == a   = a'
@@ -235,6 +260,83 @@ countT = foldr (+) 0 . map go where
   go (Tinv _) = 1
   go _     = 0
 
+-- Expand CNOT gates over H and CZ
+expandCNOT :: [Primitive] -> [Primitive]
+expandCNOT = concatMap go where
+  go x = case x of
+    CNOT c t      -> [H t, CZ c t, H t]
+    _             -> [x]
+
+-- Expand CZ gates over H and CNOT
+expandCZ :: [Primitive] -> [Primitive]
+expandCZ = concatMap go where
+  go x = case x of
+    CZ c t      -> [H t, CNOT c t, H t]
+    _           -> [x]
+
+-- Annotated passes
+
+annotate :: [Primitive] -> [AnnotatedPrimitive]
+annotate = (flip zip) [1..]
+
+annotateWith :: Loc -> [Primitive] -> [AnnotatedPrimitive]
+annotateWith l = (flip zip) (repeat l)
+
+unannotate :: [AnnotatedPrimitive] -> [Primitive]
+unannotate = fst . unzip
+  
+expandCNOT' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+expandCNOT' = concatMap go where
+  go (x,l) = case x of
+    CNOT c t      -> [(H t,l), (CZ c t,l), (H t,l)]
+    _             -> [(x,l)]
+
+simplifyPrimitive' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+simplifyPrimitive' = converge simplify where
+  simplify :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+  simplify circ =
+    let erasures = snd $ foldl' f (Map.empty, Set.empty) $ zip circ [2..]
+
+        allSame xs = foldM (\x y -> if fst x == fst y then Just x else Nothing) (head xs) (tail xs)
+
+        f (last, erasures) ((gate,_), uid) =
+          let args     = getArgs gate
+              last'    = foldr (\q -> Map.insert q (gate, uid)) last args
+              frontier = mapM (\q -> Map.lookup q last) args
+              checkDagger (gate', uid')
+                | gate' == daggerGate gate = Just (gate', uid')
+                | otherwise                = Nothing
+          in
+            case frontier >>= allSame >>= checkDagger of
+              Nothing            -> (last', erasures)
+              Just (gate', uid') ->
+                (foldr Map.delete last' args, Set.insert uid $ Set.insert uid' erasures)
+    in
+      fst . unzip . filter (\(_, uid) -> not $ Set.member uid erasures) . zip circ $ [2..]
+
+-- WStmt passes
+simplifyWStmt' :: WStmt Loc -> WStmt Loc
+simplifyWStmt' = converge simplify where
+  simplify wstmt = case wstmt of
+    WSkip l      -> WSkip l
+    WGate l gate -> WGate l gate
+    WSeq l xs    -> case go [] xs of
+      []  -> WSkip l
+      xs' -> WSeq l xs'
+    WReset l v   -> WReset l v
+    WMeasure l v -> WMeasure l v
+    WIf l s1 s2  -> WIf l (simplify s1) (simplify s2)
+    WWhile l s   -> WWhile l (simplify s)
+
+  go gates []     = toGates gates
+  go gates (x:xs) = case x of
+    WSkip _      -> go gates xs
+    WGate l gate -> go (gates ++ [(gate,l)]) xs
+    WSeq l xs'   -> go gates (xs' ++ xs)
+    _            -> toGates gates ++ [simplify x] ++ go [] xs
+
+  toGates = map (\(g,l) -> WGate l g) . simplifyPrimitive'
+
 -- Printing
 
 instance Show Primitive where
@@ -273,6 +375,17 @@ instance Show Circuit where
     where qubitline = ".v " ++ showLst (qubits circ)
           inputline = ".i " ++ showLst (filter (`Set.member` inputs circ) (qubits circ))
           body      = map show (decls circ)
+
+instance Show (WStmt a) where
+  show stmt = intercalate "\n" $ go stmt where
+    go (WSkip a)      = ["SKIP"]
+    go (WGate a gate) = [show gate]
+    go (WSeq a xs)    = concatMap go xs
+    go (WReset a v)   = ["RESET " ++ v]
+    go (WMeasure a v) = ["* <- MEASURE " ++ v]
+    go (WIf a s1 s2)  = ["IF * THEN:"] ++ (map ('\t':) $ go s1)
+                        ++ ["ELSE:"] ++ (map ('\t':) $ go s2)
+    go (WWhile a s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
 
 showLst = intercalate " "
 

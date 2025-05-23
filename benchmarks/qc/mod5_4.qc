@@ -10,17 +10,13 @@ Z b e a
 Zd d e a
 
 H a
-
 tof e a
-
 H a
 
 Z c d a
 
 H a
-
 tof d a
-
 H a
 
 Zd b c a
