@@ -22,7 +22,7 @@ import Feynman.Algebra.Base (DMod2)
 import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>))
 import Feynman.Verification.Symbolic
 
-import Feynman.Simulation.Pathsum hiding (body)
+import Feynman.Simulation.PathsumVerification
 
 -- | Check whether two .qc files are equivalent
 checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
@@ -54,7 +54,7 @@ getSOP qc = grind $ complexAction vars inpts circ where
 runQASM :: String -> IO ()
 runQASM src = case parseQASM of
   Left err   -> putStrLn $ "ERROR: " ++ err
-  Right qasm -> let env = simQASM qasm in
+  Right qasm -> let env = verifyQASM qasm in
     env `seq` return ()
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r

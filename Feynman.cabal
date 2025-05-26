@@ -53,7 +53,10 @@ library
                        Feynman.Optimization.Clifford,
 
                        Feynman.Verification.Symbolic,
+                       Feynman.Simulation.Env,
                        Feynman.Simulation.Pathsum,
+                       Feynman.Simulation.PathsumSpecification,
+                       Feynman.Simulation.PathsumVerification,
 
                        Feynman.Frontend.DotQC
                        Feynman.Frontend.OpenQASM.Syntax
