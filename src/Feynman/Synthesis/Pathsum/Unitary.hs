@@ -359,10 +359,27 @@ phaseSimplificationsXAGMBURz sop = do
   prefix <- freshPrefix
   ctx <- gets idToIndex
   sboolShavings <- shavePhase sop prefix
-  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
-  let xag = minimizeXAG (fromSBools (length sboolShavings) [rename (IVar . (ctx !)) sbool | (_, _, sbool) <- sboolShavings])
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings, n > 0]
+  -- TODO 1: special case, any -1/2^0 terms can be implemented as MCRz gates directly... don't include those in the XAG
+  -- maybe this only makes sense for terms that break down into CZ (as opposed to MCZ)?
+  -- so we could be left with a (different) -1/2^0 polynomial
+  -- let phaseGates = -- TODO 1.1 not correct yet -- [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings, n == 0]
+  let xagSBools = [rename (IVar . (ctx !)) sbool | (_, n, sbool) <- sboolShavings, n > 0]
+  let xag = minimizeXAG (fromSBools (length sboolShavings) )
   let (xagGates, _) = inputSavingXAGSynth xag [] [ancN | (ancN, _, _ ) <- sboolShavings] [prefix ++ show i | i <- [1..]]
-  let xagDagGates = reverse xagGates
+  -- TODO 2: implement MBU for xagDagGates here
+  -- TODO 2.1: this is a sequence of H, measure, then use the measured qubit
+  -- TODO 2.2: the measured qubit has to classically control a CZ gate
+  -- TODO 2.3: the CZ is applying f(x), except there's going to be more than one CZ --
+  -- we have to factor out vars from the polynomial using divVar
+  -- maybe work the algebra out for this first and test the method
+  -- the process is like, Z f(x) = CZ x_i f'(x')
+  -- where f(x) is some polynomial in the form  x_i * f'(x') where x' does not contain x_i
+  -- so we are using divVar to find that polynomial, by a recursive factoring process
+  -- and then we will additionally be recursing to deal with every x_i in turn
+  -- so it sounds a bit like the shaving
+  let xagDagGates = reverse xagGates -- TODO REMOVE
+  --
   let rzGates = xagGates ++ phaseGates ++ xagDagGates
   emitGates sop rzGates
   where
