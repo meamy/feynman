@@ -343,21 +343,44 @@ synthesizeMCT i (x:xs) t   = circ ++ ccx x ("_anc" ++ show i) t ++ circ where
 
 -- | Push swaps to the end
 pushSwaps :: [ExtractionGates] -> [ExtractionGates]
-pushSwaps = reverse . snd . go (Map.empty, []) where
+pushSwaps = reverse . go (Map.empty, []) where
+  -- Convenience; we want the empty ctx map to map everything to itself
   get :: Map ID ID -> ID -> ID
   get ctx q               = Map.findWithDefault q q ctx
-  synthesize :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
-  synthesize q (ctx, acc) =
-    let q' = get ctx q in
-      if q' == q
-      then (ctx, acc)
-      else (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc)
-  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
-  go (ctx, acc) []        = foldr synthesize (ctx, acc) $ Map.keys ctx
+  synthesize :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates]
+  -- Beware, the final synthesis of swaps is a bit subtle. The ctx map
+  -- expresses a permutation, and we decompose it into a series of orbits aka
+  -- cycles. When emitting the Swapper gates for each orbit, the order of the
+  -- swaps is important, because it determines which way around the orbit the
+  -- elements are cycling. If you reverse the order of two swaps, those
+  -- elements will cycle in the opposite direction from the others, and you
+  -- won't get the orbit you wanted.
+  synthesize (ctx, acc) =
+    case Map.toList ctx of
+      [] -> acc
+      (q, q'):_ -> synthesize (synthesizeOrbit q' (Map.delete q ctx, acc))
+  synthesizeOrbit :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
+  -- Since we're deleting elements as we go, failure to find the next element
+  -- in the chain indicates we've come back to the start and are done.
+  synthesizeOrbit q (ctx, acc) =
+      case ctx Map.!? q of
+        Just q' -> synthesizeOrbit q' (Map.delete q ctx, (Swapper q q'):acc)
+        Nothing -> (ctx, acc)
+  -- This algorithm operates in two phases: first it walks through the list of
+  -- gates, building up a mapping as it goes (which is really just the overall
+  -- permutation the sequence of swaps represents). At the same time it removes
+  -- any Swapper (using the args to update the mapping), and rewrites the qubit
+  -- references in the circuit. That leaves you with an equivalent circuit,
+  -- modulo swaps. The second phase is implemented by "synthesize" above: it
+  -- emits a sequence of swaps to make the equivalence exact.
+  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> [ExtractionGates]
+  go (ctx, acc) []        = synthesize (ctx, acc)
   go (ctx, acc) (x:xs)    = case x of
+    -- Hadamard, Phase, MCT get rewritten using the mapping
     Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
     Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
     MCT cs t      -> go (ctx, (MCT (map (get ctx) cs) (get ctx t)):acc) xs
+    -- Swapper is removed, and causes an update of the mapping
     Swapper q1 q2 ->
       let (q1', q2') = (get ctx q1, get ctx q2) in
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs
