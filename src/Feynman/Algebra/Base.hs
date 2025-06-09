@@ -28,6 +28,7 @@ module Feynman.Algebra.Base(
   toDyadic,
   numer,
   denom,
+  denomExp,
   dMod2,
   unpack,
   )
@@ -235,6 +236,10 @@ numer (Dy a _) = a
 -- | Get the denominator of a dyadic fraction
 denom :: DyadicRational -> Integer
 denom (Dy _ n) = 1 `shiftL` n
+
+-- | Get the denominator exponent of a dyadic fraction
+denomExp :: DyadicRational -> Int
+denomExp (Dy _ n) = n
 
 -- | Give the exact representation of a float as a dyadic rational
 toDyadic :: RealFloat a => a -> DyadicRational

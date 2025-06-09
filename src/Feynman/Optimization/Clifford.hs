@@ -7,9 +7,14 @@ Stability   : experimental
 Portability : portable
 -}
 
-module Feynman.Optimization.Clifford(simplifyCliffords) where
+module Feynman.Optimization.Clifford(simplifyCliffords,simplifyCliffords') where
 
-import Feynman.Core(Primitive(..), ids)
+import Feynman.Core(Primitive(..),
+                    AnnotatedPrimitive,
+                    annotate,
+                    annotateWith,
+                    unannotate,
+                    ids)
 import Feynman.Synthesis.Pathsum.Clifford(resynthesizeClifford)
 
 {-----------------------------------
@@ -71,3 +76,20 @@ simplifyCliffords = go [] ([], []) where
     | not (isClifford gate) = go acc (c, gate:t) xs
     | gate `commutesWith` t = go acc (gate:c, t) xs
     | otherwise             = go (acc ++ finalize (c, t)) ([gate], []) xs
+
+-- | Annotated version
+simplifyCliffords' :: [AnnotatedPrimitive] -> [AnnotatedPrimitive]
+simplifyCliffords' circ = go mx [] ([], []) circ where
+  mx = maximum . map snd $ circ
+
+  finalize mx (c, t) =
+    let c' = resynthesizeClifford . reverse . unannotate $ c in
+      (mx + length c', ((flip zip) [mx+1..] c') ++ reverse t)
+
+  go mx acc (c, t) []                    = acc ++ snd (finalize mx (c, t))
+  go mx acc (c, t) ((gate,l):xs)
+    | not (isClifford gate)              = go mx acc (c, (gate,l):t) xs
+    | gate `commutesWith` (unannotate t) = go mx acc ((gate,l):c, t) xs
+    | otherwise                          =
+      let (mx', circ') = finalize mx (c, t) in
+        go mx' (acc ++ circ') ([(gate,l)], []) xs
