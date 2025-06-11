@@ -46,7 +46,7 @@ addBinding id bind = do
   put $ env { binds = Map.insert id bind b : bs }
 
 -- action returns offset of allocated register
-allocatePathsum :: ID -> Int -> Maybe [Int] -> State (Env a) Int
+allocatePathsum :: ID -> Int -> Maybe [SBool String] -> State (Env a) Int
 allocatePathsum v size init = do
   offset <- getEnvSize
   modify $ allocate offset
@@ -124,7 +124,7 @@ simAssign path Nothing expr = case path of
   AVar id -> error "TODO"
   AIndex id i -> error "TODO"
 
-allocateSymbolic :: Type a -> ID -> Int -> Maybe [Int] -> State (Env a) ()
+allocateSymbolic :: Type a -> ID -> Int -> Maybe [SBool String] -> State (Env a) ()
 allocateSymbolic typ id size init = do
   offset <- allocatePathsum id size init
   addBinding id (Symbolic typ size offset)
@@ -162,7 +162,7 @@ simDeclare decl = case decl of
           Nothing -> error $ "invalid uint value"
           Just j  -> allocateSymbolic (TUInt n) vid size (Just $ bitVec j size)
 
-bitVec :: Int -> Int -> [Int]
+bitVec :: Int -> Int -> [SBool String]
 bitVec n size = map f [0..size-1]
   where
     f i = if testBit n i then 1 else 0
