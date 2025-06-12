@@ -17,12 +17,9 @@ data Env a = Env {
 } deriving (Show)
 
 data Binding a =
-    Gate { cparams :: [ID],
-           qparams :: [ID],
-           body    :: [Stmt a] }
-  | Symbolic { typ :: Type a, size :: Int, offset :: Int }
-  | Value { typ :: Type a, value :: Expr a }
-  | SumGate { bodySum :: Pathsum DMod2 }
+    Symbolic { typ :: Type a, size :: Int, offset :: Int }
+  | Scalar { typ :: Type a, value :: Expr a }
+  | Block { typ :: Type a, params :: [(ID, Type a)], returns :: Maybe (Type a), body :: Stmt a }
   deriving (Show)
 
 getEnvSize :: State (Env a) Int
@@ -60,18 +57,16 @@ allocatePathsum v size init = do
       where
         embedded = embed ps (size * 2) (\i -> i) (\i -> if i < j then i else i + size)
         newps    = ket (qbits ++ qbits) .> embedded
-    
-
-evalExpr :: Expr a -> Maybe Int
-evalExpr e = case e of
-  EInt n -> Just n
-  _ -> Nothing
 
 evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
 
 evalInt :: Expr a -> Maybe Int
 evalInt = error "TODO"
+
+evalAngle = error "TODO"
+evalFloat = error "TODO"
+evalComplex = error "TODO"
 
 initEnv :: Env a
 initEnv = Env (ket []) [Map.empty] False
@@ -124,43 +119,87 @@ simAssign path Nothing expr = case path of
   AVar id -> error "TODO"
   AIndex id i -> error "TODO"
 
-allocateSymbolic :: Type a -> ID -> Int -> Maybe [SBool String] -> State (Env a) ()
-allocateSymbolic typ id size init = do
+declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
+declareSymbolic id typ size init = do
   offset <- allocatePathsum id size init
   addBinding id (Symbolic typ size offset)
+
+declareScalar :: ID -> Type a -> Maybe (Expr a) -> State (Env a) ()
+declareScalar id typ expr = addBinding id (Scalar typ expr')
+  where
+    expr' = case expr of
+      Just e  -> e
+      Nothing -> case typ of
+        TAngle -> EFloat 0 
+        TBool  -> EBool False --true?
+        TInt   -> EInt 0
+        TFloat -> EFloat 0
+        TCmplx -> ECmplx 0
+
+declareBlock :: ID -> [(ID, Type a)] -> Maybe (Type a) -> Stmt a -> State (Env a) ()
+declareBlock id params returns body = let (_, sig) = unzip params in
+  addBinding id (Block (TProc sig) params returns body)
 
 simDeclare :: Decl a -> State (Env a) ()
 simDeclare decl = case decl of
   DVar vid typ val -> case typ of
     TCBit   -> case val of
-      Nothing -> allocateSymbolic TCBit vid 1 Nothing
+      Nothing -> declareSymbolic vid TCBit 1 Nothing
       Just v  -> case evalBool v of
-        Just False -> allocateSymbolic TCBit vid 1 (Just [0])
-        Just True  -> allocateSymbolic TCBit vid 1 (Just [1])
+        Just False -> declareSymbolic vid TCBit 1 (Just [0])
+        Just True  -> declareSymbolic vid TCBit 1 (Just [1])
         Nothing    -> error $ "invalid value in declaration"
     TCReg n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> allocateSymbolic (TCReg n) vid size Nothing
+        Nothing -> declareSymbolic vid (TCReg n) size Nothing
         Just _  -> error $ "invalid array value"
     TQBit   -> case val of
-      Nothing -> allocateSymbolic TQBit vid 1 Nothing
+      Nothing -> declareSymbolic vid TQBit 1 Nothing
       Just v  -> case evalBool v of
-        Just False -> allocateSymbolic TQBit vid 1 (Just [0])
-        Just True  -> allocateSymbolic TQBit vid 1 (Just [1])
+        Just False -> declareSymbolic vid TQBit 1 (Just [0])
+        Just True  -> declareSymbolic vid TQBit 1 (Just [1])
         Nothing    -> error $ "invalid value in declaration"
     TQReg n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> allocateSymbolic (TQReg n) vid size Nothing
+        Nothing -> declareSymbolic vid (TQReg n) size Nothing
         Just _  -> error $ "invalid array value"
     TUInt n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> allocateSymbolic (TUInt n) vid size Nothing
-        Just i  -> case evalInt i of
+        Nothing -> declareSymbolic vid (TUInt n) size Nothing
+        Just v  -> case evalInt v of
           Nothing -> error $ "invalid uint value"
-          Just j  -> allocateSymbolic (TUInt n) vid size (Just $ bitVec j size)
+          Just i  -> declareSymbolic vid (TUInt n) size (Just $ bitVec i size)
+    TAngle  -> case val of
+      Nothing -> declareScalar vid TAngle Nothing
+      Just v  -> case evalAngle v of
+        Nothing -> error $ "invalid angle value"
+        Just f  -> declareScalar vid TAngle (Just $ EFloat f)
+    TBool   -> case val of
+      Nothing -> declareScalar vid TBool Nothing
+      Just v  -> case evalBool v of
+        Nothing -> error $ "invalid bool value"
+        Just b  -> declareScalar vid TBool (Just $ EBool b)
+    TInt    -> case val of
+      Nothing -> declareScalar vid TInt Nothing
+      Just v  -> case evalInt v of
+        Nothing -> error $ "invalid int value"
+        Just i  -> declareScalar vid TInt (Just $ EInt i)
+    TFloat  -> case val of
+      Nothing -> declareScalar vid TFloat Nothing
+      Just v  -> case evalFloat v of
+        Nothing -> error $ "invalid float value"
+        Just f  -> declareScalar vid TFloat (Just $ EFloat f)
+    TCmplx  -> case val of
+      Nothing -> declareScalar vid TCmplx Nothing
+      Just v  -> case evalComplex v of
+        Nothing -> error $ "invalid complex value"
+        Just c  -> declareScalar vid TCmplx (Just $ ECmplx c)
+  DDef did dparams dreturns dbody -> declareBlock did dparams dreturns dbody
+  DExtern _ _ _ -> error "TODO"
+  DAlias  _ _   -> error "TODO"
 
 bitVec :: Int -> Int -> [SBool String]
 bitVec n size = map f [0..size-1]
