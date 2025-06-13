@@ -17,7 +17,7 @@ data Env a = Env {
 } deriving (Show)
 
 data Binding a =
-    Symbolic { typ :: Type a, size :: Int, offset :: Int }
+    Symbolic { typ :: Type a, offset :: Int }
   | Scalar { typ :: Type a, value :: Expr a }
   | Block { typ :: Type a, params :: [(ID, Type a)], returns :: Maybe (Type a), body :: Stmt a }
   deriving (Show)
@@ -58,6 +58,22 @@ allocatePathsum v size init = do
         embedded = embed ps (size * 2) (\i -> i) (\i -> if i < j then i else i + size)
         newps    = ket (qbits ++ qbits) .> embedded
 
+bindParams :: [(ID, Type a)] -> [Expr a] -> State (Env a) ()
+bindParams params args = mapM bindParam $ zip params args
+
+-- no type checking
+bindParam :: ((ID, Type a), Expr a) -> State (Env a) ()
+bindParam ((pid, ptype), arg) = case arg of
+  EVar eid     -> do
+    offset <- getOffset eid
+    addBinding pid $ Symbolic ptype offset
+  EIndex eid i -> do
+    offset <- getOffset eid
+    index <- evalInt i
+    case index of
+      Just j -> addBinding pid $ Symbolic ptype (offset + j)
+      Nothing -> error "non int"
+
 evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
 
@@ -71,30 +87,41 @@ evalComplex = error "TODO"
 initEnv :: Env a
 initEnv = Env (ket []) [Map.empty] False
 
+pushEmptyEnv :: State (Env a) ()
+pushEmptyEnv =
+  modify $ \env -> env { binds = Map.empty : binds env }
+
+popEnv :: State (Env a) ()
+popEnv =
+  modify $ \env -> env { binds = tail $ binds env}
+
 simBool :: Expr a -> State (Env a) (Maybe Bool)
 simBool = error "TODO"
 
 simInt :: Expr a -> State (Env a) (Maybe Int)
 simInt = error "TODO"
 
+simList :: Expr a -> State (Env a) (Maybe [Expr a])
+simList expr = error "TODO"
+
 simStmt :: Stmt a -> State (Env a) ()
 simStmt stmt = case stmt of
-  SInclude _ _           -> return ()
-  SSkip _                -> return ()
-  SBarrier _ _           -> return ()
-  SPragma _ _            -> return ()
-  SBlock _ stmts         -> mapM_ simStmt stmts
-  SWhile _ cond stmt     -> simWhile cond stmt
-  SIf _ cond stmtT stmtE -> simIf cond stmtT stmtE
+  SInclude _ _               -> return ()
+  SSkip _                    -> return ()
+  SBarrier _ _               -> return ()
+  SPragma _ _                -> return ()
+  SBlock _ stmts             -> mapM_ simStmt stmts
+  SWhile _ cond stmt         -> simWhile cond stmt
+  SIf _ cond stmtT stmtE     -> simIf cond stmtT stmtE
   
-  SReset _ expr          -> simReset expr
-  SDeclare _ decl        -> simDeclare decl
-  SAssign _ p bop expr   -> simAssign p bop expr
+  SReset _ expr              -> simReset expr
+  SDeclare _ decl            -> simDeclare decl
+  SAssign _ p bop expr       -> simAssign p bop expr
 
-  SAnnotated _ _ stmt    -> simStmt stmt
-  SFor _ _ _ _           -> return ()
-  SReturn _ _            -> return ()
-  SExpr _ expr           -> simExpr expr 
+  SAnnotated _ _ stmt        -> simStmt stmt
+  SFor _ (id, typ) expr stmt -> simFor (id, typ) expr stmt
+  SReturn _ _                -> return ()
+  SExpr _ expr               -> simExpr expr 
 
 simWhile :: Expr a -> Stmt a -> State (Env a) ()
 simWhile cond stmt = do
@@ -114,15 +141,28 @@ simIf cond stmtT stmtE = do
     Just False -> simStmt stmtE
     Nothing    -> error $ "non bool value in if predicate"
 
+simFor :: (ID, Type a) -> Expr a -> Stmt a -> State (Env a) ()
+simFor (id, typ) expr stmt = do
+  list <- simList expr
+  case list of
+    Just l  -> mapM_ iter list
+    Nothing -> error "not iterable"
+  where
+    iter e = do
+      pushEmptyEnv
+      bindParam ((id, typ) e)
+      simStmt stmt
+      popEnv
+
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
-  AVar id -> error "TODO"
+  AVar id     -> error "TODO"
   AIndex id i -> error "TODO"
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
 declareSymbolic id typ size init = do
   offset <- allocatePathsum id size init
-  addBinding id (Symbolic typ size offset)
+  addBinding id (Symbolic typ offset)
 
 declareScalar :: ID -> Type a -> Maybe (Expr a) -> State (Env a) ()
 declareScalar id typ expr = addBinding id (Scalar typ expr')
@@ -152,7 +192,7 @@ simDeclare decl = case decl of
     TCReg n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> declareSymbolic vid (TCReg n) size Nothing
+        Nothing -> declareSymbolic vid (TCReg $ EInt size) size Nothing
         Just _  -> error $ "invalid array value"
     TQBit   -> case val of
       Nothing -> declareSymbolic vid TQBit 1 Nothing
@@ -163,15 +203,15 @@ simDeclare decl = case decl of
     TQReg n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> declareSymbolic vid (TQReg n) size Nothing
+        Nothing -> declareSymbolic vid (TQReg $ EInt size) size Nothing
         Just _  -> error $ "invalid array value"
     TUInt n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> declareSymbolic vid (TUInt n) size Nothing
+        Nothing -> declareSymbolic vid (TUInt $ EInt size) size Nothing
         Just v  -> case evalInt v of
           Nothing -> error $ "invalid uint value"
-          Just i  -> declareSymbolic vid (TUInt n) size (Just $ bitVec i size)
+          Just i  -> declareSymbolic vid (TUInt $ EInt size) size (Just $ bitVec i size)
     TAngle  -> case val of
       Nothing -> declareScalar vid TAngle Nothing
       Just v  -> case evalAngle v of
@@ -207,7 +247,16 @@ bitVec n size = map f [0..size-1]
     f i = if testBit n i then 1 else 0
 
 simExpr :: Expr a -> State (Env a) ()
-simExpr = error "TODO"
+simExpr (EStmt stmt)             = simStmt stmt
+simExpr (ECall [] fid args) = do
+  bind <- searchBinding fid
+  case bind of
+    Just (Block _ params _ body) -> do
+      pushEmptyEnv
+      bindParams params args
+      simStmt body
+      popEnv
+    Nothing                      -> error "binding not found"
 
 simReset :: Expr a -> State (Env a) ()
 simReset = error "TODO"
