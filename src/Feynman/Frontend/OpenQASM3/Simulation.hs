@@ -95,14 +95,32 @@ popEnv :: State (Env a) ()
 popEnv =
   modify $ \env -> env { binds = tail $ binds env}
 
-simBool :: Expr a -> State (Env a) (Maybe Bool)
+simBool :: Expr a -> State (Env a) Bool
 simBool = error "TODO"
 
-simInt :: Expr a -> State (Env a) (Maybe Int)
+simInt :: Expr a -> State (Env a) Int
 simInt = error "TODO"
 
-simList :: Expr a -> State (Env a) (Maybe [Expr a])
-simList expr = error "TODO"
+simList :: Expr a -> State (Env a) [Expr a]
+simList expr = case expr of
+  ESet l   -> return l
+  EVar vid -> do
+    bind <- searchBinding vid
+    case bind of
+      Symbolic (TCReg (EInt n)) _ -> return [ EIndex (EVar vid) i | i <- [0..n-1] ]
+      Symbolic (TQReg (EInt n)) _ -> return [ EIndex (EVar vid) i | i <- [0..n-1] ]
+      _ -> error "not a list"
+  ESlice init step end -> do
+    init' <- simInt init
+    end' <- simInt end
+    case step of
+      Just s -> do
+        step' <- simInt s
+        return [ EInt j | i <- [init'..end'],
+                          j = i * step',
+                          j <= end ]
+      Nothing -> return [ EInt i | i <- [init'..end']]
+  _ -> error "not a list"
 
 simStmt :: Stmt a -> State (Env a) ()
 simStmt stmt = case stmt of
