@@ -141,6 +141,12 @@ instance Fractional FF2 where
 data Zmod (n :: Nat) where
   Zmod :: (KnownNat n) => Int -> Zmod n
 
+instance Eq (Zmod n) where
+  (Zmod i) == (Zmod j) = i == j
+
+instance Ord (Zmod n) where
+  compare (Zmod i) (Zmod j) = compare i j
+
 instance Show (Zmod n) where
   show (Zmod i) = show i
 
