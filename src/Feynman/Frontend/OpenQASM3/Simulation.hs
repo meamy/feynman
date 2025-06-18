@@ -93,10 +93,15 @@ pushEmptyEnv =
 
 popEnv :: State (Env a) ()
 popEnv =
-  modify $ \env -> env { binds = tail $ binds env}
+  modify $ \env -> env { binds = tail $ binds env }
 
 simBool :: Expr a -> State (Env a) Bool
-simBool = error "TODO"
+simBool expr = case expr of
+  EVar vid -> do
+    bind <- searchBinding vid
+    case bind of
+      Nothing                       -> error "binding not found"
+      Just (Scalar TBool (EBool b)) -> return b
 
 simInt :: Expr a -> State (Env a) Int
 simInt = error "TODO"
