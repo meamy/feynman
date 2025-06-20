@@ -1,3 +1,16 @@
+{-|
+Module      : TPar
+Description : T gate parallelization optimization
+Copyright   : (c) 2016-2025 Matthew Amy
+Maintainer  : matt.e.amy@gmail.com
+Stability   : experimental
+Portability : portable
+
+An implementation of the T-par algorithm from
+  [arxiv:1303.2042](https://arxiv.org/abs/1303.2042).
+
+-}
+
 module Feynman.Optimization.TPar where
 
 import Feynman.Core

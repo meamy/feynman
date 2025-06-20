@@ -1,20 +1,24 @@
 {-|
 Module      : Unicode
 Description : Unicode constants and utilities
-Copyright   : (c) Matthew Amy, 2020
+Copyright   : (c) 2016-2025 Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
-Note        : import qualified
+
+Unicode utilities for pretty printing. Import qualified.
 -}
 
 module Feynman.Util.Unicode(
+  -- * Sub & super scripts
   subscript,
   sub,
   supscript,
   sup,
+  -- * Quantum-specific combinators
   ket,
   bra,
+  -- * Constants & operators
   oplus,
   dot,
   and,
@@ -39,6 +43,7 @@ module Feynman.Util.Unicode(
   ulambda,
   bullet,
   star,
+  -- * Misc
   setUTF8
   ) where
 

@@ -1,10 +1,23 @@
 {-|
 Module      : Clifford
 Description : Optimization of Clifford circuits
-Copyright   : (c) Matthew Amy, 2021
+Copyright   : (c) 2021-2025 Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
+
+This module repackages the Clifford circuit synthesis method from
+  "Feynman.Synthesis.Pathsum.Clifford"
+and
+  [arxiv:2204.14205](https://arxiv.org/abs/2204.14205)
+as a circuit optimization.
+
+The optimization proceeds by greedily building up Clifford circuit
+blocks, and then re-synthesizing a block when it can't be extended
+further. Results in 7-layer Clifford circuits of the form
+
+  @S - CZ - CNOT - H - CNOT - CZ - S@
+
 -}
 
 module Feynman.Optimization.Clifford(simplifyCliffords,simplifyCliffords') where

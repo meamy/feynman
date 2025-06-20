@@ -13,45 +13,6 @@ representations of circuits and programs in Feynman.
 -}
 
 module Feynman.Core where
-{-
-module Feynman.Core(
-
-  -- * Pervasive types
-  ID,
-  Loc,
-
-  -- * Angles
-  Angle(..),
-  discretize,
-  dyadicPhase,
-  continuousPhase,
-  Primitive(..),
-  AnnotatedPrimitive,
-  getArgs,
-  ids,
-  dagger,
-  subst,
-  countT,
-  simplifyPrimitive,
-  expandCNOT,
-  expandCZ,
-  factorSwaps,
-  synthesizePermutation,
-  removeSwaps,
-  pushSwaps,
-  annotate,
-  annotateWith,
-  unannotate,
-  simplifyPrimitive',
-  expandCNOT',
-  Stmt(..),
-  Decl(..),
-  Circuit(..),
-  WStmt(..),
-  idsW,
-  simplifyWStmt'
-  ) where
--}
 
 import Data.List
 import Control.Monad

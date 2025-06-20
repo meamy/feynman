@@ -1,10 +1,13 @@
 {-|
 Module      : Circuits
 Description : Various circuit constructors
-Copyright   : (c) Matthew Amy, 2024
+Copyright   : (c) 2016-2025 Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
+
+This module contains circuits and circuit constructors
+for some basic unitaries and algorithms.
 -}
 
 module Feynman.Circuits where
@@ -12,9 +15,8 @@ module Feynman.Circuits where
 import Feynman.Core
 import Feynman.Optimization.PhaseFold
 
-{-----------------------------------
- Basic circuits
- -----------------------------------}
+{- ------------------------------------------------------- -}
+-- * Basic circuits
 
 -- | Controlled-S gate
 cs :: ID -> ID -> [Primitive]
@@ -34,9 +36,8 @@ ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
              CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
              Tinv x, CNOT y z, CNOT z x, CNOT x y]
 
-{-----------------------------------
- Arithmetic
- -----------------------------------}
+{- ------------------------------------------------------- -}
+-- * Arithmetic circuits
 
 -- | Controlled carry-ripple adder. 3(n-1) + 1 Toffolis
 controlledAdder :: [ID] -> [ID] -> ID -> [Primitive]
@@ -67,11 +68,10 @@ cucarro a b =
   in
     go carry (reverse a) (reverse b)
 
-{-----------------------------------
- Algorithms
- -----------------------------------}
+{- ------------------------------------------------------- -}
+-- * Algorithms
 
--- | Embedded, adder-based QFT
+-- | Embedded, adder-based QFT. Register @x@ holds the data qubits, and @y@ the phase gradient
 embeddedQFT :: Int -> [Primitive]
 embeddedQFT n =
   let reg  = ["x" ++ show i | i <- [1..n]]
@@ -82,18 +82,3 @@ embeddedQFT n =
                          go xs ys
   in
     go reg cat
-
-
-{-----------------------------------
- Tests
- -----------------------------------}
-
--- Dumping this here for now
-runTest n = do
-  let inputs = ["x" ++ show i | i <- [1..n]] ++
-               ["y" ++ show i | i <- [1..n]]
-  let vars   = inputs ++ ["_anc" ++ show i | i <- [0..n]]
-  let circ   = embeddedQFT n
-  let opt    = phaseFold vars inputs $ simplifyPrimitive circ
-  putStrLn $ "Before optimization: " ++ show (countT circ)
-  putStrLn $ "After optimization: " ++ show (countT opt)
