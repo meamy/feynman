@@ -6,29 +6,36 @@
 {-|
 Module      : Base
 Description : Various rings & other algebras
-Copyright   : (c) Matthew Amy, 2020
+Copyright   : (c) 2020--2025 Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
+
+Defines basic algebraic type classes and algebras used throughout Feynman.
 -}
 
 module Feynman.Algebra.Base(
+  -- * Numeric constants
+  zero,
+  one,
+  -- * Groups
   Abelian(..),
   Periodic(..),
-  Dyadic(..),
+  -- ** Specific groups
   FF2,
   Zmod,
   Z4,
   Z8,
+  -- * Dyadic fractions
+  Dyadic(..),
   DyadicRational(..),
-  DMod2,
-  zero,
-  one,
   dyadic,
   toDyadic,
   numer,
   denom,
   denomExp,
+  -- ** Dyadic angles
+  DMod2,
   dMod2,
   unpack,
   )
@@ -60,10 +67,9 @@ one = fromInteger 1
  Z-modules
  -------------------------------}
 
--- | Groups (typically using addition in 'Num') with
---   a \(\mathbb{Z}\)-action
+-- | Abelian groups with respect to '+' --- i.e. \(\mathbb{Z}\)-module
 class Num g => Abelian g where
-  power :: Integer -> g -> g
+  power :: Integer -> g -> g 
 
 instance Abelian Integer where
   power = (*)
@@ -72,8 +78,8 @@ instance Abelian Double where
   power a = (fromIntegral a *)
 
 -- | Groups with computable orders. Rather than the standard
---   notion, the group 'g' need not have a finite order for
---   each element. In this case, 'order g == 0', and otherwise
+--   notion, the group @g@ need not have a finite order for
+--   each element. In this case, @order g == 0@, and otherwise
 --
 --    @'power' ('order' x) x = 'zero'@
 class Abelian g => Periodic g where
@@ -158,11 +164,11 @@ instance (KnownNat n) => Abelian (Zmod n) where
 instance (KnownNat n) => Periodic (Zmod n) where
   order (Zmod x) = toInteger $ (lcm x (fromInteger $ natVal (Proxy::Proxy n))) `div` x
 
--- | Convenience types
+-- Convenience types
 type Z4 = Zmod 4
 type Z8 = Zmod 8
 
--- | Inject a modular number into \(\mathbb{Z}\)
+-- | Inclusion of \(\mathbb{Z}_n\) in \(\mathbb{Z}\)
 injectMod :: Zmod n -> Integer
 injectMod (Zmod x) = toInteger x
 
@@ -170,7 +176,8 @@ injectMod (Zmod x) = toInteger x
  Dyadics
  -------------------------------}
 
--- | Dyadic rationals
+-- | Dyadic rationals \(\mathbb{D} = \mathbb{Z}[\frac{1}{2}] = \{\frac{a}{2^b} \mid a\in\mathbb{Z}, b\in\mathbb{N}\}\),
+--   stored canonically in reduced form
 data DyadicRational = Dy !Integer {-# UNPACK #-} !Int deriving (Eq)
 
 instance Show DyadicRational where
@@ -221,7 +228,7 @@ canonicalize (Dy a n)
       else Dy (a `shiftR` lg) (n-lg)
   | otherwise               = Dy a n
 
--- | Construct a canonical dyadic fraction
+-- | Construct a dyadic fraction
 dyadic :: Integer -> Int -> DyadicRational
 dyadic a n = canonicalize $ Dy a n
 
@@ -237,19 +244,21 @@ numer (Dy a _) = a
 denom :: DyadicRational -> Integer
 denom (Dy _ n) = 1 `shiftL` n
 
--- | Get the denominator exponent of a dyadic fraction
+-- | Get the exponent of 2 in the denominator
 denomExp :: DyadicRational -> Int
 denomExp (Dy _ n) = n
 
--- | Give the exact representation of a float as a dyadic rational
+-- | Give the exact representation of a float as a dyadic fraction
 toDyadic :: RealFloat a => a -> DyadicRational
 toDyadic x = dyadic a n
   where a = numerator ratRepr
         n = I# (integerLog2# $ denominator ratRepr)
         ratRepr = toRational x
 
--- | Dyadic fractions between 0 and 2
-newtype DMod2 = D2 { unpack :: DyadicRational } deriving (Eq, Ord)
+-- | Dyadic fractions between 0 and 2, for use in discrete angles
+newtype DMod2 = D2 {
+  unpack :: DyadicRational -- ^ Return the underlying dyadic fraction
+  } deriving (Eq, Ord)
 
 instance Show DMod2 where
   show (D2 a) = show a
