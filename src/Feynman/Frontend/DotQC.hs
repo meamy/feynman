@@ -2,7 +2,6 @@ module Feynman.Frontend.DotQC where
 
 import Feynman.Core (ID,
                      Primitive(..),
-                     showLst,
                      Angle(..),
                      dyadicPhase,
                      continuousPhase)
@@ -43,6 +42,9 @@ data DotQC = DotQC { qubits  :: [ID],
                      decls   :: [Decl] }
 
 {- Printing -}
+
+showLst :: Show a => [a] -> String
+showLst = intercalate " " . map show
 
 instance Show Gate where
   show (Gate name 0 params) = ""

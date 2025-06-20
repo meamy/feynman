@@ -13,7 +13,7 @@ T x2
 
 H 0
 tof x3 x1
-P* x3
+S* x3
 tof x1 0 
 tof 0 x3
 T x3
@@ -35,7 +35,7 @@ T 0
 T* x3
 tof 0 x3
 tof x1 0
-P x3
+S x3
 tof x3 x1
 H 0
 
@@ -45,78 +45,78 @@ Z x4 0 x1
 H x1
 tof x1 0
 T 0
-P 0
+S 0
 H 0
 T 0
-P 0
-H 0
-T 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P 0
+S 0
 H 0
 T 0
 H 0
 T 0
-P 0
+S 0
 H 0
 T 0
-P 0
+S 0
 H 0
 T 0
-P 0
-H 0
-T 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P 0
+S 0
 H 0
 T 0
 H 0
 T 0
-P 0
+S 0
+H 0
+T 0
+S 0
+H 0
+T 0
+S 0
 H 0
 T 0
 H 0
 T 0
+S 0
+H 0
+T 0
+S 0
+H 0
+T 0
+H 0
+T 0
+S 0
 H 0
 T 0
 H 0
 T 0
 H 0
 T 0
-P 0
 H 0
 T 0
 H 0
 T 0
-P 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P 0
-H 0
-T 0
-P* 0
+S 0
 H 0
 T 0
 H 0
 T 0
-P 0
+S 0
+H 0
+T 0
+S 0
+H 0
+T 0
+S 0
+H 0
+T 0
+S 0
+H 0
+T 0
+S* 0
+H 0
+T 0
+H 0
+T 0
+S 0
 tof x1 0
 H x1
 Z x4 0 x1
@@ -133,7 +133,7 @@ T x3
 
 H 0
 tof x4 x2
-P* x4
+S* x4
 tof x2 0 
 tof 0 x4
 T x4
@@ -155,7 +155,7 @@ T 0
 T* x4
 tof 0 x4
 tof x2 0
-P x4
+S x4
 tof x4 x2
 H 0
 

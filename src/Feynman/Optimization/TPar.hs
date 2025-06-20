@@ -8,7 +8,6 @@ import Feynman.Synthesis.Phase
 import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Reversible.Parallel
 import Feynman.Synthesis.Reversible.Gray
-import Feynman.Optimization.Swaps
 
 import Data.List hiding (transpose)
 import Data.Ord (comparing)

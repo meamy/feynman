@@ -342,8 +342,6 @@ synthesizeMCT i (x:xs) t   = circ ++ ccx x ("_anc" ++ show i) t ++ circ where
   circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
 -- | Push swaps to the end
---
---   See also Optimization.Swaps.pushSwaps
 pushSwaps :: [ExtractionGates] -> [ExtractionGates]
 pushSwaps = reverse . go (Map.empty, []) where
 
