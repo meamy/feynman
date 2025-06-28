@@ -3,104 +3,74 @@ import qualified Data.Map as Map
 import           Data.Map   (Map)
 import           Data.List  (nub)
 
+import Data.Set (Set)
+import qualified Data.Set as Set
+
 import Feynman.Core
-    ( Primitive,
+    ( Primitive(..),
       MaxHedgeDist,
       PartAlg(..),
       ID,
       Hypergraph,
       Segment,
-      isClassical,
-      targetOf )
+      Hedge, isCZ, ids,getArgs)
+      
+-- | Top-level: given a flat list of Primitives (circuit), produce
+--   * H: hypergraph mapping each wire ID to its list of hedges
+buildHypergraph :: [Primitive] -> Hypergraph
+buildHypergraph circuit =
+  let wires  = ids circuit                  -- all wire IDs in the circuit
+      events = zip [0..] circuit           -- annotate each gate with its position
+  in buildHypergraphHelper wires events    -- delegate to helper
 
--- | Build the hypergraph from a list of primitives
-buildHyp :: MaxHedgeDist -> Int -> [Primitive] -> Hypergraph
-buildHyp maxHedgeDist nQubits gs =
-  Map.map (filter (\(_, ws, _) -> not (null ws)))
-    $ Map.map splitLongHedges hyp
-  where
-    -- initial hypergraph, converting negative aux wires to positive
-    hyp = Map.map
-            (map (\(i, ws, o) -> (i, map (\(w,p) -> (nQubits - w - 1, p)) ws, o)))
-          $ buildHypRec gs 0 0
+-- | Helper: constructs H from wire list and indexed events
+buildHypergraphHelper :: [ID] -> [(Int, Primitive)] -> Hypergraph
+buildHypergraphHelper wires events =
+  Map.fromList [ (w, buildWireHedges w events) | w <- wires ]
 
-    splitLongHedges [] = []
-    splitLongHedges ((i, ws, o) : hs)
-      | maxHedgeDist == 1 =
-          map (\(w,p) -> (p, [(w,p)], p+1)) ws ++ splitLongHedges hs
-      | maxHedgeDist < (o - i) =
-          let x = i + ((o - i) `div` 2) in
-          splitLongHedges ((i, takeWhile (before x) ws, x)
-                          : (x, dropWhile (before x) ws, o) : hs)
-      | otherwise = (i, ws, o) : splitLongHedges hs
+-- | Build all hyperedges for a single wire
+--   Scans through events touching this wire, grouping contiguous CZ segments
+--   Each segment [n,m) becomes a Hedge (n, ws, m)
+--   Non-CZ gates produce singleton hedges [(pos,[],pos+1)]
+buildWireHedges :: ID -> [(Int, Primitive)] -> [Hedge]
+buildWireHedges wire evsAll =
+  let -- restrict to events on this wire
+      evs :: [(Int, Primitive)]
+      evs = [ (pos, g) | (pos, g) <- evsAll, wire `elem` getArgs g ]
 
-    before x (_, p) = p < x
+      -- fold to accumulate hedges
+      (hs, mStart, ws) = foldl (processEvent wire) ([], Nothing, []) evs
 
--- | Recursively build hypergraph from primitive list
-buildHypRec :: [Primitive] -> Int -> Int -> Hypergraph
-buildHypRec [] _ _ = Map.empty
-buildHypRec (g:gs) pos czVertex
-  | isClassical g = buildHypRec gs (pos + 1) czVertex
-  | otherwise    = case g of
-      -- CZ gates create hyperedges on both control and target wires
-      CZ x y -> newCZAt [x, y]
-        where
-          newCZAt []     = buildHypRec gs (pos + 1) (czVertex - 1)
-          newCZAt (w:ws) =
-            Map.alter (addCZ czVertex) w (newCZAt ws)
+      -- determine lastPosition to flush remaining segment
+      lastPos = case evs of [] -> 0; _ -> fst (last evs)
 
-          addCZ v Nothing                = Just [(0, [(v-1, pos)], pos + 1)]
-          addCZ v (Just ((_, ws, o) : es)) =
-            Just ((0, (v-1, pos):ws, o) : es)
+      -- flush final CZ segment if present, then trailing empty hedge
+      finalHedges = case mStart of
+        Just n  -> hs ++ [(n, ws, lastPos+1), (lastPos+1, [], lastPos+2)]
+        Nothing -> hs ++ [(lastPos+1, [], lastPos+2)]
+  in finalHedges
 
-      -- All other gates produce a hyperedge on the primary target wire
-      _ -> case targetOf g of
-        Just wire -> Map.alter addHedge wire next
-        Nothing   -> error $ "Gate " ++ show g ++ " was not properly preprocessed."
-        where
-          next = buildHypRec gs (pos + 1) czVertex
+-- | Fold step: update accumulator for each event on a wire
+--   * On CZ: start (or continue) a segment, collect other qubit IDs
+--   * On non-CZ: flush any CZ segment, then create a singleton hedge
+processEvent :: ID -> ([Hedge], Maybe Int, [(ID, Int)]) -> (Int, Primitive) -> ([Hedge], Maybe Int, [(ID, Int)])
+processEvent wire (acc, mStart, ws) (pos, gate)
+  | isCZ gate =
+      let n       = case mStart of
+                      Just start -> start
+                      Nothing    -> pos
+          others  = [ w | w <- getArgs gate, w /= wire ]
+          ws'     = ws ++ map (\w -> (w,pos)) others      -- record other vertices with CZ position
+      in (acc, Just n, ws')
 
-          addHedge Nothing                     = Just [(0, [], pos)]
-          addHedge (Just ((_, ws, o) : es)) =
-            Just ((0, [], pos) : (pos+1, ws, o) : es)
-
--- buildHyp :: Int -> [Primitive] -> Hypergraph
--- buildHyp maxHedgeDist gs = 
---   let n = length gs
---       (hyp, _) = buildHypRec (reverse gs) (n-1) 0 Map.empty
---       splitLong (i, ws, o) 
---         | maxHedgeDist <= 0 || o - i <= maxHedgeDist = [(i, ws, o)]
---         | otherwise = 
---             let mid = i + (o - i) `div` 2
---                 (ws1, ws2) = span (\(_, pos) -> pos < mid) ws
---             in [(i, ws1, mid)] ++ splitLong (mid, ws2, o)
---       processHedges = Map.map (concatMap splitLong . filter (\(_, ws, _) -> not $ null ws))
---   in processHedges hyp
-
--- buildHypRec :: [Primitive] -> Int -> Int -> Hypergraph -> (Hypergraph, Int)
--- buildHypRec [] _ nextVertex hyp = (hyp, nextVertex)
--- buildHypRec (g:gs) pos nextVertex hyp
---   | isClassical g = buildHypRec gs (pos-1) nextVertex hyp
---   | otherwise = case g of
---       CZ c t -> 
---         let wires = [c, t]
---             updateWire w h = 
---               case Map.lookup w h of
---                 Nothing -> Map.insert w [(pos, [(nextVertex, pos)], pos+1)] h
---                 Just (hedge@(i, ws, o):hedges) -> 
---                   Map.insert w ((i, (nextVertex, pos):ws, o) : hedges) h
---             newHyp = foldr updateWire hyp wires
---         in buildHypRec gs (pos-1) (nextVertex+1) newHyp
---       _ -> 
---         case targetOf g of
---           Just target -> 
---             let update = Map.alter (\case
---                   Nothing -> Just [(pos, [], pos+1)]
---                   Just hedges -> Just $ (pos, [], pos+1) : hedges
---                 ) target
---                 newHyp = update hyp
---             in buildHypRec gs (pos-1) nextVertex newHyp
---           Nothing -> buildHypRec gs (pos-1) nextVertex hyp
+  | otherwise =
+      let -- flush current CZ segment if open
+          acc' = case mStart of
+                   Just n  -> acc ++ [(n, ws, pos)]
+                   Nothing -> acc
+          -- singleton hedge for this non-CZ gate
+          singleton = (pos, [], pos+1)
+      in (acc' ++ [singleton], Nothing, [])
 
 
 -- | Count the number of “cuts” in a segment:

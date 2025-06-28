@@ -409,78 +409,13 @@ instance Show (WStmt a) where
                         ++ ["ELSE:"] ++ (map ('\t':) $ go s2)
     go (WWhile a s)   = ["WHILE *:"] ++ (map ('\t':) $ go s)
 
-showLst :: [[Char]] -> [Char]
 showLst = intercalate " "
-
--- | Extract the seam tag
-seamOf :: Segment -> Seam
-seamOf (_, _, _, s, _) = s
-
--- | Predicate for Stop seam
-isStop :: Seam -> Bool
-isStop Stop = True
-isStop _    = False
-
--- | Update a segment's partition by a matching
-updWith :: Matching -> Segment -> Segment
-updWith m (gs, hyp, part, s, ident) =
-  ( gs
-  , hyp
-  , Map.map (m Map.!) part
-  , s
-  , ident
-  )
-
--- | Get the target wire of a primitive, if unary
-targetOf :: Primitive -> Maybe ID
-targetOf gate = case gate of
-  H x           -> Just x
-  X x           -> Just x
-  Y x           -> Just x
-  Z x           -> Just x
-  S x           -> Just x
-  Sinv x        -> Just x
-  T x           -> Just x
-  Tinv x        -> Just x
-  Rz _ x        -> Just x
-  Rx _ x        -> Just x
-  Ry _ x        -> Just x
-  Measure _ b   -> Just b
-  Reset x       -> Just x
-  _             -> Nothing
 
 -- | Check for CZ gate
 isCZ :: Primitive -> Bool
 isCZ (CZ _ _) = True
 isCZ _        = False
 
--- | Check for classical primitives
-isClassical :: Primitive -> Bool
-isClassical (Measure _ _) = True
-isClassical (Reset _)     = True
-isClassical _             = False
-
--- | Extract control wires from a two-qubit primitive
-getControls :: Primitive -> [ID]
-getControls (CNOT c _) = [c]
-getControls (CZ c _)   = [c]
-getControls _          = []
-
--- | All wires involved in a primitive
-getWires :: Primitive -> [ID]
-getWires (CNOT c t) = [c, t]
-getWires (CZ c t)   = [c, t]
-getWires _          = []
-
--- | Count non-local CZs across segments
-countNonLocal :: [Segment] -> Int
-countNonLocal [] = 0
-countNonLocal (s:ss) = count s + countNonLocal ss
-  where
-    count (gs, _, part, _, _) =
-      let czList    = filter isCZ gs
-          wiresList = map getWires czList
-      in sum $ map ((\ws -> length ws - 1) . nub . map (part Map.!)) wiresList
 
 -- Test
 
