@@ -28,6 +28,14 @@ getEnvSize = gets go
     go (Env ps _ False) = outDeg ps 
     go (Env ps _ True)  = outDeg ps `div` 2
 
+getOffset :: ID -> State (Env a) Int
+getOffset id = do
+  bind <- searchBinding id
+  case bind of
+    Just (Symbolic _ offset) -> return offset
+    Just _                   -> error "not a symbolic variable"
+    Nothing                  -> error "binding not found"
+
 searchBinding :: ID -> State (Env a) (Maybe (Binding a))
 searchBinding id = gets $ search . binds
   where
@@ -59,21 +67,21 @@ allocatePathsum v size init = do
         newps    = ket (qbits ++ qbits) .> embedded
 
 bindParams :: [(ID, Type a)] -> [Expr a] -> State (Env a) ()
-bindParams params args = mapM bindParam $ zip params args
+bindParams params args = mapM_ bindParam $ zip params args
 
 -- no type checking
 bindParam :: ((ID, Type a), Expr a) -> State (Env a) ()
 bindParam ((pid, ptype), arg) = case arg of
-  EVar eid     -> do
+  EVar eid            -> do
     offset <- getOffset eid
     addBinding pid $ Symbolic ptype offset
-  EIndex eid i -> do
+  EIndex (EVar eid) i -> do
     offset <- getOffset eid
-    index <- evalInt i
-    case index of
-      Just j -> addBinding pid $ Symbolic ptype (offset + j)
-      Nothing -> error "non int"
-
+    index <- simInt i
+    addBinding pid $ Symbolic ptype (offset + index)
+  e                   ->
+    addBinding pid $ Scalar ptype e
+  
 evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
 
@@ -112,8 +120,8 @@ simList expr = case expr of
   EVar vid -> do
     bind <- searchBinding vid
     case bind of
-      Symbolic (TCReg (EInt n)) _ -> return [ EIndex (EVar vid) i | i <- [0..n-1] ]
-      Symbolic (TQReg (EInt n)) _ -> return [ EIndex (EVar vid) i | i <- [0..n-1] ]
+      Just (Symbolic (TCReg (EInt n)) _) -> return [ EIndex (EVar vid) (EInt i) | i <- [0..n-1] ]
+      Just (Symbolic (TQReg (EInt n)) _) -> return [ EIndex (EVar vid) (EInt i) | i <- [0..n-1] ]
       _ -> error "not a list"
   ESlice init step end -> do
     init' <- simInt init
@@ -122,8 +130,8 @@ simList expr = case expr of
       Just s -> do
         step' <- simInt s
         return [ EInt j | i <- [init'..end'],
-                          j = i * step',
-                          j <= end ]
+                          let j = i * step',
+                          j <= end' ]
       Nothing -> return [ EInt i | i <- [init'..end']]
   _ -> error "not a list"
 
@@ -150,30 +158,26 @@ simWhile :: Expr a -> Stmt a -> State (Env a) ()
 simWhile cond stmt = do
   cond' <- simBool cond
   case cond' of
-    Just True  -> do
+    True  -> do
       simStmt stmt
       simWhile cond stmt
-    Just False -> return ()
-    Nothing    -> error $ "non bool value in while predicate"
+    False -> return ()
 
 simIf :: Expr a -> Stmt a -> Stmt a -> State (Env a) ()
 simIf cond stmtT stmtE = do
   cond' <- simBool cond
   case cond' of
-    Just True  -> simStmt stmtT
-    Just False -> simStmt stmtE
-    Nothing    -> error $ "non bool value in if predicate"
+    True  -> simStmt stmtT
+    False -> simStmt stmtE
 
 simFor :: (ID, Type a) -> Expr a -> Stmt a -> State (Env a) ()
 simFor (id, typ) expr stmt = do
   list <- simList expr
-  case list of
-    Just l  -> mapM_ iter list
-    Nothing -> error "not iterable"
+  mapM_ iter list
   where
     iter e = do
       pushEmptyEnv
-      bindParam ((id, typ) e)
+      bindParam ((id, typ), e)
       simStmt stmt
       popEnv
 
