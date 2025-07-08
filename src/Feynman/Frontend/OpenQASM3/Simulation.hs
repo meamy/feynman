@@ -108,8 +108,10 @@ simBool expr = case expr of
   EVar vid -> do
     bind <- searchBinding vid
     case bind of
-      Nothing                       -> error "binding not found"
       Just (Scalar TBool (EBool b)) -> return b
+      Just _                        -> error "not compile time bool" --symbolic cbit?
+      Nothing                       -> error "binding not found"
+  EBool b -> return b
 
 simInt :: Expr a -> State (Env a) Int
 simInt = error "TODO"
