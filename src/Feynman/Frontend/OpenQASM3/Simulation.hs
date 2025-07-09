@@ -112,6 +112,43 @@ simBool expr = case expr of
       Just _                        -> error "not compile time bool" --symbolic cbit?
       Nothing                       -> error "binding not found"
   EBool b -> return b
+  EUOp NegOp e -> do
+    b <- simBool e
+    return $ not e
+  EBOp e1 bop e2 -> case bop of
+    AndOp -> do
+      b1 <- simBool e1
+      b2 <- simBool e2
+      return $ b1 && b2
+    OrOp -> do
+      b1 <- simBool e1
+      b2 <- simBool e2
+      return $ b1 || b2
+    XorOp -> do
+      b1 <- simBool e1
+      b2 <- simBool e2
+      return $ b1 xor b2
+    EqOp -> do
+      i1 <- simInt e1      -- need to either keep track of types of exps, or
+      i2 <- simInt e2      -- reduce exps to some normal forms?
+      return $ i1 == i2 
+    LTOp -> do
+      i1 <- simInt e1
+      i2 <- simInt e2
+      return $ i1 < i2
+    LEqOp -> do
+      i1 <- simInt e1
+      i2 <- simInt e2
+      return $ i1 <= i2
+    GTOp -> do
+      i1 <- simInt e1
+      i2 <- simInt e2
+      return $ i1 > i2
+    GEqOp -> do
+      i1 <- simInt e1
+      i2 <- simInt e2
+      return $ i1 >= i2
+
 
 simInt :: Expr a -> State (Env a) Int
 simInt = error "TODO"
