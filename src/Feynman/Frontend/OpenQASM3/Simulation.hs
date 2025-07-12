@@ -149,9 +149,15 @@ simBool expr = case expr of
       i2 <- simInt e2
       return $ i1 >= i2
 
-
 simInt :: Expr a -> State (Env a) Int
-simInt = error "TODO"
+simInt = case expr of
+  EVar vid -> do
+    bind <- searchBinding vid
+    case bind of
+      Just (Scalar TInt (EInt n)) -> return n
+      Just _                        -> error "not compile time int" --symbolic cbit?
+      Nothing                       -> error "binding not found"
+  EInt n -> return n
 
 simList :: Expr a -> State (Env a) [Expr a]
 simList expr = case expr of
