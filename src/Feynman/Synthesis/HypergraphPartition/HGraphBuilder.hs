@@ -6,8 +6,8 @@ import           Data.List  (nub)
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import           System.Directory       (createDirectoryIfMissing)
-import           System.FilePath        ((</>), (<.>))
+-- import           System.Directory       (createDirectoryIfMissing)
+-- import           System.FilePath        ((</>), (<.>))
 
 import Feynman.Core
     ( Circuit(..),
@@ -15,6 +15,9 @@ import Feynman.Core
       PartAlg(..),
       getArgs,
       foldCirc,
+      Decl(..),
+      foldStmt,
+      Stmt(..),
       ID,
       Hypergraph,
       Segment,
@@ -28,12 +31,25 @@ import Feynman.Core
 --       events = zip [0..] circuit           -- annotate each gate with its position
 --   in buildHypergraphHelper wires events    -- delegate to helper
 
+-- flattenCircuit :: Circuit -> [Primitive]
+-- flattenCircuit circ = reverse $ foldCirc collect [] circ
+--   where
+--     collect :: Stmt -> [Primitive] -> [Primitive]
+--     collect (Gate g) acc = g : acc
+--     collect _        acc = acc
+
+-- | Flatten a 'Circuit' into a linear list of 'Primitive's
 flattenCircuit :: Circuit -> [Primitive]
-flattenCircuit circ = reverse $ foldCirc collect [] circ
+flattenCircuit circ = concatMap flattenDecl (decls circ)
   where
-    collect :: Stmt -> [Primitive] -> [Primitive]
-    collect (Gate g) acc = g : acc
-    collect _        acc = acc
+    flattenDecl :: Decl -> [Primitive]
+    flattenDecl d = flattenStmt (body d)
+
+    flattenStmt :: Stmt -> [Primitive]
+    flattenStmt (Gate g)      = [g]
+    flattenStmt (Seq stmts)   = concatMap flattenStmt stmts
+    flattenStmt (Repeat _ st) = flattenStmt st
+    flattenStmt (Call _ _)    = []  -- ignore external calls
 
 -- Build a hypergraph from a full 'Circuit'
 buildHypergraph :: Circuit -> Hypergraph
@@ -117,12 +133,11 @@ countCuts (_, hyp, part, _, _) =
         []
         hyp
 
--- | Emit the .hgr file contents for your Hypergraph.
---   Returns (fileText, numHedges, numVertices).
-hypToString :: PartAlg -> Hypergraph -> Int -> (String, Int, Int)
-hypToString alg hyp nQubits = (fileData, nHedges, nVertices)
+-- | Convert a hypergraph to a string in Kahypar HGR format.
+hypToString :: Hypergraph -> Int -> (String, Int, Int)
+hypToString hyp nQubits = (fileData, nHedges, nVertices)
   where
-    -- 1) turn each hedge into a list of vertex-IDs
+    -- 1) flatten each hedge into a list of vertex IDs
     flatDataID :: [[ID]]
     flatDataID =
       Map.foldrWithKey
@@ -132,7 +147,7 @@ hypToString alg hyp nQubits = (fileData, nHedges, nVertices)
         []
         hyp
 
-    -- 2) assign each qubit-name an integer 1..#
+    -- 2) assign each unique ID an integer 1..#
     idList :: [ID]
     idList = nub $ concat flatDataID
 
@@ -150,39 +165,33 @@ hypToString alg hyp nQubits = (fileData, nHedges, nVertices)
     nHedges :: Int
     nHedges = length flatDataNum
 
-    nPins :: Int
-    nPins =
-      nHedges +
-      sum [ length wires | hedges <- Map.elems hyp, (_, wires, _) <- hedges ]
-
-    -- 5) first line differs by partitioner
+    -- 5) Kahypar first line: <nHedges> <nVertices> 10
     fstLine :: [String]
-    fstLine = case alg of
-      Kahypar -> [ show nHedges, show nVertices, "10" ]
-      Patoh   -> [ "1", show nVertices, show nHedges, show nPins, "1" ]
+    fstLine = [show nHedges, show nVertices, "10"]
 
     -- 6) vertex weights: 1 for first nQubits, then 0
     verticesWeights :: [[String]]
     verticesWeights =
-      replicate nQubits ["1"] ++ replicate (nVertices - nQubits) ["0"]
+      replicate nQubits ["1"]
+      ++ replicate (nVertices - nQubits) ["0"]
 
-    -- 7) assemble all lines
+    -- 7) assemble output string
     fileData :: String
     fileData = unlines . map unwords $
       fstLine
       : map (map show . nub) flatDataNum
       ++ verticesWeights
 
-writeHypergraphFile
-  :: PartAlg
-  -> Hypergraph
-  -> Int        -- ^ nQubits
-  -> FilePath   -- ^ base name (e.g. "circuit1")
-  -> IO ()
-writeHypergraphFile alg hyp nQubits base = do
-  let (fileData, _nH, _nV) = hypToString alg hyp nQubits
-      dir  = "HypergraphPartition" </> "temp"
-      path = dir </> base <.> "hgr"
-  -- ensure the directory exists
-  createDirectoryIfMissing True dir
-  writeFile path fileData
+-- writeHypergraphFile
+--   :: PartAlg
+--   -> Hypergraph
+--   -> Int        -- ^ nQubits
+--   -> FilePath   -- ^ base name (e.g. "circuit1")
+--   -> IO ()
+-- writeHypergraphFile alg hyp nQubits base = do
+--   let (fileData, _nH, _nV) = hypToString alg hyp nQubits
+--       dir  = "HypergraphPartition" </> "temp"
+--       path = dir </> base <.> "hgr"
+--   -- ensure the directory exists
+--   createDirectoryIfMissing True dir
+--   writeFile path fileData
