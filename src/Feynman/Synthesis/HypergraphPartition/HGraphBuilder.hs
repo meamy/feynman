@@ -10,9 +10,11 @@ import           System.Directory       (createDirectoryIfMissing)
 import           System.FilePath        ((</>), (<.>))
 
 import Feynman.Core
-    ( Primitive(..),
-      MaxHedgeDist,
+    ( Circuit(..),
+      Primitive(..),
       PartAlg(..),
+      getArgs,
+      foldCirc,
       ID,
       Hypergraph,
       Segment,
@@ -20,11 +22,26 @@ import Feynman.Core
       
 -- | Top-level: given a flat list of Primitives (circuit), produce
 --   * H: hypergraph mapping each wire ID to its list of hedges
-buildHypergraph :: [Primitive] -> Hypergraph
-buildHypergraph circuit =
-  let wires  = ids circuit                  -- all wire IDs in the circuit
-      events = zip [0..] circuit           -- annotate each gate with its position
-  in buildHypergraphHelper wires events    -- delegate to helper
+-- buildHypergraph :: [Primitive] -> Hypergraph
+-- buildHypergraph circuit =
+--   let wires  = ids circuit                  -- all wire IDs in the circuit
+--       events = zip [0..] circuit           -- annotate each gate with its position
+--   in buildHypergraphHelper wires events    -- delegate to helper
+
+flattenCircuit :: Circuit -> [Primitive]
+flattenCircuit circ = reverse $ foldCirc collect [] circ
+  where
+    collect :: Stmt -> [Primitive] -> [Primitive]
+    collect (Gate g) acc = g : acc
+    collect _        acc = acc
+
+-- Build a hypergraph from a full 'Circuit'
+buildHypergraph :: Circuit -> Hypergraph
+buildHypergraph circ =
+  let prims  = flattenCircuit circ
+      wires  = qubits circ
+      events = zip [0..] prims
+  in buildHypergraphHelper wires events
 
 -- | Helper: constructs H from wire list and indexed events
 buildHypergraphHelper :: [ID] -> [(Int, Primitive)] -> Hypergraph
