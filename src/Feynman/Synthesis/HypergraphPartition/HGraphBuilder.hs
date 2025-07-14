@@ -6,8 +6,8 @@ import           Data.List  (nub)
 import Data.Set (Set)
 import qualified Data.Set as Set
 
--- import           System.Directory       (createDirectoryIfMissing)
--- import           System.FilePath        ((</>), (<.>))
+import System.Directory (createDirectoryIfMissing)
+import System.FilePath  ((</>), (<.>))
 
 import Feynman.Core
     ( Circuit(..),
@@ -182,16 +182,13 @@ hypToString hyp nQubits = (fileData, nHedges, nVertices)
       : map (map show . nub) flatDataNum
       ++ verticesWeights
 
--- writeHypergraphFile
---   :: PartAlg
---   -> Hypergraph
---   -> Int        -- ^ nQubits
---   -> FilePath   -- ^ base name (e.g. "circuit1")
---   -> IO ()
--- writeHypergraphFile alg hyp nQubits base = do
---   let (fileData, _nH, _nV) = hypToString alg hyp nQubits
---       dir  = "HypergraphPartition" </> "temp"
---       path = dir </> base <.> "hgr"
---   -- ensure the directory exists
---   createDirectoryIfMissing True dir
---   writeFile path fileData
+-- | Write a hypergraph to a .hgr file under the "Temp" directory (created if missing).
+--   The file will be named <name>.hgr.
+writeHypToFile :: String -> Hypergraph -> Int -> IO FilePath
+writeHypToFile name hyp nQubits = do
+  let dir = "Temp"
+  createDirectoryIfMissing True dir
+  let filePath = dir </> name <.> "hgr"
+  let (contents, _, _) = hypToString hyp nQubits
+  writeFile filePath contents
+  return filePath
