@@ -13,6 +13,8 @@ import Feynman.Core (Primitive,
                      expandCZ,
                      idsW)
 
+import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (runHypExample)
+
 import qualified Feynman.Frontend.DotQC as DotQC
 
 import qualified Feynman.Frontend.OpenQASM.Syntax as QASM2
@@ -339,6 +341,7 @@ parseArgs doneSwitches options []     = printHelp
 parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
+  "-hypExample"  -> runHypExample
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
   "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs

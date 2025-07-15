@@ -1,4 +1,4 @@
-module Feynman.Synthesis.HGraphBuilder where
+module Feynman.Synthesis.HypergraphPartition.HGraphBuilder where
 import qualified Data.Map as Map
 import           Data.Map   (Map)
 import           Data.List  (nub)
@@ -194,18 +194,21 @@ writeHypToFile name hyp nQubits = do
   writeFile filePath contents
   return filePath
 
+runHypExample :: IO ()
+runHypExample = do
+  let hyp = buildHypergraph testCircuit
+      nQ  = length (qubits testCircuit)
+  path <- writeHypToFile "testCircuit" hyp nQ
+  putStrLn $ "Hypergraph written to: " ++ path
+
 
 testCircuit :: Circuit
-testCircuit = Circuit { qubits = ["x", "y", "z"],
-                    inputs = Set.fromList ["x", "y", "z"],
+testCircuit = Circuit { qubits = ["a", "b", "c", "d"],
+                    inputs = Set.fromList ["a", "b", "c", "d"],
                     decls  = [test] }
     where test = Decl { name = "main",
                        params = [],
-                       body = Seq [ Gate $ H "z",
-                                    Gate $ T "x", Gate $ T "y", Gate $ T "z", 
-                                    Gate $ CNOT "x" "y", Gate $ CNOT "y" "z", Gate $ CNOT "z" "x",
-                                    Gate $ Tinv "x", Gate $ Tinv "y", Gate $ T "z",
-                                    Gate $ CNOT "y" "x",
-                                    Gate $ Tinv "x",
-                                    Gate $ CNOT "y" "z", Gate  $ CNOT "z" "x", Gate $ CNOT "x" "y",
-                                    Gate $ H "z" ] }
+                       body = Seq [ Gate $ CZ "a" "c",
+                                    Gate $ CZ "b" "c", Gate $ H "c", Gate $ H "b",
+                                    Gate $ CZ "c" "d", Gate $  H "c", Gate $ CZ "b" "c",
+                                    Gate $ H "d", Gate $ CZ "b" "d"] }
