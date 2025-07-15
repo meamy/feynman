@@ -22,6 +22,7 @@ import Feynman.Core
       Hypergraph,
       Segment,
       Hedge, isCZ, ids,getArgs)
+import Test.QuickCheck.Test (test)
       
 -- | Top-level: given a flat list of Primitives (circuit), produce
 --   * H: hypergraph mapping each wire ID to its list of hedges
@@ -192,3 +193,19 @@ writeHypToFile name hyp nQubits = do
   let (contents, _, _) = hypToString hyp nQubits
   writeFile filePath contents
   return filePath
+
+
+testCircuit :: Circuit
+testCircuit = Circuit { qubits = ["x", "y", "z"],
+                    inputs = Set.fromList ["x", "y", "z"],
+                    decls  = [test] }
+    where test = Decl { name = "main",
+                       params = [],
+                       body = Seq [ Gate $ H "z",
+                                    Gate $ T "x", Gate $ T "y", Gate $ T "z", 
+                                    Gate $ CNOT "x" "y", Gate $ CNOT "y" "z", Gate $ CNOT "z" "x",
+                                    Gate $ Tinv "x", Gate $ Tinv "y", Gate $ T "z",
+                                    Gate $ CNOT "y" "x",
+                                    Gate $ Tinv "x",
+                                    Gate $ CNOT "y" "z", Gate  $ CNOT "z" "x", Gate $ CNOT "x" "y",
+                                    Gate $ H "z" ] }
