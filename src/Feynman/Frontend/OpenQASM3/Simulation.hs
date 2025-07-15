@@ -36,6 +36,15 @@ getOffset id = do
     Just _                   -> error "not a symbolic variable"
     Nothing                  -> error "binding not found"
 
+evalOffset :: Expr a -> State (Env a) Int
+evalOffset expr = case expr of
+  EVar vid     -> getOffset vid
+  EIndex e1 e2 -> do
+    offset <- getOffset e1
+    index <- simInt e2
+    return $ e1 + e2
+  _ -> error "cannot find offset"
+
 searchBinding :: ID -> State (Env a) (Maybe (Binding a))
 searchBinding id = gets $ search . binds
   where
@@ -80,7 +89,7 @@ bindParam ((pid, ptype), arg) = case arg of
     index <- simInt i
     addBinding pid $ Symbolic ptype (offset + index)
   e                   ->
-    addBinding pid $ Scalar ptype e
+    addBinding pid $ Scalar ptype e       --need to evaluate e first
   
 evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
@@ -318,8 +327,17 @@ bitVec n size = map f [0..size-1]
   where
     f i = if testBit n i then 1 else 0
 
+stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
+
 simExpr :: Expr a -> State (Env a) ()
-simExpr (EStmt stmt)             = simStmt stmt
+simExpr (EStmt stmt)        = simStmt stmt
+simExpr (ECall [] fid args)
+  | fid `elem` stdlib       = case (fid, args) of
+    ("x", [arg])  -> do
+      gate <- simGate "x"
+      offset <- arg
+      applyGate gate [offset]
+      
 simExpr (ECall [] fid args) = do
   bind <- searchBinding fid
   case bind of
@@ -329,6 +347,9 @@ simExpr (ECall [] fid args) = do
       simStmt body
       popEnv
     Nothing                      -> error "binding not found"
+
+simGate = error "TODO"
+applyGate = error "TODO"
 
 simReset :: Expr a -> State (Env a) ()
 simReset = error "TODO"
