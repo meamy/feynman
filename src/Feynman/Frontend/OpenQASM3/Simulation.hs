@@ -8,7 +8,7 @@ import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Core (ID)
 import Feynman.Frontend.OpenQASM3.Core
 import Feynman.Algebra.Polynomial.Multilinear (SBool)
-import Data.Bits (testBit)
+import Data.Bits (testBit, xor)
 
 data Env a = Env {
   pathsum :: Pathsum DMod2,
@@ -40,9 +40,9 @@ evalOffset :: Expr a -> State (Env a) Int
 evalOffset expr = case expr of
   EVar vid     -> getOffset vid
   EIndex e1 e2 -> do
-    offset <- getOffset e1
+    offset <- evalOffset e1
     index <- simInt e2
-    return $ e1 + e2
+    return $ offset + index
   _ -> error "cannot find offset"
 
 searchBinding :: ID -> State (Env a) (Maybe (Binding a))
@@ -123,7 +123,7 @@ simBool expr = case expr of
   EBool b -> return b
   EUOp NegOp e -> do
     b <- simBool e
-    return $ not e
+    return $ not b
   EBOp e1 bop e2 -> case bop of
     AndOp -> do
       b1 <- simBool e1
@@ -136,7 +136,7 @@ simBool expr = case expr of
     XorOp -> do
       b1 <- simBool e1
       b2 <- simBool e2
-      return $ b1 xor b2
+      return $ b1 `xor` b2
     EqOp -> do
       i1 <- simInt e1      -- need to either keep track of types of exps, or
       i2 <- simInt e2      -- reduce exps to some normal forms?
@@ -159,7 +159,7 @@ simBool expr = case expr of
       return $ i1 >= i2
 
 simInt :: Expr a -> State (Env a) Int
-simInt = case expr of
+simInt expr = case expr of
   EVar vid -> do
     bind <- searchBinding vid
     case bind of
@@ -334,9 +334,11 @@ simExpr (EStmt stmt)        = simStmt stmt
 simExpr (ECall [] fid args)
   | fid `elem` stdlib       = case (fid, args) of
     ("x", [arg])  -> do
-      gate <- simGate "x"
-      offset <- arg
-      applyGate gate [offset]
+      gatePS <- getGatePS "x" []
+      offset <- evalOffset arg
+      env <- get
+      let ps' = applyGate (density env) (pathsum env) [] gatePS [offset]
+      modify $ \env -> env { pathsum = ps' }
       
 simExpr (ECall [] fid args) = do
   bind <- searchBinding fid
@@ -348,8 +350,23 @@ simExpr (ECall [] fid args) = do
       popEnv
     Nothing                      -> error "binding not found"
 
-simGate = error "TODO"
-applyGate = error "TODO"
+getGatePS :: ID -> [Expr a] -> State (Env a) (Pathsum DMod2)
+getGatePS id params = case (id, params) of
+  ("x", []) -> return xgate
+
+applyGate :: Bool -> Pathsum DMod2 -> [Int] -> Pathsum DMod2 -> [Int] -> Pathsum DMod2
+applyGate density ps controls gate@(Pathsum _ b _ _ _ _) args
+  | not $ null controls = applyGate density ps [] (controlledN (length controls) gate) (controls ++ args)
+  | length args == b    = applyGate' ps args
+  where
+    applyGate' :: Pathsum DMod2 -> [Int] -> Pathsum DMod2
+    applyGate' ps@(Pathsum _ _ c _ _ _) offsets
+      | not density = ps .> embed gate (c - b) f f
+      | density     = ps .> embed (channelize gate) (c - 2*b) g g
+      where
+        f, g :: Int -> Int
+        f = (!!) offsets
+        g = (!!) (offsets ++ map (+ c `div` 2) offsets)
 
 simReset :: Expr a -> State (Env a) ()
 simReset = error "TODO"
