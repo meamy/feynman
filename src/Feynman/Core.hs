@@ -205,26 +205,18 @@ ids = Set.toList . foldr f Set.empty
           Uninterp s xs -> xs
 
 {- Parameters For Hypergraph Parition -}
-type K            = Int
-type Size         = Int
-type InitSegSize  = Int
--- type MaxHedgeDist = Int
-type KeepCCZ      = Bool
-data PartAlg      = Kahypar | Patoh
-type PartDir      = String
-type SaveTrace    = Bool
-type Verbose      = Bool
+data Vertex
+  = Wire Int   -- qubit number (1-based)
+  | GateIdx Int   -- CZ gate index
+  deriving (Eq, Ord, Show)
 
-{-Hypergraph types-}
-type Hedge      = (Int, [(ID, Int)], Int)
-type Hypergraph = Map ID [Hedge]
-type Block      = Int
-type Partition  = Map ID Block
-type Matching   = Map Block Block
+type Hyperedge = Set.Set Vertex
 
-type Segment    = ([Primitive], Hypergraph, Partition, Seam, (Int, Int))
-data Seam       = Compute | Value Rational | Stop
-
+data Hypergraph = Hypergraph
+  { vertices :: Set.Set Vertex
+  , hedges   :: [Hyperedge]
+  }
+  deriving (Eq, Show)
 
 idsW :: WStmt a -> [ID]
 idsW = Set.toList . go where
