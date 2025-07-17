@@ -24,15 +24,65 @@ import Feynman.Core
 import Test.QuickCheck.Test (test)
 
 
+-- -- | Build the hypergraph for a given Circuit
+-- --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
+-- buildHypergraph :: Circuit -> Hypergraph
+-- buildHypergraph circuit =
+--   let qs        = qubits circuit
+--       nQubits   = length qs
+--       startCZ   = nQubits + 1
+--       -- map each qubit ID to its Int index
+--       qIndexMap = Map.fromList (zip qs [1..])
+
+--       -- flatten all primitives in declaration order with their positions
+--       allPrimsWithIdx :: [(Primitive, Int)]
+--       allPrimsWithIdx =
+--         [ (p, idx)
+--         | Decl _ _ (Seq stmts) <- decls circuit
+--         , (Gate p, idx)       <- zip stmts [0..]
+--         ]
+
+--       -- assign global CZ indices by original position
+--       czPositions = [ pos | (p,pos) <- allPrimsWithIdx, isCZ p ]
+--       czMap :: Map.Map Int Int
+--       czMap = Map.fromList $ zip czPositions [startCZ..]
+
+--       -- extract primitives acting on q, keeping their positions
+--       qubitGatesWithIdx q =
+--         [ (p,pos)
+--         | (p,pos) <- allPrimsWithIdx
+--         , q `elem` getArgs p
+--         ]
+
+--       -- process each wire into its vertices and hyperedges
+--       buildForWire q =
+--         let wireIdx = qIndexMap Map.! q
+--             prims   = qubitGatesWithIdx q
+--             go hedge [] = (Set.toList hedge, [hedge])
+--             go hedge ((g,pos):xs)
+--               -- global CZ check: lookup its index by position
+--               | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g)
+--                 = let idx    = czMap Map.! pos
+--                       hedge' = Set.insert (GateIdx idx) hedge
+--                   in go hedge' xs
+--               | otherwise
+--                 = let (vsRest, hsRest) = go (Set.singleton (Wire wireIdx)) xs
+--                   in (Wire wireIdx : vsRest, hedge : hsRest)
+--         in go (Set.singleton (Wire wireIdx)) prims
+
+--       allResults = map buildForWire qs
+--       vs         = Set.unions (map (Set.fromList . fst) allResults)
+--       hs         = concatMap snd allResults
+--   in Hypergraph vs hs
+
 -- | Build the hypergraph for a given Circuit
 --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
 buildHypergraph :: Circuit -> Hypergraph
 buildHypergraph circuit =
-  let qs        = qubits circuit
-      nQubits   = length qs
-      startCZ   = nQubits + 1
-      -- map each qubit ID to its Int index
-      qIndexMap = Map.fromList (zip qs [1..])
+  let qs           = qubits circuit
+      nQubits      = length qs
+      startCZ      = nQubits + 1
+      qIndexMap    = Map.fromList (zip qs [1..])
 
       -- flatten all primitives in declaration order with their positions
       allPrimsWithIdx :: [(Primitive, Int)]
@@ -44,8 +94,7 @@ buildHypergraph circuit =
 
       -- assign global CZ indices by original position
       czPositions = [ pos | (p,pos) <- allPrimsWithIdx, isCZ p ]
-      czMap :: Map.Map Int Int
-      czMap = Map.fromList $ zip czPositions [startCZ..]
+      czMap       = Map.fromList $ zip czPositions [startCZ..]
 
       -- extract primitives acting on q, keeping their positions
       qubitGatesWithIdx q =
@@ -54,25 +103,33 @@ buildHypergraph circuit =
         , q `elem` getArgs p
         ]
 
-      -- process each wire into its vertices and hyperedges
+      -- process each wire into its hyperedges (emitting only after seeing a CZ)
       buildForWire q =
         let wireIdx = qIndexMap Map.! q
             prims   = qubitGatesWithIdx q
-            go hedge [] = (Set.toList hedge, [hedge])
-            go hedge ((g,pos):xs)
-              -- global CZ check: lookup its index by position
-              | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g)
-                = let idx    = czMap Map.! pos
-                      hedge' = Set.insert (GateIdx idx) hedge
-                  in go hedge' xs
-              | otherwise
-                = let (vsRest, hsRest) = go (Set.singleton (Wire wireIdx)) xs
-                  in (Wire wireIdx : vsRest, hedge : hsRest)
-        in go (Set.singleton (Wire wireIdx)) prims
+            -- Stateful walk: czSeen tracks if we've started a hedge
+            go :: Bool -> Hyperedge -> [(Primitive,Int)] -> [Hyperedge]
+            -- End of list: emit only if we saw a CZ
+            go czSeen hedge []
+              | czSeen    = [hedge]
+              | otherwise = []
+            go czSeen hedge ((g,pos):ps)
+              -- extend hedge on CZ
+              | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g) =
+                  let idx    = czMap Map.! pos
+                      hedge' = if czSeen
+                               then Set.insert (GateIdx idx) hedge
+                               else Set.fromList [Wire wireIdx, GateIdx idx]
+                  in go True hedge' ps
+              -- on non-CZ, flush previous hedge if any, reset
+              | otherwise =
+                  let out = if czSeen then [hedge] else []
+                  in out ++ go False Set.empty ps
+        in go False Set.empty prims
 
-      allResults = map buildForWire qs
-      vs         = Set.unions (map (Set.fromList . fst) allResults)
-      hs         = concatMap snd allResults
+      -- collect all hyperedges and vertices
+      hs = concatMap buildForWire qs
+      vs = Set.unions hs
   in Hypergraph vs hs
 
 -- | Extract the numeric ID from a Vertex
@@ -119,4 +176,18 @@ testCircuit = Circuit { qubits = ["a", "b", "c", "d"],
                                       Gate $ CZ "a" "c", Gate $ CZ "b" "c", Gate $ H "c",
                                       Gate $ H "b", Gate $ CZ "c" "d", Gate $ H "c", Gate $ CZ "b" "c", Gate $ H "d", Gate $ CZ "b" "d"
                                   ] }
+
+testCircuit1 :: Circuit
+testCircuit1 = Circuit { qubits = ["a", "b", "c", "d"],
+                    inputs = Set.fromList ["a", "b", "c", "d"],
+                    decls  = [test] }
+    where test = Decl { name = "main",
+                       params = [],
+                       body = Seq [
+                                      Gate $ H "d", Gate $ CZ "b" "d", Gate $ H "c", Gate $ CZ "b" "c",
+                                      Gate $ H "a", Gate $ CZ "a" "b", Gate $ H "a", Gate $ H "b",
+                                      Gate $ CZ "a" "b", Gate $ CZ "a" "c", Gate $ CZ "a" "d",
+                                      Gate $ H "b", Gate $ H "c", Gate $ H "d"
+                                  ] 
+                      }
 
