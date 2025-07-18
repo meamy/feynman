@@ -24,57 +24,6 @@ import Feynman.Core
 import Test.QuickCheck.Test (test)
 
 
--- -- | Build the hypergraph for a given Circuit
--- --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
--- buildHypergraph :: Circuit -> Hypergraph
--- buildHypergraph circuit =
---   let qs        = qubits circuit
---       nQubits   = length qs
---       startCZ   = nQubits + 1
---       -- map each qubit ID to its Int index
---       qIndexMap = Map.fromList (zip qs [1..])
-
---       -- flatten all primitives in declaration order with their positions
---       allPrimsWithIdx :: [(Primitive, Int)]
---       allPrimsWithIdx =
---         [ (p, idx)
---         | Decl _ _ (Seq stmts) <- decls circuit
---         , (Gate p, idx)       <- zip stmts [0..]
---         ]
-
---       -- assign global CZ indices by original position
---       czPositions = [ pos | (p,pos) <- allPrimsWithIdx, isCZ p ]
---       czMap :: Map.Map Int Int
---       czMap = Map.fromList $ zip czPositions [startCZ..]
-
---       -- extract primitives acting on q, keeping their positions
---       qubitGatesWithIdx q =
---         [ (p,pos)
---         | (p,pos) <- allPrimsWithIdx
---         , q `elem` getArgs p
---         ]
-
---       -- process each wire into its vertices and hyperedges
---       buildForWire q =
---         let wireIdx = qIndexMap Map.! q
---             prims   = qubitGatesWithIdx q
---             go hedge [] = (Set.toList hedge, [hedge])
---             go hedge ((g,pos):xs)
---               -- global CZ check: lookup its index by position
---               | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g)
---                 = let idx    = czMap Map.! pos
---                       hedge' = Set.insert (GateIdx idx) hedge
---                   in go hedge' xs
---               | otherwise
---                 = let (vsRest, hsRest) = go (Set.singleton (Wire wireIdx)) xs
---                   in (Wire wireIdx : vsRest, hedge : hsRest)
---         in go (Set.singleton (Wire wireIdx)) prims
-
---       allResults = map buildForWire qs
---       vs         = Set.unions (map (Set.fromList . fst) allResults)
---       hs         = concatMap snd allResults
---   in Hypergraph vs hs
-
 -- | Build the hypergraph for a given Circuit
 --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
 buildHypergraph :: Circuit -> Hypergraph
@@ -161,11 +110,12 @@ writeHypToFile name hyp = do
 
 runHypExample :: IO ()
 runHypExample = do
-  let hyp = buildHypergraph testCircuit
+  let hyp = buildHypergraph testCircuit2
   path <- writeHypToFile "testCircuit" hyp
   putStrLn $ "Hypergraph written to: " ++ path
 
 
+-- Unit circuit tests
 testCircuit :: Circuit
 testCircuit = Circuit { qubits = ["a", "b", "c", "d"],
                     inputs = Set.fromList ["a", "b", "c", "d"],
@@ -191,3 +141,17 @@ testCircuit1 = Circuit { qubits = ["a", "b", "c", "d"],
                                   ] 
                       }
 
+
+testCircuit2 :: Circuit
+testCircuit2 = Circuit { qubits = ["a", "b", "c", "d"],
+                    inputs = Set.fromList ["a", "b", "c", "d"],
+                    decls  = [test] }
+    where test = Decl { name = "main",
+                       params = [],
+                       body = Seq [
+                                      Gate $ H "a", Gate $ CZ "a" "b", Gate $ H "a", Gate $ H "b",
+                                      Gate $ CZ "a" "b", Gate $ H "a", Gate $ H "b", Gate $ CZ "a" "b",
+                                      Gate $ CZ "b" "c", Gate $ H "c", Gate $ CZ "c" "d",
+                                      Gate $ H "c", Gate $ H "d", Gate $ CZ "c" "d", Gate $ H "b", Gate $ H "d"  
+                                  ] 
+                      }

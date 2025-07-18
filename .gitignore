@@ -13,6 +13,7 @@ feynver
 dist/
 .cabal-sandbox/
 tmp/
+/src/Feynman/kahypar/
 
 # misc
 TAGS
