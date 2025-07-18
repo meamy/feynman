@@ -47,6 +47,7 @@ library
                        Feynman.Synthesis.Pathsum.Unitary,
 
                        Feynman.Synthesis.HypergraphPartition.HGraphBuilder,
+                       Feynman.Synthesis.HypergraphPartition.PartitionConfigs,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
@@ -74,6 +75,7 @@ library
                        bv,
                        bytestring,
                        containers >= 0.6.3.1,
+                       process    >=1.6 && <1.7,
                        fast-digits >= 0.2.1.0,
                        fin >= 0.1.1,
                        ghc-prim >= 0.5.0.0,

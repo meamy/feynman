@@ -7,8 +7,13 @@ import           Data.List (sort)
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath  ((</>), (<.>))
+import System.Process (callProcess)
+import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
+import Control.Monad (unless)
+
+
 
 import Feynman.Core
     ( Circuit(..),
@@ -108,11 +113,44 @@ writeHypToFile name hyp = do
   writeFile filePath contents
   return filePath
 
+-- runHypExample :: IO ()
+-- runHypExample = do
+--   let hyp = buildHypergraph testCircuit2
+--   path <- writeHypToFile "testCircuit" hyp
+--   putStrLn $ "Hypergraph written to: " ++ path
+
+
+-- | Run the example: write the hypergraph, then invoke KaHyPar.
 runHypExample :: IO ()
 runHypExample = do
+  let name    = "testCircuit"
+      tempDir = "Temp"
+      k       = Cfg.numParts  -- number of partitions
+  -- build and write hypergraph
   let hyp = buildHypergraph testCircuit2
-  path <- writeHypToFile "testCircuit" hyp
-  putStrLn $ "Hypergraph written to: " ++ path
+  filePath <- writeHypToFile name hyp
+  putStrLn $ "Hypergraph written to: " ++ filePath
+
+  -- ensure the file exists before calling KaHyPar
+  exists <- doesFileExist filePath
+  unless exists $
+    error $ "Hypergraph file not found: " ++ filePath
+
+  -- run KaHyPar CLI
+  let outputPrefix  = tempDir </> "km1"
+      partitionFile = outputPrefix <.> "hgr"
+  callProcess "KaHyPar"
+    [ "-h", filePath
+    , "-k", show k
+    , "-e", Cfg.epsilon
+    , "-m", "direct"
+    , "-o", outputPrefix
+    , "-p", Cfg.subalgorithm
+    , "-w", "true"
+    , "-q", "true"
+    ]
+  putStrLn $ "Partition written to: " ++ partitionFile
+
 
 
 -- Unit circuit tests
