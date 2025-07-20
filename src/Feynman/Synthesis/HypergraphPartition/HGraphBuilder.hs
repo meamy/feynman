@@ -14,7 +14,6 @@ import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 import Control.Monad (unless)
 
 
-
 import Feynman.Core
     ( Circuit(..),
       Primitive(..),
@@ -31,7 +30,7 @@ import Test.QuickCheck.Test (test)
 
 -- | Build the hypergraph for a given Circuit
 --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
-buildHypergraph :: Circuit -> Hypergraph
+buildHypergraph :: Circuit -> (Int, Hypergraph)
 buildHypergraph circuit =
   let qs           = qubits circuit
       nQubits      = length qs
@@ -84,15 +83,15 @@ buildHypergraph circuit =
       -- collect all hyperedges and vertices
       hs = concatMap buildForWire qs
       vs = Set.unions hs
-  in Hypergraph vs hs
+  in (nQubits, Hypergraph vs hs)
 
 -- | Extract the numeric ID from a Vertex
 vertexNum :: Vertex -> Int
 vertexNum (Wire i) = i
 vertexNum (GateIdx i) = i
 
-hypToString :: Hypergraph -> String
-hypToString (Hypergraph vs hs) =
+hypToString :: Int -> Hypergraph -> String
+hypToString nQubits (Hypergraph vs hs) =
   let numH      = length hs
       numV      = Set.size vs
       header    = unwords [show numH, show numV, "10"]
@@ -100,57 +99,66 @@ hypToString (Hypergraph vs hs) =
         [ unwords . map show . sort . map vertexNum . Set.toList $ hedge
         | hedge <- hs
         ]
-  in unlines (header : edgeLines)
+      weights     = [1 | _ <- [1..nQubits]]
+                 ++ [0 | _ <- [nQubits+1..numV]]
+      weightLines = map show weights
+  in unlines $ header : edgeLines ++ weightLines
 
 -- | Write a hypergraph to a .hgr file under the "Temp" directory (created if missing).
 --   The file will be named <name>.hgr.
-writeHypToFile :: String -> Hypergraph -> IO FilePath
-writeHypToFile name hyp = do
+writeHypToFile :: String -> Int -> Hypergraph -> IO FilePath
+writeHypToFile name nQubits hyp = do
   let dir      = "Temp"
       filePath = dir </> name <.> "hgr"
-      contents = hypToString hyp
+      contents = hypToString nQubits hyp
   createDirectoryIfMissing True dir
   writeFile filePath contents
   return filePath
 
 -- runHypExample :: IO ()
 -- runHypExample = do
---   let hyp = buildHypergraph testCircuit2
---   path <- writeHypToFile "testCircuit" hyp
+--   let hyp = buildHypergraph teCstCircuit2
+--   path <- writeHypToFile "testircuit" hyp
 --   putStrLn $ "Hypergraph written to: " ++ path
 
 
--- | Run the example: write the hypergraph, then invoke KaHyPar.
+-- | Build and partition, invoking KaHyPar with correct flags
 runHypExample :: IO ()
 runHypExample = do
   let name    = "testCircuit"
       tempDir = "Temp"
-      k       = Cfg.numParts  -- number of partitions
-  -- build and write hypergraph
-  let hyp = buildHypergraph testCircuit2
-  filePath <- writeHypToFile name hyp
+      k       = Cfg.numParts
+      objective = "km1"
+      kahyparExe = "src/Feynman/kahypar/build/kahypar/application/KahyPar"
+
+  -- Build and write hypergraph
+  let (nQuibits, hyp) = buildHypergraph testCircuit2
+  filePath <- writeHypToFile name nQuibits hyp
   putStrLn $ "Hypergraph written to: " ++ filePath
 
-  -- ensure the file exists before calling KaHyPar
+  -- Ensure .hgr exists
   exists <- doesFileExist filePath
   unless exists $
     error $ "Hypergraph file not found: " ++ filePath
 
-  -- run KaHyPar CLI
-  let outputPrefix  = tempDir </> "km1"
-      partitionFile = outputPrefix <.> "hgr"
-  callProcess "KaHyPar"
-    [ "-h", filePath
-    , "-k", show k
-    , "-e", Cfg.epsilon
-    , "-m", "direct"
-    , "-o", outputPrefix
-    , "-p", Cfg.subalgorithm
-    , "-w", "true"
-    , "-q", "true"
-    ]
-  putStrLn $ "Partition written to: " ++ partitionFile
+  -- Ensure KahyPar binary exists
+  execExists <- doesFileExist kahyparExe
+  unless execExists $
+    error $ "Cannot find KahyPar executable at: " ++ kahyparExe
 
+  -- Invoke KaHyPar: specify objective, config, and output folder
+  callProcess kahyparExe
+    [ 
+      "-h", filePath, 
+      "-k", show k, 
+      "-e", Cfg.epsilon, 
+      "-o", objective,                      -- objective name (km1)
+      "-m", "direct",
+      "-p", Cfg.subalgorithm,                -- config .ini path
+      "-w", "true"
+    ]
+
+  putStrLn $ "Partition file written to: " ++ tempDir </> (objective <.> "hgr")
 
 
 -- Unit circuit tests
