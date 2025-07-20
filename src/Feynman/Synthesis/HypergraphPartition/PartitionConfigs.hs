@@ -1,5 +1,6 @@
 module Feynman.Synthesis.HypergraphPartition.PartitionConfigs where
 
+kahyparPath = "src/Feynman/kahypar/build/kahypar/application/KahyPar"
 numParts = 2
 epsilon = "0.01"
 

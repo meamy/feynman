@@ -115,13 +115,6 @@ writeHypToFile name nQubits hyp = do
   writeFile filePath contents
   return filePath
 
--- runHypExample :: IO ()
--- runHypExample = do
---   let hyp = buildHypergraph teCstCircuit2
---   path <- writeHypToFile "testircuit" hyp
---   putStrLn $ "Hypergraph written to: " ++ path
-
-
 -- | Build and partition, invoking KaHyPar with correct flags
 runHypExample :: IO ()
 runHypExample = do
@@ -129,7 +122,7 @@ runHypExample = do
       tempDir = "Temp"
       k       = Cfg.numParts
       objective = "km1"
-      kahyparExe = "src/Feynman/kahypar/build/kahypar/application/KahyPar"
+      kahypar = Cfg.kahyparPath
 
   -- Build and write hypergraph
   let (nQuibits, hyp) = buildHypergraph testCircuit2
@@ -142,12 +135,12 @@ runHypExample = do
     error $ "Hypergraph file not found: " ++ filePath
 
   -- Ensure KahyPar binary exists
-  execExists <- doesFileExist kahyparExe
+  execExists <- doesFileExist kahypar
   unless execExists $
-    error $ "Cannot find KahyPar executable at: " ++ kahyparExe
+    error $ "Cannot find KahyPar executable at: " ++ kahypar
 
   -- Invoke KaHyPar: specify objective, config, and output folder
-  callProcess kahyparExe
+  callProcess kahypar
     [ 
       "-h", filePath, 
       "-k", show k, 
