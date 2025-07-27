@@ -125,7 +125,7 @@ runHypExample = do
       kahypar = Cfg.kahyparPath
 
   -- Build and write hypergraph
-  let (nQuibits, hyp) = buildHypergraph testCircuit2
+  let (nQuibits, hyp) = buildHypergraph testGraysynth
   filePath <- writeHypToFile name nQuibits hyp
   putStrLn $ "Hypergraph written to: " ++ filePath
 
@@ -192,5 +192,21 @@ testCircuit2 = Circuit { qubits = ["a", "b", "c", "d"],
                                       Gate $ CZ "a" "b", Gate $ H "a", Gate $ H "b", Gate $ CZ "a" "b",
                                       Gate $ CZ "b" "c", Gate $ H "c", Gate $ CZ "c" "d",
                                       Gate $ H "c", Gate $ H "d", Gate $ CZ "c" "d", Gate $ H "b", Gate $ H "d"  
+                                  ] 
+                      }
+
+testGraysynth :: Circuit
+testGraysynth = Circuit { qubits = ["a", "b", "c", "d"],
+                    inputs = Set.fromList ["a", "b", "c", "d"],
+                    decls  = [test] }
+    where test = Decl { name = "main",
+                       params = [],
+                       body = Seq [
+                                      Gate $ H "b", Gate $ CZ "c" "d", Gate $ H "b",
+                                      Gate $ Rz 1 "a", Gate $ Rz 1 "b", Gate $ H "a",
+                                      Gate $ CZ "a" "d", Gate $ H "a", Gate $ Rz 1 "a",
+                                      Gate $ H "a", Gate $ CZ "a" "b", Gate $ CZ "a" "d",
+                                      Gate $ H "a", Gate $ Rz 1 "a", Gate $ H "a",
+                                      Gate $ CZ "a" "c", Gate $ H "a", Gate $ Rz 1 "a", Gate $ H "a", Gate $ CZ "a" "d", Gate $ H "a", Gate $ Rz 1 "a", Gate $ H "a", Gate $ CZ "a" "b", Gate $ H "b", Gate $ CZ "b" "c", Gate $ H "b", Gate $ CZ "a" "d", Gate $ H "a"
                                   ] 
                       }
