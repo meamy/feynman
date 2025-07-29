@@ -112,6 +112,47 @@ popEnv :: State (Env a) ()
 popEnv =
   modify $ \env -> env { binds = tail $ binds env }
 
+isValue :: Expr a -> Bool
+isValue expr = case expr of
+  EInt _   -> True
+  EFloat _ -> True 
+  ECmplx _ -> True
+  EPi      -> True 
+  EIm      -> True
+  EBool _  -> True
+  EStmt _  -> True
+  ESet l   -> List.all isValue l
+  EIndex x i -> isValue x && isValue i 
+
+
+reduceExpr :: Expr a -> State (Env a) (Expr a)
+reduceExpr expr = case expr of
+  EMeasure e -> do
+    e' <- reduceExpr e
+    return $ EMeasure e'
+  EInt _     -> expr
+  EFloat _   -> expr
+  ECmplx _   -> expr
+  EBool _    -> expr
+  EPi        -> EPi
+  EIm        -> EIm
+  EVar vid   -> do
+    bind <- searchBinding vid
+    case bind of
+      Nothing             -> error "binding not found"
+      Just (Scalar _ val) -> reduceExpr val
+      Just _ -> EVar vid
+  EIndex x i -> do
+    x' <- reduceExpr x
+    i' <- reduceExpr i
+    return $ EIndex x' i'
+  ESet l     -> do
+    l' <- mapM reduceExpr l
+    return $ ESet l'
+  
+
+
+
 simBool :: Expr a -> State (Env a) Bool
 simBool expr = case expr of
   EVar vid -> do
@@ -237,7 +278,7 @@ simFor (id, typ) expr stmt = do
 
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
-  AVar id     -> error "TODO"
+  AVar id     -> addBinding id expr
   AIndex id i -> error "TODO"
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
