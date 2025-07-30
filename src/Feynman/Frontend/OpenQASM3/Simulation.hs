@@ -3,6 +3,7 @@ module Feynman.Frontend.OpenQASM3.Simulation where
 import Control.Monad.State.Strict
 import Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.List as List
 import Feynman.Algebra.Base (DMod2)
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Core (ID)
@@ -124,24 +125,23 @@ isValue expr = case expr of
   ESet l   -> List.all isValue l
   EIndex x i -> isValue x && isValue i 
 
-
 reduceExpr :: Expr a -> State (Env a) (Expr a)
 reduceExpr expr = case expr of
+  EInt _     -> return expr
+  EFloat _   -> return expr
+  ECmplx _   -> return expr
+  EBool _    -> return expr
+  EPi        -> return EPi
+  EIm        -> return EIm
   EMeasure e -> do
     e' <- reduceExpr e
     return $ EMeasure e'
-  EInt _     -> expr
-  EFloat _   -> expr
-  ECmplx _   -> expr
-  EBool _    -> expr
-  EPi        -> EPi
-  EIm        -> EIm
   EVar vid   -> do
     bind <- searchBinding vid
     case bind of
       Nothing             -> error "binding not found"
       Just (Scalar _ val) -> reduceExpr val
-      Just _ -> EVar vid
+      Just _ -> return $ EVar vid
   EIndex x i -> do
     x' <- reduceExpr x
     i' <- reduceExpr i
@@ -149,9 +149,37 @@ reduceExpr expr = case expr of
   ESet l     -> do
     l' <- mapM reduceExpr l
     return $ ESet l'
-  
+  ESlice start Nothing stop -> do
+    start' <- reduceExpr start
+    stop' <- reduceExpr stop
+    return $ ESlice start' Nothing stop'
+  ESlice start (Just step) stop -> do
+    start' <- reduceExpr start
+    step' <- reduceExpr step
+    stop' <- reduceExpr stop
+    return $ ESlice start' (Just step') stop'
+  EUOp uop a -> do
+    e <- reduceExpr a
+    case uop of
+      SinOp    -> return $ EFloat $ sin $ floatOf e
+      CosOp    -> return $ EFloat $ cos $ floatOf e
+      TanOp    -> return $ EFloat $ tan $ floatOf e
+      ArccosOp -> return $ EFloat $ arccos $ floatOf e
+      ArcsinOp -> return $ EFloat $ arcsin $ floatOf e
+      ArctanOp -> return $ EFloat $ arctan $ floatOf e
+      CeilOp   -> return $ EFloat $ ceil $ floatOf e
+      FloorOp  -> return $ EFloat $ floor $ floatOf e
+      LnOp     -> return $ EFloat $ log $ floatOf e
+      
 
-
+floatOf :: Expr a -> Double
+floatOf expr = case expr of
+  EFloat f    -> f
+  EInt i      -> fromIntegral i
+  EPi         -> pi
+  EBool False -> 0.0
+  EBool True  -> 1.0
+  _           -> error "cast to float forbidden or not handled"
 
 simBool :: Expr a -> State (Env a) Bool
 simBool expr = case expr of
@@ -278,7 +306,7 @@ simFor (id, typ) expr stmt = do
 
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
-  AVar id     -> addBinding id expr
+  AVar id     -> error "addBinding id expr"
   AIndex id i -> error "TODO"
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
