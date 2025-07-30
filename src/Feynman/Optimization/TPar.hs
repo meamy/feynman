@@ -219,6 +219,8 @@ tpar i o = pushSwaps . gtpar tparMaster i o
 -- minCNOT: the CNOT minimization algorithm from [AAM17]
 minCNOT = gtpar cnotMinGrayPointed
 
+minCNOTDry = gtpar cnotMinGrayPointedDry
+
 {- Open synthesis -}
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of

@@ -86,6 +86,33 @@ graySynthesis ids out (x:xs) may = case x of
     in
       graySynthesis ids out (xzero:xone:xs) may
 
+graySynthesisDry :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])
+graySynthesisDry ids out []     may = return (out, may)
+graySynthesisDry ids out (x:xs) may = case x of
+  Pt _ _ _ [] -> graySynthesisDry ids out xs may
+  Pt c (Just t) (Just p) v ->
+    let (idp, idt) = (ids!!p, ids!!t)
+        (bvp, bvt) = (out!idp, out!idt)
+        xs'  = (Pt c (Just t) Nothing v):(adjust t p xs)
+        out' = Map.insert idt (bvp + bvt) out
+    in do
+      tell [CNOT idp idt]
+      case find (\(bv, _) -> bvp + bvt == bv) may of
+        Nothing      -> graySynthesisDry ids out' xs' may
+        Just (bv, a) -> do
+          graySynthesisDry ids out' xs' (delete (bv, a) may)
+  Pt [] (Just t) Nothing [(_, a)] -> do
+    graySynthesisDry ids out xs may
+  Pt [] Nothing _ _ -> graySynthesisDry ids out xs may
+  Pt (c:cs) targ Nothing vecs ->
+    let (vl, c', cs', vr) = findBestSplitMono (c:cs) vecs
+        xzero = Pt cs' targ Nothing vl
+        xone  = case targ of
+          Just t  -> Pt cs' targ (Just c') vr
+          Nothing -> Pt cs' (Just c') Nothing vr
+    in
+      graySynthesisDry ids out (xzero:xone:xs) may
+
 -- Optionally adds "may" phases whenever possible
 addMay :: LinearTrans -> [Phase] -> [Primitive] -> ([Primitive], [Phase])
 addMay st phases = (\(a,b) -> (reverse a,b)) . snd . foldl' go (st,([],phases)) where
@@ -110,6 +137,22 @@ cnotMinGrayPointed0 input output xs may =
       Just xs' ->
         let initPt       = [Pt [0..length ivecs - 1] Nothing Nothing xs']
             ((o, []), g) = runWriter $ graySynthesis (fst $ unzip ivecs) input initPt []
+            (g',m')      = addMay input may g
+        in
+          (g' ++ linearSynth o output, m')
+
+cnotMinGrayPointedDry0 :: Synthesizer
+cnotMinGrayPointedDry0 input output [] may = (linearSynth input output, may)
+cnotMinGrayPointedDry0 input output xs may =
+  let ivecs    = Map.toList input
+      solver   = oneSolution $ transpose $ fromList $ snd $ unzip ivecs
+      f (v, i) = solver v >>= \v' -> Just (v', i)
+  in
+    case mapM f xs of
+      Nothing  -> error "Fatal: something bad happened"
+      Just xs' ->
+        let initPt       = [Pt [0..length ivecs - 1] Nothing Nothing xs']
+            ((o, []), g) = runWriter $ graySynthesisDry (fst $ unzip ivecs) input initPt []
             (g',m')      = addMay input may g
         in
           (g' ++ linearSynth o output, m')
@@ -142,6 +185,17 @@ cnotMinGrayEager = \i o mu ma -> cnotMinGrayPointed0 i o (mu ++ ma) []
 cnotMinGrayPointed input output xs may =
   let result1 = cnotMinGrayPointed0 input output xs may
       result2 = cnotMinGrayPointed0 input output (filter (\(_, i) -> order i /= 1) xs) may
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct . fst
+  in
+    minimumBy (comparing countc) [result1, result2]
+
+-- Compares between configurations (doubles runtime but best performance)
+cnotMinGrayPointedDry input output xs may =
+  let result1 = cnotMinGrayPointedDry0 input output xs may
+      result2 = cnotMinGrayPointedDry0 input output (filter (\(_, i) -> order i /= 1) xs) may
       isct g = case g of
         CNOT _ _  -> True
         otherwise -> False

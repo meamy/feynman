@@ -13,7 +13,7 @@ import Feynman.Core (Primitive,
                      expandCZ,
                      idsW)
 
-import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (runHypExample)
+import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (runHypExample,getNumCuts)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -36,6 +36,7 @@ import Feynman.Verification.Symbolic
 import System.Environment (getArgs)
 import System.CPUTime     (getCPUTime)
 import System.IO (hPutStrLn, stderr)
+import System.IO.Unsafe (unsafePerformIO)
 
 import Data.List
 import qualified Data.Set as Set
@@ -69,11 +70,13 @@ data Pass = Triv
           | Paulifold Int
           | Statefold Int
           | CNOTMin
+          | CNOTMinDry
           | TPar
           | Cliff
           | CZ
           | CX
           | Decompile
+          | Distribute
 
 data Options = Options { 
   passes :: [Pass],
@@ -115,11 +118,13 @@ dotQCPass pass = case pass of
   Paulifold d -> optimizeDotQC (pauliFold d)
   Statefold d -> optimizeDotQC (stateFold d)
   CNOTMin     -> optimizeDotQC minCNOT
+  CNOTMinDry  -> optimizeDotQC minCNOTDry
   TPar        -> optimizeDotQC tpar
   Cliff       -> optimizeDotQC (\_ _ -> simplifyCliffords)
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
+  Distribute  -> optimizeDotQC (\_ _ -> unsafePerformIO . getNumCuts)
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =
@@ -342,6 +347,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
   "-hypExample"  -> runHypExample
+  "-distribute"  -> parseArgs doneSwitches options {passes = Distribute:passes options} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
   "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs
@@ -352,6 +358,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-statefold"   -> parseArgs doneSwitches options {passes = (Statefold $ read (head xs)):passes options} (tail xs)
   "-paulifold"   -> parseArgs doneSwitches options {passes = (Paulifold $ read (head xs)):passes options} (tail xs)
   "-cnotmin"     -> parseArgs doneSwitches options {passes = CNOTMin:passes options} xs
+  "-cnotmindry"  -> parseArgs doneSwitches options {passes = CNOTMinDry:passes options} xs
   "-tpar"        -> parseArgs doneSwitches options {passes = TPar:passes options} xs
   "-clifford"    -> parseArgs doneSwitches options {passes = Cliff:passes options} xs
   "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs

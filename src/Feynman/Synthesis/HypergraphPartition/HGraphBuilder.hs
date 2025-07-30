@@ -27,6 +27,14 @@ import Feynman.Core
       Hyperedge, Vertex(..), isCZ, ids,getArgs)
 import Test.QuickCheck.Test (test)
 
+packCircuit :: [Primitive] -> Circuit
+packCircuit circ = Circuit { qubits = ids circ,
+                             inputs = Set.fromList (ids circ),
+                             decls  = [main] }
+    where main = Decl { name = "main",
+                        params = [],
+                        body = Seq $ map Gate circ
+                      }
 
 -- | Build the hypergraph for a given Circuit
 --   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
@@ -153,6 +161,44 @@ runHypExample = do
 
   putStrLn $ "Partition file written to: " ++ tempDir </> (objective <.> "hgr")
 
+-- | Build and partition, invoking KaHyPar with correct flags
+getNumCuts :: [Primitive] -> IO [Primitive]
+getNumCuts circ = do
+  let name    = "testCircuit"
+      tempDir = "Temp"
+      k       = Cfg.numParts
+      objective = "km1"
+      kahypar = Cfg.kahyparPath
+
+  -- Build and write hypergraph
+  let (nQuibits, hyp) = buildHypergraph $ packCircuit circ
+  filePath <- writeHypToFile name nQuibits hyp
+  putStrLn $ "Hypergraph written to: " ++ filePath
+
+  -- Ensure .hgr exists
+  exists <- doesFileExist filePath
+  unless exists $
+    error $ "Hypergraph file not found: " ++ filePath
+
+  -- Ensure KahyPar binary exists
+  execExists <- doesFileExist kahypar
+  unless execExists $
+    error $ "Cannot find KahyPar executable at: " ++ kahypar
+
+  -- Invoke KaHyPar: specify objective, config, and output folder
+  callProcess kahypar
+    [ 
+      "-h", filePath, 
+      "-k", show k, 
+      "-e", Cfg.epsilon, 
+      "-o", objective,                      -- objective name (km1)
+      "-m", "direct",
+      "-p", Cfg.subalgorithm,                -- config .ini path
+      "-w", "true"
+    ]
+
+  putStrLn $ "Partition file written to: " ++ tempDir </> (objective <.> "hgr")
+  return circ
 
 -- Unit circuit tests
 testCircuit :: Circuit
