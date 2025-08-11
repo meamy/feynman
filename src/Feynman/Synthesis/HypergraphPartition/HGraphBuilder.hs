@@ -2,16 +2,18 @@ module Feynman.Synthesis.HypergraphPartition.HGraphBuilder where
 import qualified Data.Map as Map
 import           Data.Map   (Map)
 
-import           Data.List (sort)
+import           Data.List (isPrefixOf, isInfixOf, maximumBy, sort)
 
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import Data.Ord (comparing)
+
+import System.Directory (doesFileExist, renameFile, removeFile, listDirectory, createDirectoryIfMissing ,getModificationTime)
 import System.FilePath  ((</>), (<.>))
 import System.Process (callProcess)
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
-import Control.Monad (unless)
+import Control.Monad (unless,  when)
 
 
 import Feynman.Core
@@ -164,40 +166,60 @@ runHypExample = do
 -- | Build and partition, invoking KaHyPar with correct flags
 getNumCuts :: [Primitive] -> IO [Primitive]
 getNumCuts circ = do
-  let name    = "testCircuit"
-      tempDir = "Temp"
-      k       = Cfg.numParts
-      objective = "km1"
-      kahypar = Cfg.kahyparPath
+  let tempDir      = "Temp"
+      hypergraphFN = "hypergraph.hgr"
+      partitionFN  = "partion.hgr"     -- (spelled as requested)
+      hypergraphFP = tempDir </> hypergraphFN
+      partitionFP  = tempDir </> partitionFN
+      k            = Cfg.numParts
+      kahypar      = Cfg.kahyparPath
 
-  -- Build and write hypergraph
+  -- Build and write hypergraph (initial path may differ; we rename to hypergraph.hgr)
   let (nQuibits, hyp) = buildHypergraph $ packCircuit circ
-  filePath <- writeHypToFile name nQuibits hyp
-  putStrLn $ "Hypergraph written to: " ++ filePath
+  filePath <- writeHypToFile "hypergraph" nQuibits hyp       -- write with base "hypergraph"
+  -- Ensure it ends up exactly at Temp/hypergraph.hgr
+  when (filePath /= hypergraphFP) $ do
+    existsInitial <- doesFileExist filePath
+    unless existsInitial $
+      error $ "Expected hypergraph file not found at: " ++ filePath
+    renameFile filePath hypergraphFP
+  putStrLn $ "Hypergraph written to: " ++ hypergraphFP
 
   -- Ensure .hgr exists
-  exists <- doesFileExist filePath
+  exists <- doesFileExist hypergraphFP
   unless exists $
-    error $ "Hypergraph file not found: " ++ filePath
+    error $ "Hypergraph file not found: " ++ hypergraphFP
 
-  -- Ensure KahyPar binary exists
+  -- Ensure KaHyPar binary exists
   execExists <- doesFileExist kahypar
   unless execExists $
-    error $ "Cannot find KahyPar executable at: " ++ kahypar
+    error $ "Cannot find KaHyPar executable at: " ++ kahypar
 
-  -- Invoke KaHyPar: specify objective, config, and output folder
+  -- Invoke KaHyPar (writes a partition file like hypergraph.hgr.partK...KaHyPar)
   callProcess kahypar
-    [ 
-      "-h", filePath, 
-      "-k", show k, 
-      "-e", Cfg.epsilon, 
-      "-o", objective,                      -- objective name (km1)
-      "-m", "direct",
-      "-p", Cfg.subalgorithm,                -- config .ini path
-      "-w", "true"
+    [ "-h", hypergraphFP
+    , "-k", show k
+    , "-e", Cfg.epsilon
+    , "-o", "km1"
+    , "-m", "direct"
+    , "-p", Cfg.subalgorithm
+    , "-w", "true"
     ]
 
-  putStrLn $ "Partition file written to: " ++ tempDir </> (objective <.> "hgr")
+  -- Find the latest KaHyPar-produced partition file and rename to partion.hgr
+  candFiles <- listDirectory tempDir
+  let isPart f = ("hypergraph.hgr.part" `isPrefixOf` f) || (".KaHyPar" `isInfixOf` f)
+      parts    = [ f | f <- candFiles, isPart f ]
+  when (null parts) $
+    error "KaHyPar did not produce a partition file."
+  times <- mapM (\f -> getModificationTime (tempDir </> f) >>= \t -> pure (f,t)) parts
+  let latest = fst $ maximumBy (comparing snd) times
+  -- rename latest to the exact requested filename
+  existing <- doesFileExist partitionFP
+  when existing $ removeFile partitionFP
+  renameFile (tempDir </> latest) partitionFP
+  putStrLn $ "Partition file written to: " ++ partitionFP
+
   return circ
 
 -- Unit circuit tests
