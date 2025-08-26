@@ -160,18 +160,63 @@ reduceExpr expr = case expr of
     return $ ESlice start' (Just step') stop'
   EUOp uop a -> do
     e <- reduceExpr a
-    case uop of
-      SinOp    -> return $ EFloat $ sin $ floatOf e
-      CosOp    -> return $ EFloat $ cos $ floatOf e
-      TanOp    -> return $ EFloat $ tan $ floatOf e
-      ArccosOp -> return $ EFloat $ arccos $ floatOf e
-      ArcsinOp -> return $ EFloat $ arcsin $ floatOf e
-      ArctanOp -> return $ EFloat $ arctan $ floatOf e
-      CeilOp   -> return $ EFloat $ ceil $ floatOf e
-      FloorOp  -> return $ EFloat $ floor $ floatOf e
-      LnOp     -> return $ EFloat $ log $ floatOf e
+    case (uop, e) of
+      (SinOp     , _       ) -> return $ EFloat $ sin $ floatOf e
+      (CosOp     , _       ) -> return $ EFloat $ cos $ floatOf e
+      (TanOp     , _       ) -> return $ EFloat $ tan $ floatOf e
+      (ArccosOp  , _       ) -> return $ EFloat $ acos $ floatOf e
+      (ArcsinOp  , _       ) -> return $ EFloat $ asin $ floatOf e
+      (ArctanOp  , _       ) -> return $ EFloat $ atan $ floatOf e
+      (CeilOp    , _       ) -> return $ EInt $ ceiling $ floatOf e
+      (FloorOp   , _       ) -> return $ EInt $ floor $ floatOf e
+      (LnOp      , _       ) -> return $ EFloat $ log $ floatOf e --maybe need to check base
+      (RealOp    , ECmplx c) -> return $ EFloat $ realPart c
+      (RealOp    , _       ) -> return $ EFloat $ floatOf e
+      (ImOp      , ECmplx c) -> return $ EFloat $ imagPart c
+      (ImOp      , _       ) -> return $ EFloat 0.0              --maybe need to check type of e
+      (NegOp     , _       ) -> error "TODO: need to clarify difference between neg and uminus"
+      (UMinusOp  , _       ) -> error "TODO: need to clarify difference between neg and uminus"
+      (PopcountOp, _       ) -> error "TODO"
+  EBOp a bop b -> do
+    e1 <- reduceExpr a
+    e2 <- reduceExpr b
+    case (bop, e1, e2) of
+      (AndOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 && b2
+      (OrOp    , EBool b1 , EBool b2 ) -> return $ EBool $ b1 || b2
+      (XorOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 `xor` b2
+      (LShiftOp, _        , _        ) -> error "check: should work liek rotl?"
+      (RShiftOp, _        , _        ) -> error "check: should work like rotr?"
+      (LRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
+      (RRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
+      (EqOp    , EBool b1 , EBool b2 ) -> return $ EBool $ b1 == b2
+      (EqOp    , EInt i1  , EInt i2  ) -> return $ EBool $ i1 == i2
+      (EqOp    , EFloat f1, EFloat f2) -> return $ EBool $ f1 == f2
+      (EqOp    , ECmplx c1, ECmplx c2) -> return $ EBool $ c1 == c2
+      (EqOp    , _        , _        ) -> error "constraint propagation? ex uint = int"
+      (LTOp    , EInt i1  , EInt i2  ) -> return $ EBool $ i1 < i2
+      (LTOp    , EFloat f1, EFloat f2) -> return $ EBool $ f1 < f2
+      (LEqOp   , EInt i1  , EInt i2  ) -> return $ EBool $ i1 <= i2
+      (LEqOp   , EFloat f1, EFloat f2) -> return $ EBool $ f1 <= f2
+      (GTOp    , EInt i1  , EInt i2  ) -> return $ EBool $ i1 > i2
+      (GTOp    , EFloat f1, EFloat f2) -> return $ EBool $ f1 > f2
+      (GEqOp   , EInt i1  , EInt i2  ) -> return $ EBool $ i1 >= i2
+      (GEqOp   , EFloat f1, EFloat f2) -> return $ EBool $ f1 >= f2
+      (PlusOp  , EInt i1  , EInt i2  ) -> return $ EInt $ i1 + i2
+      (PlusOp  , EFloat f1, EFloat f2) -> return $ EFloat $ f1 + f2
+      (PlusOp  , ECmplx c1, ECmplx c2) -> return $ ECmplx $ c1 + c2
+      (MinusOp , EInt i1  , EInt i2  ) -> return $ EInt $ i1 - i2
+      (MinusOp , EFloat f1, EFloat f2) -> return $ EFloat $ f1 - f2
+      (MinusOp , ECmplx c1, ECmplx c2) -> return $ ECmplx $ c1 - c2
+      (TimesOp , EInt i1  , EInt i2  ) -> return $ EInt $ i1 * i2
+      (TimesOp , EFloat f1, EFloat f2) -> return $ EFloat $ f1 * f2
+      (TimesOp , ECmplx c1, ECmplx c2) -> return $ ECmplx $ c1 * c2 -- need to implement casting
+      (DivOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 `quot` i2 -- div?
+      (DivOp   , EFloat f1, EFloat f2) -> return $ EFloat $ f1 / f2
+      (DivOp   , ECmplx c1, ECmplx c2) -> return $ ECmplx $ c1 / c2
+      (ModOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 `mod` i2
+      (PowOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 ** i2
+      _                                -> error "not supported!"      
       
-
 floatOf :: Expr a -> Double
 floatOf expr = case expr of
   EFloat f    -> f
@@ -180,6 +225,7 @@ floatOf expr = case expr of
   EBool False -> 0.0
   EBool True  -> 1.0
   _           -> error "cast to float forbidden or not handled"
+
 
 simBool :: Expr a -> State (Env a) Bool
 simBool expr = case expr of
