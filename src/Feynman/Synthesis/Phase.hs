@@ -1,8 +1,24 @@
+{-|
+Module      : Phase
+Description : Phase gate synthesis
+Copyright   : (c) Matthew Amy, 2016-2025
+Maintainer  : matt.e.amy@gmail.com
+Stability   : experimental
+Portability : portable
+
+Utilities for decomposing phase gates and global phases
+-}
+
 module Feynman.Synthesis.Phase where
 
 import Feynman.Core
 import Feynman.Algebra.Base
 
+-- | Synthesizes an `Rz` gate with a particular angle.
+--
+--   Clifford+T angles \(e^{i\pi\frac{k}{4}}\) are decomposed as
+--   \(T^{k_0}S^{k_1}Z^{k_2}\) where \(k_2k_1k_0\) is the binary
+--   expansion of \(k\). All other angles are given a generic `Rz` gate
 synthesizePhase :: ID -> Angle -> [Primitive]
 synthesizePhase x theta@(Continuous _) = [Rz theta x]
 synthesizePhase x theta@(Discrete dy)
@@ -19,6 +35,8 @@ synthesizePhase x theta@(Discrete dy)
   | otherwise = [Rz theta x]
   where (Dy a n) = unpack dy
 
+-- | Synthesizes a global phase given a qubit ID. Uses the fact that
+--   \(e^{i\pi/4}I=(HS)^3\)
 globalPhase :: ID -> Angle -> [Primitive]
 globalPhase x theta@(Continuous _) = [Rz theta x, X x, Rz theta x, X x]
 globalPhase x theta@(Discrete dy)

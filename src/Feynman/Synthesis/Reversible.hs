@@ -1,3 +1,15 @@
+{-|
+Module      : Parity
+Description : Types, combinators and basic CNOT-dihedral synthesis algorithms
+Copyright   : (c) Matthew Amy, 2016-2025
+Maintainer  : matt.e.amy@gmail.com
+Stability   : experimental
+Portability : portable
+
+This module implements interfaces and basic algorithms for CNOT-dihedral, or
+parity network synthesis.
+-}
+
 module Feynman.Synthesis.Reversible where
 
 import Feynman.Algebra.Base

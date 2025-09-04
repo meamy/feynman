@@ -1,26 +1,41 @@
 {-|
 Module      : TPar
-Description : T gate parallelization optimization
+Description : CNOT-Dihedral re-synthesis algorithms
 Copyright   : (c) 2016-2025 Matthew Amy
 Maintainer  : matt.e.amy@gmail.com
 Stability   : experimental
 Portability : portable
 
-An implementation of the T-par algorithm from
+This module implements the T-par algorithm from
   [arxiv:1303.2042](https://arxiv.org/abs/1303.2042).
+The T-parallelizing synthesis of CNOT-dihedral chunks,
+corresponding to circuits over the gates
+
+  @CNOT, X, RZ(theta)@
+
+can be replaced with other CNOT-dihedral synthesis
+methods, such as [GraySynth](https://arxiv.org/abs/1712.01859).
+
+The T-par algorithm operates by computing the sum-over-paths representation
+of the circuit
+
+  @|x1 x2 ... xn> --> sum[y1, ..., yk] e^{i f(x, y)} |A(x, y) + b>@
+
+where `f` is expressed in the parity basis. The sum-over-paths representation
+is broken into CNOT-dihedral chunks of the form
+
+  @|A(x, y) + b> --> e^{i f(x, y)} |A'(x, y) + b'>@
+
+which are then fed into a supplied CNOT-dihedral synthesizer. Note that the input,
+as well as the output of a CNOT-dihedral chunk is given as a basis of an affine
+subspace of \(\mathbb{Z}_2^{n+k}\) --- this is done to better reflect the logical structure
+of the circuit and to allow the affine synthesizer to make use of ancillas already initialized
+to parities of other bits. Likewise, phases which may commute to the next chunk are identified
+and passed to the synthesizer to retain flexibility in the placement of phase terms.
 
 -}
 
 module Feynman.Optimization.TPar where
-
-import Feynman.Core
-import Feynman.Algebra.Base
-import Feynman.Algebra.Linear
-import Feynman.Algebra.Matroid
-import Feynman.Synthesis.Phase
-import Feynman.Synthesis.Reversible
-import Feynman.Synthesis.Reversible.Parallel
-import Feynman.Synthesis.Reversible.Gray
 
 import Data.List hiding (transpose)
 import Data.Ord (comparing)
@@ -37,36 +52,100 @@ import Control.Monad.Writer.Lazy
 
 import Data.Bits
 
-{- Generalized T-par -}
-{- Soundly (by abstracting Hadamards and other
- - uninterpreted gates) separate circuits into
- - CNOT-dihedral chunks with fixed (must) and
- - floating (may) phases. We do this by
- - performing forward and backward analysis,
- - followed by synthesis of the CNOT-dihedral
- - chunks -}
-       
-{- TODO: Merge with phase folding eventually -}
+import Feynman.Core
+import Feynman.Algebra.Base
+import Feynman.Algebra.Linear
+import Feynman.Algebra.Matroid
+import Feynman.Synthesis.Phase
+import Feynman.Synthesis.Reversible
+import Feynman.Synthesis.Reversible.Parallel
+import Feynman.Synthesis.Reversible.Gray
 
+-- * Optimization interface
+------------------------------------
+
+-- | T-par algorithm, parameterized by a CNOT-dihedral synthesis algorithm
+gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtpar synth vars inputs gates = synthesizeChunks (affineTrans synth) chunks
+  where chunks = backPropagate $ chunkify vars inputs gates
+
+-- | A faster version which does not backpropagate phase terms
+gtparFast :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
+gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
+  where chunks = chunkify vars inputs gates
+        synth' = \i o mu ma -> (fst $ synth i o mu [], ma)
+
+-- * Specific instances
+------------------------------------
+
+-- | The T-par algorithm of [AMM13](https://arxiv.org/abs/1303.2042).
+--   Optimizes for T-depth by synthesizing T-depth optimal CNOT-dihedral subcircuits
+--   using Matroid partitioning
+tpar :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+tpar i o = pushSwaps . gtpar tparMaster i o
+
+-- | The CNOT optimization algorithm of [AAM17](https://arxiv.org/abs/1712.01859).
+--   Uses GraySynth to perform CNOT-dihedral synthesis
+minCNOT :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+minCNOT = gtpar cnotMinGrayPointed
+
+-- | Gray-synth with open ends
+minCNOTOpen :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+minCNOTOpen = gtparopen cnotMinGrayOpen
+
+-- | Compares between open and closed CNOT minimization and takes the best result
+minCNOTMaster :: [ID] -> [ID] -> [Primitive] -> [Primitive]
+minCNOTMaster vars inputs gates =
+  let option1 = gtpar cnotMinGrayPointed vars inputs gates
+      option2 = gtparopen cnotMinGrayOpen vars inputs gates
+      isct g = case g of
+        CNOT _ _  -> True
+        otherwise -> False
+      countc = length . filter isct
+  in
+    minimumBy (comparing countc) [option1, option2]
+
+-- * Algorithm internals
+------------------------------------
+
+-- | A Phase polynomial here is an association of angles to (affine) parities
 type PhasePoly = Map F2Vec Angle
 
-data AnalysisState = SOP {
-  dim     :: Int,
-  ivals   :: AffineTrans,
-  qvals   :: AffineTrans,
-  terms   :: PhasePoly,
-  phase   :: Angle
-} deriving Show
-
-type Analysis = State AnalysisState
-
+-- | Representation of subcircuit chunks in the T-par algorithm.
+--   Subcircuits are either global phase, a non-CNOT-dihedral gate, or a
+--   a CNOT-dihedral chunk which consist of
+--
+--     1. A set of (affine) vectors giving the input state
+--     2. A set of (affine) vectors giving the output state
+--     3. Phase terms which *must* be applied in this chunk -- i.e. do not commute right
+--     4. Phase terms which *may* be applied in this chunk -- i.e. commute right
+--
+--   Notably, `CNOTDihedral input output must may` represents the CNOT-dihedral operator
+--
+--     @ |input> --> e^i{must + may}|output> @
+--
+--   where the *must* phases do not commute beyond the subcircuit boundary on the right,
+--   and the *may* phases do commute beyond the boundary
 data Chunk =
     CNOTDihedral AffineTrans AffineTrans PhasePoly PhasePoly
   | UninterpGate Primitive
-  | GlobalPhase  ID Angle
+  | GlobalPhase ID Angle
   deriving Show
 
-{- Get the bitvector for variable v -}
+-- | Phase polynomial representation of the current state
+data AnalysisState = SOP {
+  dim     :: Int,          -- ^ Number of variables
+  ivals   :: AffineTrans,  -- ^ Initial state
+  qvals   :: AffineTrans,  -- ^ Final state
+  terms   :: PhasePoly,    -- ^ Phase polynomial terms
+  phase   :: Angle         -- ^ Global phase
+} deriving Show
+
+-- | Convenience type for threading the state through the analysis
+type Analysis = State AnalysisState
+
+
+-- | Get the state of a variable in the analysis
 getSt :: ID -> Analysis (F2Vec, Bool)
 getSt v = do 
   st <- get
@@ -74,10 +153,8 @@ getSt v = do
     Just bv -> return bv
     Nothing -> error $ "No qubit \"" ++ v ++ "\" found in t-par"
 
-{- existentially quantifies a variable then
- - orphans all terms that are no longer in the linear span of the
- - remaining variable states and assigns the quantified variable
- - a fresh (linearly independent) state -}
+-- | Existentially quantifies a variable by orphaning all terms which are no longer
+--   in the linear span of the ket
 exists :: ID -> AnalysisState -> Analysis (PhasePoly, PhasePoly)
 exists v st@(SOP dim ivals qvals terms phase) =
   let (vars, avecs) = unzip $ Map.toList $ Map.delete v qvals
@@ -93,12 +170,15 @@ exists v st@(SOP dim ivals qvals terms phase) =
     put $ SOP dim' ivals' ivals' terms' phase
     return (must, may)
 
+-- | Replaces the initial state of the analysis
 replaceIval :: AffineTrans -> AnalysisState -> AnalysisState
 replaceIval ivals' st = st { ivals = ivals' }
 
+-- | Updates the final state of some qubit to an affine sum of variables
 updateQval :: ID -> (F2Vec, Bool) -> AnalysisState -> AnalysisState
 updateQval v bv st = st { qvals = Map.insert v bv $ qvals st }
 
+-- | Adds a term to the phase polynomial
 addTerm :: (F2Vec, Bool) -> Angle -> AnalysisState -> AnalysisState
 addTerm (bv, p) i st =
   case p of
@@ -112,7 +192,8 @@ addTerm (bv, p) i st =
           Just x  -> Just $ x + i
           Nothing -> Just $ i
 
-{-- The main analysis -}
+-- | State transformer for individual gates. Takes the current
+--   list of chunks as an argument
 applyGate :: [Chunk] -> Primitive -> Analysis [Chunk]
 applyGate acc g = case g of
   T v      -> do
@@ -169,6 +250,8 @@ applyGate acc g = case g of
     let (must, may) = (Map.unionsWith (+) musts, Map.unionsWith (+) mays)
     return $ (UninterpGate g):(CNOTDihedral (ivals st) (qvals st) must may):acc
 
+-- | The chunking algorithm. Performs the phase polynomial analysis, accumulating
+--   CNOT-dihedral chunks as it goes
 chunkify :: [ID] -> [ID] -> [Primitive] -> [Chunk]
 chunkify vars inputs gates =
   let (chunks, st) = runState (foldM applyGate [] gates) init
@@ -181,7 +264,8 @@ chunkify vars inputs gates =
         f (v, i) = (v, if v `elem` inputs then (bitI n i, False) else (bitVec n 0, False))
         init     = SOP n vals vals Map.empty 0
 
--- Propagates phases backwards as far as possible
+-- | Post processing step. Runs an abridged version of the analysis in reverse to
+--   determine the left boundary of phase terms (i.e. how far left in the circuit they commute)
 backPropagate :: [Chunk] -> [Chunk]
 backPropagate chunks = evalState (foldM processChunk [] chunks) (Map.empty, Map.empty)
   where processChunk acc chunk = case chunk of
@@ -199,6 +283,7 @@ backPropagate chunks = evalState (foldM processChunk [] chunks) (Map.empty, Map.
             return $ chunk:acc
           GlobalPhase v angle -> return $ chunk:acc
 
+-- | Synthesis step. Invokes an "AffineSynthesizer" on the CNOT-dihedral chunks
 synthesizeChunks :: AffineSynthesizer -> [Chunk] -> [Primitive]
 synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.empty
   where synthesizeChunk acc chunk = case chunk of
@@ -214,24 +299,18 @@ synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.
           GlobalPhase v angle       -> return $ acc ++ globalPhase v angle
         subtract a b = if a == b then Nothing else Just $ a - b
 
-gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
-gtpar synth vars inputs gates = synthesizeChunks (affineTrans synth) chunks
-  where chunks = backPropagate $ chunkify vars inputs gates
+{-----------------------------------
+ Open synthesis
+ -----------------------------------}
 
-gtparFast :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
-gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
-  where chunks = chunkify vars inputs gates
-        synth' = \i o mu ma -> (fst $ synth i o mu [], ma)
+-- * Open synthesis
+--
+-- $ These methods use open CNOT-dihedral synthesizers, which synthesize
+--   CNOT-dihedral circuits up to some affine computational basis
+--   permutation. The added flexibility allows more optimization in some cases
+--   via sharing between CNOT-dihedral chunks
 
-{- Optimization algorithms -}
-
--- t-par: the t-par algorithm from [AMM2014]
-tpar i o = pushSwaps . gtpar tparMaster i o
-
--- minCNOT: the CNOT minimization algorithm from [AAM17]
-minCNOT = gtpar cnotMinGrayPointed
-
-{- Open synthesis -}
+-- | Gate transformers for open-ended synthesis
 applyGateOpen :: AffineOpenSynthesizer -> [Primitive] -> Primitive -> Analysis [Primitive]
 applyGateOpen synth gates g = case g of
   T v      -> do
@@ -295,6 +374,7 @@ applyGateOpen synth gates g = case g of
     modify $ replaceIval $ foldr (\v -> Map.insert v ((qvals st')!v)) out'' args
     return $ gates ++ parities ++ correction ++ [g]
 
+-- | Performs a final synthesis to compute `|A(x,y) + b>`
 finalizeOpen :: AffineOpenSynthesizer -> [Primitive] -> Analysis [Primitive]
 finalizeOpen synth gates = do
   st <- get
@@ -304,6 +384,7 @@ finalizeOpen synth gates = do
   return $ gates ++ parities ++ circ
                  ++ (globalPhase (head . Map.keys . ivals $ st) $ phase st)
     
+-- | The open-ended T-par algorithm
 gtparopen :: OpenSynthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtparopen osynth vars inputs gates =
   let synth = affineTransOpen osynth
@@ -320,18 +401,3 @@ gtparopen osynth vars inputs gates =
         ivals   = zip (inputs ++ (vars \\ inputs)) bitvecs
 
 
-{- Open-ended optimizers -}
-
--- Gray-synth with open ends
-minCNOTOpen = gtparopen cnotMinGrayOpen
-
--- Compares between open and closed CNOT minimization. Slowest configuration
-minCNOTMaster vars inputs gates =
-  let option1 = gtpar cnotMinGrayPointed vars inputs gates
-      option2 = gtparopen cnotMinGrayOpen vars inputs gates
-      isct g = case g of
-        CNOT _ _  -> True
-        otherwise -> False
-      countc = length . filter isct
-  in
-    minimumBy (comparing countc) [option1, option2]
