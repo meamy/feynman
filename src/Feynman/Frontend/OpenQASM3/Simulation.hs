@@ -10,6 +10,7 @@ import Feynman.Core (ID)
 import Feynman.Frontend.OpenQASM3.Core
 import Feynman.Algebra.Polynomial.Multilinear (SBool)
 import Data.Bits (testBit, xor)
+import Data.Complex (realPart, imagPart)
 
 data Env a = Env {
   pathsum :: Pathsum DMod2,
@@ -214,7 +215,7 @@ reduceExpr expr = case expr of
       (DivOp   , EFloat f1, EFloat f2) -> return $ EFloat $ f1 / f2
       (DivOp   , ECmplx c1, ECmplx c2) -> return $ ECmplx $ c1 / c2
       (ModOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 `mod` i2
-      (PowOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 ** i2
+      (PowOp   , EInt i1  , EInt i2  ) -> return $ EInt $ i1 ^ i2
       _                                -> error "not supported!"      
       
 floatOf :: Expr a -> Double
@@ -352,7 +353,11 @@ simFor (id, typ) expr stmt = do
 
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
-  AVar id     -> error "addBinding id expr"
+  AVar id     -> do
+    maybeBind <- searchBinding id
+    case maybeBind of
+      Nothing             -> error "id not bound"
+      Just (Scalar typ e) -> declareScalar id typ (Just e)
   AIndex id i -> error "TODO"
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
@@ -364,10 +369,10 @@ declareScalar :: ID -> Type a -> Maybe (Expr a) -> State (Env a) ()
 declareScalar id typ expr = addBinding id (Scalar typ expr')
   where
     expr' = case expr of
-      Just e  -> e
+      Just e  -> e            -- eval first?
       Nothing -> case typ of
         TAngle -> EFloat 0 
-        TBool  -> EBool False --true?
+        TBool  -> EBool False -- true?
         TInt   -> EInt 0
         TFloat -> EFloat 0
         TCmplx -> ECmplx 0
