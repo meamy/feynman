@@ -13,7 +13,7 @@ import Feynman.Core (Primitive,
                      expandCZ,
                      idsW)
 
-import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (runHypExample,getNumCuts)
+import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (getNumCuts, getNumCutsMT)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -155,7 +155,7 @@ runDotQC passes verify fname src = do
       putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms" ++ verStr ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
       if verify then putStrLn $ "# Verified" else return ()
-      putStrLn $ show qc'
+      -- putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
         parseAndPass = do
@@ -346,7 +346,6 @@ parseArgs doneSwitches options []     = printHelp
 parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
-  "-hypExample"  -> runHypExample
   "-distribute"  -> parseArgs doneSwitches options {passes = Distribute:passes options} xs
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
