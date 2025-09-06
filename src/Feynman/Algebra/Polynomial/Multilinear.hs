@@ -22,6 +22,7 @@ multiplicative and additive "parity" basis.
 module Feynman.Algebra.Polynomial.Multilinear(
   Elim(..),
   Monomial(..),
+  MVar,
   PowerProduct,
   Parity,
   Multilinear,
@@ -39,7 +40,7 @@ module Feynman.Algebra.Polynomial.Multilinear(
   getConstant,
   isZero,
   isMono,
-  isConst,
+  isConstant,
   contains,
   constant,
   ofVar,
@@ -130,6 +131,9 @@ newtype Monomial v (repr :: Repr) = Monomial { getVars :: Set v } deriving (Eq)
 type PowerProduct v = Monomial v 'Mult
 type Parity v       = Monomial v 'Add
 
+-- | Type class for variables in multilinear polynomials 
+class (Ord v, Ord (PowerProduct v)) => MVar v
+
 -- | Lexicographic ordering
 lexOrd :: Ord v => Monomial v repr -> Monomial v repr -> Ordering
 lexOrd m n = compare (getVars m) (getVars n)
@@ -153,6 +157,8 @@ lexdegOrd m n = case grevlexOrd (Monomial mx) (Monomial nx) of
 -- | Default instance of order monomials
 instance Ord (Monomial String repr) where
   compare = grevlexOrd
+
+instance MVar String
 
 instance Degree (Monomial v repr) where
   {-# INLINABLE degree #-}
@@ -184,9 +190,6 @@ instance (Ord v, ReprC repr) => Monoid (Monomial v repr) where
 
 instance (Ord v) => Group (Monomial v 'Mult) where
   m ./. n = Monomial $ Set.difference (getVars m) (getVars n)
-
-instance (Ord v, ReprC repr) => Symbolic (Monomial v repr) where
-  ofVar v = Monomial $ Set.singleton v
 
 -- | Construct a monomial
 monomial :: Ord v => [v] -> Monomial v repr
@@ -229,7 +232,13 @@ instance (Ord v) => Vars (Multilinear v r repr) where
   vars = foldr (Set.union) Set.empty . map getVars . Map.keys . getTerms
 
 instance (Ord v, Eq r, Num r, ReprC repr) => Symbolic (Multilinear v r repr) where
-  ofVar v = ofTerm (1, ofVar v)
+  type Val (Multilinear v r repr) = r
+  ofVar v   = ofTerm (1, monomial [v])
+  ofConst r = ofTerm (r, mempty)
+  toConst p = case Map.toList . getTerms $ p of
+    []            -> Just 0
+    [(mempty, r)] -> Just r
+    _             -> Nothing
   
 instance (Ord v, Ord (Monomial v repr), Eq r, Num r, ReprC repr) => Num (Multilinear v r repr) where
   (+) = \p -> normalize . addM p
@@ -278,8 +287,8 @@ isMono :: Multilinear v r repr -> Bool
 isMono = (1 >=) . Map.size . getTerms
 
 -- | Check if the polynomial is constant
-isConst :: Ord (Monomial v repr) => Multilinear v r repr -> Bool
-isConst = (== [Monomial Set.empty]) . Map.keys . getTerms
+isConstant :: Ord (Monomial v repr) => Multilinear v r repr -> Bool
+isConstant = (all (== (Monomial Set.empty))) . Map.keys . getTerms
 
 -- | Check if a variable is used in the polynomial
 contains :: Ord v => v -> Multilinear v r repr -> Bool

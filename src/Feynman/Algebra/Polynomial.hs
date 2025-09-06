@@ -18,6 +18,7 @@ module Feynman.Algebra.Polynomial(
   Symbolic(..)) where
 
 import Data.Set (Set)
+import Data.Maybe (isJust)
 
 import Feynman.Algebra.Base
 
@@ -42,7 +43,13 @@ class (Monoid m) => Group m where
 
 -- | Class of symbolic values
 class Vars a => Symbolic a where
-  ofVar :: Var a -> a
+  type Val a
+  ofVar   :: Var a -> a
+  ofConst :: Val a -> a
+  isConst :: a -> Bool
+  toConst :: a -> Maybe (Val a)
+  --
+  isConst = isJust . toConst
 
 {- Instances -}
 
