@@ -1,5 +1,4 @@
-{-# Language MultiParamTypeClasses #-}
-{-# Language FunctionalDependencies #-}
+{-# LANGUAGE TypeFamilies #-}
 
 {-|
 Module      : SArith
@@ -17,6 +16,7 @@ import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Property ((==>))
 
 import Feynman.Algebra.Base
+import Feynman.Algebra.Polynomial
 import Feynman.Algebra.Polynomial.Multilinear
 
 {---------------------------
@@ -25,38 +25,6 @@ import Feynman.Algebra.Polynomial.Multilinear
 
 -- | Symbolic (bit-blasted) unsigned integers. The lowest-order bit is the first bit
 type SUInt v = [SBool v]
-
--- | Type class for symbolic values
-class Symbolic a sa | sa -> a where
-  liftSymbolic :: a -> sa
-  dropSymbolic :: sa -> Maybe a
-
--- | Check whether a symbolic value is symbolic or not
-isSymbolic :: Symbolic a sa => sa -> Bool
-isSymbolic = isJust . dropSymbolic
-
--- | Forces a symbolic value to a constant. Throws an error if it is symbolic
-forceDrop :: Symbolic a sa => sa -> a
-forceDrop = fromJust . dropSymbolic
-
-instance MVar v => Symbolic FF2 (SBool v) where
-  liftSymbolic = constant
-  dropSymbolic sb = case isConst sb of
-    True  -> Just $ getConstant sb
-    False -> Nothing
-
-instance MVar v => Symbolic Integer (SUInt v) where
-  liftSymbolic 0 = []
-  liftSymbolic i
-    | i < 0 = error "Can't represent signed integers"
-    | otherwise = case i `mod` 2 of
-        0 -> 0:liftSymbolic (i `shiftR` 1)
-        1 -> 1:liftSymbolic (i `shiftR` 1)
-    
-  dropSymbolic si = case all isConst si of
-    True  -> Just . foldr (+) 0 . map f $ zip [0..] si
-    False -> Nothing
-    where f (i,p) = if (testFF2 $ getConstant p) then 1 `shiftL` i else 0
 
 {---------------------------
  Utilities
@@ -72,9 +40,33 @@ setWidth sa n = take n sa ++ (replicate (n - length sa) 0)
 
 -- | Turns an integer into a symbolic uint[n]
 makeSUInt :: MVar v => Integer -> Int -> SUInt v
-makeSUInt a n
-  | a < 0     = makeSUInt ((1 `shiftL` n) - 1)
-  | otherwise = setWidth (liftSymbolic a) n
+makeSUInt i n
+  | i < 0     = makeSUInt ((1 `shiftL` n) - 1) n
+  | otherwise = setWidth (makeSNat i) n
+
+-- | Turns a positive integer into a symbolic uint of arbitrary length
+makeSNat :: MVar v => Integer -> SUInt v
+makeSNat i
+  | i == 0    = []
+  | i < 0     = error "Can't represent signed integers"
+  | otherwise = case i `mod` 2 of
+      0 -> 0:makeSNat (i `shiftR` 1)
+      1 -> 1:makeSNat (i `shiftR` 1)
+
+-- | Converts a constant bit-blasted integer back to an integer
+toNat :: MVar v => SUInt v -> Maybe Integer
+toNat si = case all isConstant si of
+  True  -> Just . foldr (+) 0 . map f $ zip [0..] si
+  False -> Nothing
+  where f (i,p) = if (testFF2 $ getConstant p) then 1 `shiftL` i else 0
+
+-- | Checks whether a symbolic uint is a constant value
+isNat :: MVar v => SUInt v -> Bool
+isNat = isJust . toNat
+
+-- | Forces a symbolic uint to a Nat. Throws an error if it is symbolic
+forceNat :: MVar v => SUInt v -> Integer
+forceNat = fromJust . toNat
 
 {---------------------------
  Bitwise operators
@@ -105,17 +97,17 @@ sAnd s t
  ----------------------------}
 
 -- Convenience definition for testing
-liftSUInt :: Integer -> SUInt String
-liftSUInt = liftSymbolic
+liftNat :: Integer -> SUInt String
+liftNat = makeSNat
 
 -- dropSymbolic . liftSymbolic is the identity
-prop_SUInt_faithful a = (a >= 0) ==> case (dropSymbolic $ liftSUInt a) of
+prop_SUInt_faithful a = (a >= 0) ==> case (toNat $ liftNat a) of
   Nothing -> False
   Just b  -> b == a
 
 -- Plus commutes with liftSymbolic
 prop_sAnd_correct a b = (a >= 0) && (b >= 0) ==>
-  forceDrop (sAnd (liftSUInt a) (liftSUInt b)) == a .&. b
+  forceNat (sAnd (liftNat a) (liftNat b)) == a .&. b
 
 tests :: () -> IO ()
 tests _ = do

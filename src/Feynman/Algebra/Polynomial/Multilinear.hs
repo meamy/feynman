@@ -233,9 +233,9 @@ instance (Ord v) => Vars (Multilinear v r repr) where
 
 instance (Ord v, Eq r, Num r, ReprC repr) => Symbolic (Multilinear v r repr) where
   type Val (Multilinear v r repr) = r
-  ofVar v   = ofTerm (1, monomial [v])
-  ofConst r = ofTerm (r, mempty)
-  toConst p = case Map.toList . getTerms $ p of
+  ofVar v = ofTerm (1, monomial [v])
+  ofVal r = ofTerm (r, mempty)
+  toVal p = case Map.toList . getTerms $ p of
     []            -> Just 0
     [(mempty, r)] -> Just r
     _             -> Nothing

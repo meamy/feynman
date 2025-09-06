@@ -18,7 +18,7 @@ module Feynman.Algebra.Polynomial(
   Symbolic(..)) where
 
 import Data.Set (Set)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust,fromJust)
 
 import Feynman.Algebra.Base
 
@@ -45,11 +45,16 @@ class (Monoid m) => Group m where
 class Vars a => Symbolic a where
   type Val a
   ofVar   :: Var a -> a
-  ofConst :: Val a -> a
-  isConst :: a -> Bool
-  toConst :: a -> Maybe (Val a)
-  --
-  isConst = isJust . toConst
+  ofVal :: Val a -> a
+  toVal :: a -> Maybe (Val a)
+
+-- | Checks if a symbolic value is a value
+isVal :: Symbolic a => a -> Bool
+isVal = isJust . toVal
+
+-- | Drop a symbolic value to a constant. Throws an error if it isn't constant
+asVal :: Symbolic a => a -> Val a
+asVal = fromJust . toVal
 
 {- Instances -}
 
