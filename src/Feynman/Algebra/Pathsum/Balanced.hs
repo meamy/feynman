@@ -665,6 +665,11 @@ substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
  Operators
  ----------------------------}
 
+-- | Apply a predicate to the state
+applyPredicate :: (Eq g, Abelian g) => SBool Var -> Pathsum g -> Pathsum g
+applyPredicate p (Pathsum a b c d e f) = Pathsum a b c (d+1) e' f where
+  e' = e + lift (ofVar (PVar d) * (1 + p))
+
 -- | Return the projector for a state
 projector :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 projector sop@(Pathsum a b c d e f)
@@ -947,6 +952,20 @@ matchHHProduct' sop = do
     True  -> return (v, vars)
     False -> mzero
 
+-- | Subproduct rule
+--
+--   \(\dots(\sum_{y,z} (-1)^{y} e^{P(yz,\dots)})\dots => z=1
+matchSubproduct :: (Eq g, Periodic g) => Pathsum g -> [Var]
+matchSubproduct sop = msum . (map go) $ internalPaths sop
+  where go v            = checkQuotient (quotVar v $ phasePoly sop)
+        checkQuotient f =
+          let factors = vars . fst . factorizeTrivial . dropConstant $ f
+              pfact   = Set.intersection factors (Set.fromList $ internalPaths sop)
+          in
+            case getConstant f == 1 && pfact /= Set.empty of
+              True  -> return (head $ Set.toList pfact)
+              False -> mzero
+
 -- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
@@ -1000,6 +1019,10 @@ pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 -- | Pattern synonym for HH instances where the polynomial is a product
 pattern HHProduct :: (Eq g, Periodic g) => Var -> [Var] -> Pathsum g
 pattern HHProduct v vs <- (matchHHProduct -> (v, vs):_)
+
+-- | Pattern synonym for Subproduct
+pattern Subproduct :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Subproduct v <- (matchSubproduct -> v:_)
 
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
@@ -1065,6 +1088,16 @@ applyHHProduct' (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-
           | otherwise = PVar $ j
         varShift v = v
         go ps = snd . expand ps
+
+-- | Apply a subproduct rule. Does not check if the instance is valid
+applySubproduct :: (Eq g, Abelian g) => Var -> Pathsum g -> Pathsum g
+applySubproduct (PVar i) (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
+  where e' = renameMonotonic varShift . subst (PVar i) 1 $ e
+        f' = map (renameMonotonic varShift . subst (PVar i) 1) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
 
 -- | Apply an (\omega\) rule. Does not check if the instance is valid
 applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
@@ -1141,6 +1174,7 @@ grind sop = case sop of
   Omega y p      -> grind $ applyOmega y p sop
   HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
+  Subproduct y   -> grind $ applySubproduct y sop
   _              -> sop
 
 -- | A normalization procedure for Clifford circuits
@@ -1529,3 +1563,12 @@ cliffordT14 =
         sdg1 = sdggate <> identity 1
         sdg2 = identity 1 <> sdggate
         xcgate = swapgate .> cxgate .> swapgate
+
+-- | Body of an RUS circuit
+rus :: Pathsum DMod2
+rus = fresh <> fresh <> identity 1 .>
+      hgate <> hgate <> identity 1 .>
+      ccxgate .>
+      identity 2 <> sgate .>
+      ccxgate .>
+      hgate <> hgate <> zgate
