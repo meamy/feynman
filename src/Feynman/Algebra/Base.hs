@@ -16,7 +16,7 @@ module Feynman.Algebra.Base(
   Abelian(..),
   Periodic(..),
   Dyadic(..),
-  FF2,
+  FF2(..),
   Zmod,
   Z4,
   Z8,
@@ -105,7 +105,7 @@ instance Dyadic Double where
  -------------------------------}
 
 -- | The finite field \(\mathbb{F}_2\)
-newtype FF2 = FF2 Bool deriving (Eq, Ord)
+newtype FF2 = FF2 { testFF2 :: Bool } deriving (Eq, Ord)
 
 instance Show FF2 where
   show (FF2 False) = "0"
