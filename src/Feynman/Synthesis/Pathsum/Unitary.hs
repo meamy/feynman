@@ -342,22 +342,34 @@ synthesizeMCT i (x:xs) t   = circ ++ ccx x ("_anc" ++ show i) t ++ circ where
   circ = synthesizeMCT (i+1) xs ("_anc" ++ show i)
 
 -- | Push swaps to the end
+--
+--   See also Optimization.Swaps.pushSwaps
 pushSwaps :: [ExtractionGates] -> [ExtractionGates]
-pushSwaps = reverse . snd . go (Map.empty, []) where
+pushSwaps = reverse . go (Map.empty, []) where
+
   get :: Map ID ID -> ID -> ID
   get ctx q               = Map.findWithDefault q q ctx
-  synthesize :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
-  synthesize q (ctx, acc) =
-    let q' = get ctx q in
-      if q' == q
-      then (ctx, acc)
-      else (Map.insert q' q' (Map.insert q (get ctx q') ctx), (Swapper q q'):acc)
-  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> (Map ID ID, [ExtractionGates])
-  go (ctx, acc) []        = foldr synthesize (ctx, acc) $ Map.keys ctx
+
+  synthesize :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates]
+  synthesize (ctx, acc) =
+    case Map.toList ctx of
+      [] -> acc
+      (q, q'):_ -> synthesize (synthesizeOrbit q' (Map.delete q ctx, acc))
+
+  synthesizeOrbit :: ID -> (Map ID ID, [ExtractionGates]) -> (Map ID ID, [ExtractionGates])
+  synthesizeOrbit q (ctx, acc) =
+      case ctx Map.!? q of
+        Just q' -> synthesizeOrbit q' (Map.delete q ctx, (Swapper q q'):acc)
+        Nothing -> (ctx, acc)
+
+  go :: (Map ID ID, [ExtractionGates]) -> [ExtractionGates] -> [ExtractionGates]
+  go (ctx, acc) []        = synthesize (ctx, acc)
   go (ctx, acc) (x:xs)    = case x of
+    -- Hadamard, Phase, MCT get rewritten using the mapping
     Hadamard q    -> go (ctx, (Hadamard $ get ctx q):acc) xs
     Phase a cs    -> go (ctx, (Phase a $ map (get ctx) cs):acc) xs
     MCT cs t      -> go (ctx, (MCT (map (get ctx) cs) (get ctx t)):acc) xs
+    -- Swapper is removed, and causes an update of the mapping
     Swapper q1 q2 ->
       let (q1', q2') = (get ctx q1, get ctx q2) in
         go (Map.insert q1 q2' $ Map.insert q2 q1' ctx, acc) xs

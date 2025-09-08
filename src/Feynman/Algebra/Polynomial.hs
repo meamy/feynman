@@ -1,3 +1,4 @@
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TypeFamilies #-}
 
 {-|
@@ -18,6 +19,7 @@ module Feynman.Algebra.Polynomial(
   Symbolic(..)) where
 
 import Data.Set (Set)
+import qualified Data.Set as Set
 
 import Feynman.Algebra.Base
 
@@ -29,6 +31,10 @@ class Degree a where
 class Vars a where
   type Var a
   vars :: a -> Set (Var a)
+
+instance (Vars a, Ord (Var a)) => Vars [a] where
+  type Var [a] = Var a
+  vars = foldr Set.union Set.empty . map vars
 
 -- | Class of rings for the purpose of polynomials
 class (Eq r, Num r) => Ring r
