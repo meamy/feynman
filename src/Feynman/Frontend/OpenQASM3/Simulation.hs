@@ -351,6 +351,9 @@ simFor (id, typ) expr stmt = do
       simStmt stmt
       popEnv
 
+listOp :: BinOp -> [SBool Var] -> [SBool Var] -> [SBool Var]
+listOp = error "TODO"
+
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
   AVar id     -> do
@@ -359,6 +362,46 @@ simAssign path Nothing expr = case path of
       Nothing             -> error "id not bound"
       Just (Scalar typ e) -> declareScalar id typ (Just e)
   AIndex id i -> error "TODO"
+
+simAssign path (Just bop) expr = case path of
+  AVar id -> do
+    l1 <- polyListOfExpr $ EVar id
+    l2 <- polyListOfExpr expr
+    offset <- getOffset id
+    let newList = listOp bop l1 l2
+    modify $ f newList offset
+  where
+    f l offset env@(Env ps@(Pathsum _ _ _ _ _ out) _ _) =
+      let newOut = take offset out ++ l ++ drop (offset + length l) out in
+      env {pathsum = ps { outVals = newOut } }
+
+{-
+simAssign path (Just bop) expr = case path of
+  AVar id -> do
+    maybeBind <- searchBinding id
+    case maybeBind of
+      Nothing                     -> error "id not bound"
+      Just (Symbolic typ offset) -> case (typ, bop) of
+        (TCBit, AndOp) -> do
+          l1 <- polyListOfExpr EVar id
+          l2 <- polyListOfExpr expr
+          polyListAnd l1 l2 
+-}
+
+polyListOfExpr :: Expr a -> State (Env a) [SBool Var]
+polyListOfExpr expr = case expr of
+  EVar vid -> do
+    maybeBind <- searchBinding vid
+    case maybeBind of
+      Nothing -> error "id not bound"
+      Just (Symbolic typ offset) -> case typ of
+        TCBit          -> gets $ g offset 1
+        TCReg (EInt n) -> gets $ g offset n
+        TUInt (EInt n) -> gets $ g offset n
+  EInt n   -> error "TODO" 
+  where
+    g start len (Env (Pathsum _ _ _ _ _ out) _ _) = take len . drop start $ out
+
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
 declareSymbolic id typ size init = do
