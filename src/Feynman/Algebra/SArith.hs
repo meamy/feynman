@@ -11,6 +11,7 @@ module Feynman.Algebra.SArith where
 
 import Data.Maybe (isJust, fromJust)
 import Data.Bits
+import Data.List (unfoldr)
 
 import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Property ((==>))
@@ -68,7 +69,7 @@ isNat = isJust . toNat
 forceNat :: MVar v => SUInt v -> Integer
 forceNat = fromJust . toNat
 
--- | given x:uint[n], generates the list
+-- | given x:uint[n], generates the list of indicator polynomials:
 --    [x==0, x==1, x==2, ..., x==2^n-1]
 indicators :: MVar v => SUInt v -> [SBool v]
 indicators = f . reverse
@@ -132,6 +133,17 @@ sRRot = indicatorSum rrot
 
  Plus, Minus, Neg, Times, Div, Mod, Pow
  ----------------------------}
+
+-- | plus(x, y)[i] = x[i] + y[i] + c[i-1]
+--            c[i] = x[i] y[i] + (x[i] + y[i]) c[i-1] 
+--                 = x[i] y[i] + plus(x, y)[i] c[i-1] 
+--   cast to size of first arg
+sPlus :: MVar v => SUInt v -> SUInt v -> SUInt v
+sPlus s t = unfoldr computePair start
+  where
+    start                       = (0, s, t ++ repeat 0)
+    computePair (_, []  , _   ) = Nothing
+    computePair (c, x:xs, y:ys) = Just (c + x + y, (x * y + (x + y)*c, xs, ys))
 
 {---------------------------
  Comparison operators
