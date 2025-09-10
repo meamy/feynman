@@ -5,6 +5,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.List as List
 import Feynman.Algebra.Base (DMod2)
+import Feynman.Algebra.SArith
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Core (ID)
 import Feynman.Frontend.OpenQASM3.Core
@@ -352,7 +353,26 @@ simFor (id, typ) expr stmt = do
       popEnv
 
 listOp :: BinOp -> [SBool Var] -> [SBool Var] -> [SBool Var]
-listOp = error "TODO"
+listOp bop = case bop of
+  AndOp    -> sAnd
+  OrOp     -> sOr
+  XorOp    -> sXor
+  LShiftOp -> sLShift
+  RShiftOp -> sRShift
+  LRotOp   -> sLRot
+  RRotOp   -> sRRot
+  EqOp     -> error "TODO"
+  LTOp     -> error "TODO"
+  LEqOp    -> error "TODO"
+  GTOp     -> error "TODO"
+  GEqOp    -> error "TODO"
+  PlusOp   -> sPlus
+  MinusOp  -> error "TODO"
+  TimesOp  -> error "TODO"
+  DivOp    -> error "TODO"
+  ModOp    -> error "TODO"
+  PowOp    -> error "TODO"
+  ConcatOp -> error "++ not supported"
 
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of

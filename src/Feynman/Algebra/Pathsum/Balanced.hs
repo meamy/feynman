@@ -55,6 +55,8 @@ instance IsString Var where
 instance Ord (Monomial Var repr) where
   compare = lexOrd
 
+instance MVar Var
+
 -- | Convenience function for the string representation of the 'i'th input variable
 ivar :: Int -> String
 ivar = show . IVar
