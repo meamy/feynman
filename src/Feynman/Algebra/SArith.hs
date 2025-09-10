@@ -69,6 +69,25 @@ forceNat :: MVar v => SUInt v -> Integer
 forceNat = fromJust . toNat
 
 {---------------------------
+Helper functions
+----------------------------}
+
+-- | given x:uint[n], generates the list
+--    [x==0, x==1, x==2, ..., x==2^n-1]
+indicators :: MVar v => SUInt v -> [SBool v]
+indicators = f . reverse
+  where
+    f [p]    = [1 + p, p]
+    f (p:ps) = map ((1+p)*) (f ps) ++ map (p*) (f ps)
+
+-- | given f, s:uint[m], t:uint[n], outputs
+--    {t==0}s + {t==1}f(s) + ... + {t==i}f^i(s)[i] + ... + {t==2^n-1}(...)
+--    in other words, takes the dot product of the list of indicator polynomials with the list [f^i(s)]
+--    then sums over each index 
+indicatorSum :: MVar v => (SUInt v -> SUInt v) -> SUInt v -> SUInt v -> SUInt v
+indicatorSum f s t = foldr (zipWith (+)) (repeat 0) $ zipWith (\l ind -> map (ind*) l) (iterate f s) (indicators t)
+
+{---------------------------
  Bitwise operators
 
  And, Or, Xor, Negate, LShift, RShift, LRot, RRot, Popcount
@@ -79,6 +98,38 @@ sAnd :: MVar v => SUInt v -> SUInt v -> SUInt v
 sAnd s t
   | length s < length t = sAnd t s
   | otherwise           = zipWith (*) s (t ++ repeat 0)
+
+sXor :: MVar v => SUInt v -> SUInt v -> SUInt v
+sXor s t
+  | length s < length t = sXor t s
+  | otherwise           = zipWith (+) s (t ++ repeat 0)
+
+-- | Bitwise NOT
+sNegate :: MVar v => SUInt v -> SUInt v
+sNegate = map (1+)
+
+sOr :: MVar v => SUInt v -> SUInt v -> SUInt v
+sOr s t = sNegate $ (sNegate s) `sAnd` (sNegate t)
+
+sLShift :: MVar v => SUInt v -> SUInt v -> SUInt v
+sLShift = indicatorSum lshift
+  where
+    lshift x = 0 : init x
+
+sRShift :: MVar v => SUInt v -> SUInt v -> SUInt v
+sRShift = indicatorSum rshift
+  where
+    rshift (_:x) = x ++ [0]
+
+sLRot :: MVar v => SUInt v -> SUInt v -> SUInt v
+sLRot = indicatorSum lrot
+  where
+    lrot x = last x : init x
+
+sRRot :: MVar v => SUInt v -> SUInt v -> SUInt v
+sRRot = indicatorSum rrot
+  where
+    rrot (a:x) = x ++ [a]
 
 {---------------------------
  Arithmetic operators
