@@ -96,6 +96,7 @@ sAnd s t
   | length s < length t = sAnd t s
   | otherwise           = zipWith (*) s (t ++ repeat 0)
 
+-- | Bitwise XOR
 sXor :: MVar v => SUInt v -> SUInt v -> SUInt v
 sXor s t
   | length s < length t = sXor t s
@@ -105,14 +106,17 @@ sXor s t
 sNegate :: MVar v => SUInt v -> SUInt v
 sNegate = map (1+)
 
+-- | Bitwise OR
 sOr :: MVar v => SUInt v -> SUInt v -> SUInt v
 sOr s t = sNegate $ (sNegate s) `sAnd` (sNegate t)
 
+-- | Bitshift left (toward higher place bits)
 sLShift :: MVar v => SUInt v -> SUInt v -> SUInt v
 sLShift = indicatorSum lshift
   where
     lshift x = 0 : init x
 
+-- | Bitshift right (toward lower place bits)
 sRShift :: MVar v => SUInt v -> SUInt v -> SUInt v
 sRShift = indicatorSum rshift
   where
@@ -138,8 +142,7 @@ sPopcount s = foldl sPlus (replicate (length s) 0) . map singleton $ s
  ----------------------------}
 
 -- | plus(x, y)[i] = x[i] + y[i] + c[i-1]
---            c[i] = x[i] y[i] + (x[i] + y[i]) c[i-1] 
---                 = x[i] y[i] + plus(x, y)[i] c[i-1] 
+--            c[i] = x[i] y[i] + (x[i] + y[i]) c[i-1]
 --   cast to size of first arg
 sPlus :: MVar v => SUInt v -> SUInt v -> SUInt v
 sPlus s t = unfoldr computePair start
@@ -153,6 +156,37 @@ sPlus s t = unfoldr computePair start
 
  <, <=, ==, >, >=
  ----------------------------}
+
+
+-- | uint less than (<)
+--   casts to size of first arg?
+sLT' :: MVar v => SUInt v -> SUInt v -> SUInt v
+sLT' s t = singleton . foldr (+) 0 $ cases
+  where
+    len   = length s
+    cases = [ p*q | j <- [0..len-1],
+                    i <- [0..j-1],
+                    let p = s !! i,
+                    let q = setWidth t len !! j ]
+
+{-
+  a3 a2 a1 a0
+  b3 b2 b1 b0
+
+  a < b ==> (a3 < b3) xor ( (a3 == b3) and [a0, a1, a2] < [b0, b1, b2] )
+-}
+sLT :: MVar v => SUInt v -> SUInt v -> SUInt v
+sLT s t = singleton $ f (reverse s) (reverse (setWidth t (length s)))
+  where
+    lt p q          = (1+p)*q
+    f [a] [b]       = lt a b
+    f (a:as) (b:bs) = lt a b + (iff a b * f as bs)
+    iff p q         = 1 + p + q 
+
+sEq :: MVar v => SUInt v -> SUInt v -> SUInt v
+sEq s t = singleton . foldl (*) 1 $ zipWith iff s t
+  where
+    iff p q = 1 + p + q
 
 {---------------------------
  Testing

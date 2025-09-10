@@ -361,8 +361,8 @@ listOp bop = case bop of
   RShiftOp -> sRShift
   LRotOp   -> sLRot
   RRotOp   -> sRRot
-  EqOp     -> error "TODO"
-  LTOp     -> error "TODO"
+  EqOp     -> sEq
+  LTOp     -> sLT
   LEqOp    -> error "TODO"
   GTOp     -> error "TODO"
   GEqOp    -> error "TODO"
