@@ -11,7 +11,7 @@ module Feynman.Algebra.SArith where
 
 import Data.Maybe (isJust, fromJust)
 import Data.Bits
-import Data.List (unfoldr)
+import Data.List (unfoldr, singleton)
 
 import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Property ((==>))
@@ -127,6 +127,9 @@ sRRot :: MVar v => SUInt v -> SUInt v -> SUInt v
 sRRot = indicatorSum rrot
   where
     rrot (a:x) = x ++ [a]
+
+sPopcount :: MVar v => SUInt v -> SUInt v
+sPopcount s = foldl sPlus (replicate (length s) 0) . map singleton $ s
 
 {---------------------------
  Arithmetic operators
