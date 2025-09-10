@@ -68,10 +68,6 @@ isNat = isJust . toNat
 forceNat :: MVar v => SUInt v -> Integer
 forceNat = fromJust . toNat
 
-{---------------------------
-Helper functions
-----------------------------}
-
 -- | given x:uint[n], generates the list
 --    [x==0, x==1, x==2, ..., x==2^n-1]
 indicators :: MVar v => SUInt v -> [SBool v]
