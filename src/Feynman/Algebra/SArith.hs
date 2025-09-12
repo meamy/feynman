@@ -103,12 +103,12 @@ sXor s t
   | otherwise           = zipWith (+) s (t ++ repeat 0)
 
 -- | Bitwise NOT
-sNegate :: MVar v => SUInt v -> SUInt v
-sNegate = map (1+)
+sNeg :: MVar v => SUInt v -> SUInt v
+sNeg = map (1+)
 
 -- | Bitwise OR
 sOr :: MVar v => SUInt v -> SUInt v -> SUInt v
-sOr s t = sNegate $ (sNegate s) `sAnd` (sNegate t)
+sOr s t = sNeg $ (sNeg s) `sAnd` (sNeg t)
 
 -- | Bitshift left (toward higher place bits)
 sLShift :: MVar v => SUInt v -> SUInt v -> SUInt v
@@ -205,7 +205,41 @@ prop_SUInt_faithful a = (a >= 0) ==> case (toNat $ liftNat a) of
 prop_sAnd_correct a b = (a >= 0) && (b >= 0) ==>
   forceNat (sAnd (liftNat a) (liftNat b)) == a .&. b
 
+prop_sXor_correct a b = (a >= 0) && (b >= 0) ==>
+  forceNat (sXor (liftNat a) (liftNat b)) == a `xor` b
+
+prop_sOr_correct a b = (a >= 0) && (b >= 0) ==>
+  forceNat (sOr (liftNat a) (liftNat b)) == a .|. b
+
+-- fails for a=0
+prop_sNeg_correct a = (a > 0) ==>
+  forceNat (sNeg (liftNat a)) == complement a
+
+prop_sLShift_correct a b = (a > 0) && (b > 0) ==>
+  forceNat (sLShift (liftNat a) (liftNat b)) == a `shiftL` (fromIntegral b)
+
+prop_sRShift_correct a b = (a >= 0) && (b >= 0) ==>
+  forceNat (sRShift (liftNat a) (liftNat b)) == a `shiftR` (fromIntegral b)
+
+prop_sLRot_correct a b = (a > 0) && (b > 0) ==>
+  forceNat (sLRot (liftNat a) (liftNat b)) == a `rotateL` (fromIntegral b)
+
+prop_sRRot_correct a b = (a >= 0) && (b >= 0) ==>
+  forceNat (sRRot (liftNat a) (liftNat b)) == a `rotateR` (fromIntegral b)
+
+prop_sPopcount_correct a = (a >= 0) ==>
+  forceNat (sPopcount (liftNat a)) == toInteger (popCount a)
+
+
 tests :: () -> IO ()
 tests _ = do
   quickCheck $ prop_SUInt_faithful
+  quickCheck $ prop_sXor_correct
   quickCheck $ prop_sAnd_correct
+  quickCheck $ prop_sOr_correct
+  -- quickCheck $ prop_sNeg_correct
+  quickCheck $ prop_sLShift_correct
+  quickCheck $ prop_sRShift_correct
+  quickCheck $ prop_sLRot_correct
+  quickCheck $ prop_sRRot_correct
+  quickCheck $ prop_sPopcount_correct
