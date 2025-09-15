@@ -12,6 +12,7 @@ module Feynman.Algebra.SArith where
 import Data.Maybe (isJust, fromJust)
 import Data.Bits
 import Data.List (unfoldr, singleton)
+import Data.Word
 
 import Test.QuickCheck hiding ((.&.))
 import Test.QuickCheck.Property ((==>))
@@ -69,7 +70,7 @@ isNat = isJust . toNat
 forceNat :: MVar v => SUInt v -> Integer
 forceNat = fromJust . toNat
 
--- | given x:uint[n], generates the list of indicator polynomials:
+-- | Given x:uint[n], generates the list of indicator polynomials:
 --    [x==0, x==1, x==2, ..., x==2^n-1]
 indicators :: MVar v => SUInt v -> [SBool v]
 indicators = f . reverse
@@ -77,12 +78,16 @@ indicators = f . reverse
     f [p]    = [1 + p, p]
     f (p:ps) = map ((1+p)*) (f ps) ++ map (p*) (f ps)
 
--- | given f, s:uint[m], t:uint[n], outputs
+-- | Given f, s:uint[m], t:uint[n], outputs
 --    {t==0}s + {t==1}f(s) + ... + {t==i}f^i(s)[i] + ... + {t==2^n-1}(...)
 --    in other words, takes the dot product of the list of indicator polynomials with the list [f^i(s)]
 --    then sums over each index 
 indicatorSum :: MVar v => (SUInt v -> SUInt v) -> SUInt v -> SUInt v -> SUInt v
 indicatorSum f s t = foldr (zipWith (+)) (repeat 0) $ zipWith (\l ind -> map (ind*) l) (iterate f s) (indicators t)
+
+-- | If-then-else
+ite :: MVar v => SBool v -> SUInt v -> SUInt v -> SUInt v
+ite p = zipWith (\a b -> (1 + p)*a + p*b) 
 
 {---------------------------
  Bitwise operators
@@ -103,12 +108,12 @@ sXor s t
   | otherwise           = zipWith (+) s (t ++ repeat 0)
 
 -- | Bitwise NOT
-sNeg :: MVar v => SUInt v -> SUInt v
-sNeg = map (1+)
+sNot :: MVar v => SUInt v -> SUInt v
+sNot = map (1+)
 
 -- | Bitwise OR
 sOr :: MVar v => SUInt v -> SUInt v -> SUInt v
-sOr s t = sNeg $ (sNeg s) `sAnd` (sNeg t)
+sOr s t = sNot $ (sNot s) `sAnd` (sNot t)
 
 -- | Bitshift left (toward higher place bits)
 sLShift :: MVar v => SUInt v -> SUInt v -> SUInt v
@@ -151,6 +156,28 @@ sPlus s t = unfoldr computePair start
     computePair (_, []  , _   ) = Nothing
     computePair (c, x:xs, y:ys) = Just (c + x + y, (x * y + (x + y)*c, xs, ys))
 
+-- | Negating a number mod 2^n using 2's complement
+sNeg :: MVar v => SUInt v -> SUInt v
+sNeg s = sPlus (makeSUInt 1 n) (sNot s) where n = getWidth s
+
+-- | Subtraction mod 2^n
+sMinus :: MVar v => SUInt v -> SUInt v -> SUInt v
+sMinus s t = sPlus s (sNeg t)
+
+-- | Multiplication mod 2^n
+sMult :: MVar v => SUInt v -> SUInt v -> SUInt v
+sMult s t = setWidth v n where
+  n = getWidth s
+  v = foldr sPlus (makeSUInt 0 (2*n)) . map (\i -> setWidth i (2*n)) $ shifts
+  shifts = [replicate i 0 ++ map (*p) t | (i,p) <- zip [0..] s]
+
+-- | Singular reduction of an integer mod M. Useful for windowed
+--   modular arithmetic when you know i is in the range [0..k*M]
+--
+--   If /s/ >= /t/, then s - t else s
+sModRed1 :: MVar v => SUInt v -> SUInt v -> SUInt v
+sModRed1 s t = ite (head $ sGTEq s t) (sMinus s t) s
+
 {---------------------------
  Comparison operators
 
@@ -188,48 +215,64 @@ sEq s t = singleton . foldl (*) 1 $ zipWith iff s t
   where
     iff p q = 1 + p + q
 
+-- Stub
+sGTEq :: MVar v => SUInt v -> SUInt v -> SUInt v
+sGTEq s t = sOr (sEq s t) (sLT t s)
+
 {---------------------------
  Testing
  ----------------------------}
 
--- Convenience definition for testing
-liftNat :: Integer -> SUInt String
-liftNat = makeSNat
+-- Convenience definitions for testing
+liftWord :: Word8 -> SUInt String
+liftWord i = makeSUInt (fromIntegral i) 8
+
+forceWord :: SUInt String -> Word8
+forceWord = fromIntegral . forceNat
 
 -- dropSymbolic . liftSymbolic is the identity
-prop_SUInt_faithful a = (a >= 0) ==> case (toNat $ liftNat a) of
-  Nothing -> False
-  Just b  -> b == a
+prop_SUInt_faithful a = (a >= 0) ==> a == (forceWord . liftWord $ a)
 
 -- Plus commutes with liftSymbolic
 prop_sAnd_correct a b = (a >= 0) && (b >= 0) ==>
-  forceNat (sAnd (liftNat a) (liftNat b)) == a .&. b
+  forceWord (sAnd (liftWord a) (liftWord b)) == a .&. b
 
 prop_sXor_correct a b = (a >= 0) && (b >= 0) ==>
-  forceNat (sXor (liftNat a) (liftNat b)) == a `xor` b
+  forceWord (sXor (liftWord a) (liftWord b)) == a `xor` b
 
 prop_sOr_correct a b = (a >= 0) && (b >= 0) ==>
-  forceNat (sOr (liftNat a) (liftNat b)) == a .|. b
+  forceWord (sOr (liftWord a) (liftWord b)) == a .|. b
 
 -- fails for a=0
-prop_sNeg_correct a = (a > 0) ==>
-  forceNat (sNeg (liftNat a)) == complement a
+prop_sNot_correct a = (a > 0) ==>
+  forceWord (sNot (liftWord a)) == complement a
 
 prop_sLShift_correct a b = (a > 0) && (b > 0) ==>
-  forceNat (sLShift (liftNat a) (liftNat b)) == a `shiftL` (fromIntegral b)
+  forceWord (sLShift (liftWord a) (liftWord b)) == a `shiftL` (fromIntegral b)
 
 prop_sRShift_correct a b = (a >= 0) && (b >= 0) ==>
-  forceNat (sRShift (liftNat a) (liftNat b)) == a `shiftR` (fromIntegral b)
+  forceWord (sRShift (liftWord a) (liftWord b)) == a `shiftR` (fromIntegral b)
 
 prop_sLRot_correct a b = (a > 0) && (b > 0) ==>
-  forceNat (sLRot (liftNat a) (liftNat b)) == a `rotateL` (fromIntegral b)
+  forceWord (sLRot (liftWord a) (liftWord b)) == a `rotateL` (fromIntegral b)
 
 prop_sRRot_correct a b = (a >= 0) && (b >= 0) ==>
-  forceNat (sRRot (liftNat a) (liftNat b)) == a `rotateR` (fromIntegral b)
+  forceWord (sRRot (liftWord a) (liftWord b)) == a `rotateR` (fromIntegral b)
 
 prop_sPopcount_correct a = (a >= 0) ==>
-  forceNat (sPopcount (liftNat a)) == toInteger (popCount a)
+  forceWord (sPopcount (liftWord a)) == fromIntegral (popCount a)
 
+prop_sPlus_correct a b = (a >= 0) && (b >= 0) ==>
+  forceWord (sPlus (liftWord a) (liftWord b)) == a + b
+
+prop_sNeg_correct a = (a >= 0) ==>
+  forceWord (sNeg (liftWord a)) == (-a)
+
+prop_sMinus_correct a b = (a >= 0) && (b >= 0) ==>
+  forceWord (sMinus (liftWord a) (liftWord b)) == a - b
+
+prop_sMult_correct a b = (a >= 0) && (b >= 0) ==>
+  forceWord (sMult (liftWord a) (liftWord b)) == a * b
 
 tests :: () -> IO ()
 tests _ = do
@@ -237,9 +280,13 @@ tests _ = do
   quickCheck $ prop_sXor_correct
   quickCheck $ prop_sAnd_correct
   quickCheck $ prop_sOr_correct
-  -- quickCheck $ prop_sNeg_correct
+  quickCheck $ prop_sNot_correct
   quickCheck $ prop_sLShift_correct
   quickCheck $ prop_sRShift_correct
-  quickCheck $ prop_sLRot_correct
+  quickCheck $ prop_sLRot_correct 
   quickCheck $ prop_sRRot_correct
   quickCheck $ prop_sPopcount_correct
+  quickCheck $ prop_sPlus_correct
+  quickCheck $ prop_sNeg_correct
+  quickCheck $ prop_sMinus_correct
+  quickCheck $ prop_sMult_correct
