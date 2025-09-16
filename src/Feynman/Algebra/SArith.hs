@@ -215,20 +215,16 @@ sLT = compByIndex lt
   where
     lt p q = (1+p)*q
 
-sLEq :: MVar v => SUInt v -> SUInt v -> SBool v 
-sLEq = compByIndex leq
-  where
-    leq p q = 1 + p*(1+q)
-
 sGT :: MVar v => SUInt v -> SUInt v -> SBool v 
 sGT = compByIndex gt
   where
     gt p q = p*(1+q)
 
+sLEq :: MVar v => SUInt v -> SUInt v -> SBool v 
+sLEq s t = 1 + sGT s t
+
 sGEq :: MVar v => SUInt v -> SUInt v -> SBool v 
-sGEq = compByIndex geq
-  where
-    geq p q = (1+p)*q + 1
+sGEq s t = 1 + sLT s t
 
 sEq :: MVar v => SUInt v -> SUInt v -> SBool v
 sEq s t = foldl (*) 1 $ zipWith iff s t
@@ -245,6 +241,9 @@ liftWord i = makeSUInt (fromIntegral i) 8
 
 forceWord :: SUInt String -> Word8
 forceWord = fromIntegral . forceNat
+
+forceBool :: SBool String -> Bool
+forceBool = testFF2 . getConstant
 
 -- dropSymbolic . liftSymbolic is the identity
 prop_SUInt_faithful a = (a >= 0) ==> a == (forceWord . liftWord $ a)
@@ -290,6 +289,18 @@ prop_sMinus_correct a b = (a >= 0) && (b >= 0) ==>
 prop_sMult_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sMult (liftWord a) (liftWord b)) == a * b
 
+prop_sLT_correct a b = (a >= 0) && (b >= 0) ==>
+  forceBool (sLT (liftWord a) (liftWord b)) == (a < b)
+
+prop_sLEq_correct a b = (a >= 0) && (b >= 0) ==>
+  forceBool (sLEq (liftWord a) (liftWord b)) == (a <= b)
+
+prop_sGT_correct a b = (a >= 0) && (b >= 0) ==>
+  forceBool (sGT (liftWord a) (liftWord b)) == (a > b)
+
+prop_sGEq_correct a b = (a >= 0) && (b >= 0) ==>
+  forceBool (sGEq (liftWord a) (liftWord b)) == (a >= b)
+
 tests :: () -> IO ()
 tests _ = do
   quickCheck $ prop_SUInt_faithful
@@ -306,3 +317,8 @@ tests _ = do
   quickCheck $ prop_sNeg_correct
   quickCheck $ prop_sMinus_correct
   quickCheck $ prop_sMult_correct
+  quickCheck $ prop_sLT_correct
+  quickCheck $ prop_sLEq_correct
+  quickCheck $ prop_sGT_correct
+  quickCheck $ prop_sGEq_correct
+  
