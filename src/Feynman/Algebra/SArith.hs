@@ -176,7 +176,7 @@ sMult s t = setWidth v n where
 --
 --   If /s/ >= /t/, then s - t else s
 sModRed1 :: MVar v => SUInt v -> SUInt v -> SUInt v
-sModRed1 s t = ite (head $ sGTEq s t) (sMinus s t) s
+sModRed1 s t = ite (sGEq s t) (sMinus s t) s
 
 {---------------------------
  Comparison operators
@@ -201,23 +201,39 @@ sLT' s t = singleton . foldr (+) 0 $ cases
   b3 b2 b1 b0
 
   a < b ==> (a3 < b3) xor ( (a3 == b3) and [a0, a1, a2] < [b0, b1, b2] )
+  truncates second argument
 -}
-sLT :: MVar v => SUInt v -> SUInt v -> SUInt v
-sLT s t = singleton $ f (reverse s) (reverse (setWidth t (length s)))
+compByIndex :: MVar v => (SBool v -> SBool v -> SBool v) -> SUInt v -> SUInt v -> SBool v
+compByIndex f s t = go (reverse s) (reverse (setWidth t (length s)))
   where
-    lt p q          = (1+p)*q
-    f [a] [b]       = lt a b
-    f (a:as) (b:bs) = lt a b + (iff a b * f as bs)
-    iff p q         = 1 + p + q 
+    go [a] [b]       = f a b
+    go (a:as) (b:bs) = f a b + (iff a b * go as bs)
+    iff p q          = 1 + p + q
 
-sEq :: MVar v => SUInt v -> SUInt v -> SUInt v
-sEq s t = singleton . foldl (*) 1 $ zipWith iff s t
+sLT :: MVar v => SUInt v -> SUInt v -> SBool v 
+sLT = compByIndex lt
+  where
+    lt p q = (1+p)*q
+
+sLEq :: MVar v => SUInt v -> SUInt v -> SBool v 
+sLEq = compByIndex leq
+  where
+    leq p q = 1 + p*(1+q)
+
+sGT :: MVar v => SUInt v -> SUInt v -> SBool v 
+sGT = compByIndex gt
+  where
+    gt p q = p*(1+q)
+
+sGEq :: MVar v => SUInt v -> SUInt v -> SBool v 
+sGEq = compByIndex geq
+  where
+    geq p q = (1+p)*q + 1
+
+sEq :: MVar v => SUInt v -> SUInt v -> SBool v
+sEq s t = foldl (*) 1 $ zipWith iff s t
   where
     iff p q = 1 + p + q
-
--- Stub
-sGTEq :: MVar v => SUInt v -> SUInt v -> SUInt v
-sGTEq s t = sOr (sEq s t) (sLT t s)
 
 {---------------------------
  Testing
