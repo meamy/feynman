@@ -99,6 +99,20 @@ unF :: Var -> String
 unF (FVar s) = s
 unF _        = error "Not a free variable"
 
+-- | Generic input variables as polynomials
+x0,x1,x2,x3 :: SBool Var
+x0 = ofVar $ IVar 0
+x1 = ofVar $ IVar 1
+x2 = ofVar $ IVar 2
+x3 = ofVar $ IVar 3
+
+-- | Generic path variables as polynomials
+y0,y1,y2,y3 :: SBool Var
+y0 = ofVar $ PVar 0
+y1 = ofVar $ PVar 1
+y2 = ofVar $ PVar 2
+y3 = ofVar $ PVar 3
+   
 {-----------------------------------
  Path sums
  -----------------------------------}
@@ -339,6 +353,11 @@ eta = Pathsum 0 0 2 1 0 [ofVar (PVar 0), ofVar (PVar 0)]
 epsilon :: (Eq g, Abelian g) => Pathsum g
 epsilon = Pathsum 2 2 0 1 p []
   where p = lift $ ofVar (PVar 0) * (ofVar (IVar 0) + ofVar (IVar 1))
+
+-- | Sum up to 1
+unitsum :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+unitsum = Pathsum 1 0 0 1 ((-constant (half * half)) + distribute half (ofVar (PVar 0))) []
+
 
 {----------------------------
  Matrices
@@ -738,65 +757,55 @@ channelize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 channelize sop = tensor (conjugate sop) sop
 
 -- | Construct a controlled path sum
-controlled :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
-controlled sop@(Pathsum a b c d e f) = Pathsum a (b+1) (c+1) d e' f' where
-  shift   = shiftI 1
-  x       = ofVar $ IVar 0
-  e'      = (lift x)*(renameMonotonic shift e)
-  f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
-  g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)
+controlled :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Pathsum g
+controlled sop = go $ rebalance sop where
+  go (Pathsum a b c d e f) = Pathsum a (b+1) (c+1) d e' f' where
+    shift   = shiftI 1
+    x       = ofVar $ IVar 0
+    e'      = (lift x)*(renameMonotonic shift e) + nCorr
+    f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
+    g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)
+    nCorr   =
+      let cnst = distribute (power (toInteger d) (-(half * half))) (1 + x)
+          tms  = [distribute half ((1 + x)*(ofVar $ PVar i)) | i <- [0..d-1]]
+      in
+        foldr (+) cnst tms
 
-controlledN :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
-controlledN 0 sop = sop
-controlledN n sop = Pathsum a (b+n) (c+n) d e' f' where
-  Pathsum a b c d e f = until balanced balancePathsum sop
-  shift               = shiftI n
-  xs                  = map (\i -> ofVar $ IVar i) $ [0..n-1]
-  prodxs              = foldr (*) 1 xs
-  e'                  = (lift prodxs) * (renameMonotonic shift e) 
-                        + (foldr (+) 0 . replicate a $ (distribute (-half*half) (1 + prodxs)))
-                        + (foldr (+) 0 . map (\i -> distribute half . lift $ (1 + prodxs) * (ofVar $ PVar i) ) $ [0..a-1])
-  f'                  = map lift xs ++ (map g . zip [n..] . map (renameMonotonic shift) $ f)
-  g (i,y)             = (ofVar $ IVar i) + prodxs*((ofVar $ IVar i) + y)
-
-  balanced (Pathsum a _ _ d _ _) = a == d
-  balancePathsum sop@(Pathsum a _ _ d _ _)
-    | a < d  = sop <> oneA
-    | a > d  = sop <> oneD
+-- | Rebalances a sum over \(Z_{2^k}\) so that the normalization factor is \(sqrt{2}^{-k}\)
+rebalance :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Pathsum g
+rebalance sop@(Pathsum a _ _ d _ _)
+    | a < d  = (iterate (<> addA) sop)!!(d - a)
+    | a > d  = (iterate (<> addD) sop)!!(a - d)
     | a == d = sop
-  oneA = Pathsum 2 0 0 1 0 []
-  oneD = Pathsum 1 0 0 2 ( distribute (half * half) (ofVar $ PVar 0)
-                         + distribute (half * half) (ofVar $ PVar 0)
-                         + distribute (half * half) (ofVar $ PVar 0)
-                         + distribute (half * half) (ofVar $ PVar 1)
-                         + (constant (-half))) []
+    where
+      addA = Pathsum 2 0 0 1 0 []
+      addD = Pathsum 1 0 0 2 e []
+      e = distribute (power 3 $ half * half) (ofVar $ PVar 0) +
+          distribute (half * half) (ofVar $ PVar 1) +
+          constant (-half)
 
--- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
---   and the dimensions match.
-plusMaybe :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Maybe (Pathsum g)
-plusMaybe sop sop'
-  | inDeg sop  /= inDeg sop'                                       = Nothing
-  | outDeg sop /= outDeg sop'                                      = Nothing
-  | (sde sop) + 2*(pathVars sop') /= (sde sop') + 2*(pathVars sop) = Nothing
-  | otherwise = Just $ Pathsum sde' inDeg' outDeg' pathVars' phasePoly' outVals'
-  where sde'       = (sde sop) + 2*(pathVars sop')
-        inDeg'     = inDeg sop
-        outDeg'    = outDeg sop
-        pathVars'  = (pathVars sop) + (pathVars sop') + 1
-        y          = ofVar $ PVar (pathVars' - 1)
-        phasePoly' = (lift y)*(phasePoly sop) +
-                     (lift (1+y))*(renameMonotonic shift $ phasePoly sop')
-        outVals'   = map (\(a,b) -> b + y*(a + b)) $
-                       zip (outVals sop) (map (renameMonotonic shift) $ outVals sop')
-        shift x    = case x of
-          PVar i -> PVar $ i + (pathVars sop)
-          _      -> x
+-- | Construct the sum of two path sums
+plus :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Pathsum g -> Pathsum g
+plus sop sop'
+  | inDeg sop  /= inDeg sop'  = error "Incompatible dimensions (plus)"
+  | outDeg sop /= outDeg sop' = error "Incompatible dimensions (plus)"
+  | otherwise                 = sumUp $ unify (rebalance sop) (rebalance sop') where
 
--- | Construct the sum of two path sums. Raises an error if the sums are incompatible
-plus :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Pathsum g
-plus sop sop' = case plusMaybe sop sop' of
-  Nothing    -> error "Incompatible path sums"
-  Just sop'' -> sop''
+      unify sop sop' = case compare (sde sop) (sde sop') of
+        LT -> (pump sop (sde sop' - sde sop), sop')
+        GT -> (sop, pump sop' (sde sop - sde sop'))
+        EQ -> (sop, sop')
+
+      sumUp (sop, sop') = Pathsum a b c d e f where
+        z = ofVar (PVar (d - 1))
+        a = sde sop + 1
+        b = inDeg sop
+        c = outDeg sop
+        d = pathVars sop + 1
+        e = (lift $ 1 + z)*(phasePoly sop) + (lift z)*(phasePoly sop')
+        f = map (\(a,b) -> (1 + z)*a + z*b) $ zip (outVals sop) (outVals sop')
+
+      pump sop k = foldr (\_ -> (<> unitsum)) sop $ replicate k ()
 
 -- | Compose two path sums in parallel
 tensor :: (Eq g, Num g) => Pathsum g -> Pathsum g -> Pathsum g
@@ -846,10 +855,6 @@ times sop sop' = case timesMaybe sop sop' of
 
 infixr 5 .>
 
--- | Scale the normalization factor
-renormalize :: Int -> Pathsum g -> Pathsum g
-renormalize k (Pathsum a b c d e f) = Pathsum (a + k) b c d e f
-
 -- | Embed a path sum into a larger space with a specified input and
 --   output embedding.
 embed :: (Eq g, Abelian g) => Pathsum g -> Int -> (Int -> Int) -> (Int -> Int) -> Pathsum g
@@ -862,6 +867,32 @@ embed sop n embedIn embedOut
       mOut = outDeg sop
       outs = map embedOut [0..mOut-1]
       outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
+
+-- | Apply a pathsum representing a linear operator to a path sum on the given indices
+applyOn :: (Eq g, Abelian g) => Pathsum g -> [Int] -> Pathsum g -> Pathsum g
+applyOn g xs sop
+  | inDeg g /= outDeg g  = error "ApplyOn: input & output dimensions don't match"
+  | length xs /= inDeg g = error "ApplyOn: Index list not equal to in degree"
+  | outDeg sop < inDeg g = error "ApplyOn: Can't apply operator on a smaller space"
+  | otherwise            = sop .> embeddedG where
+      embeddedG = embed g (outDeg sop - inDeg g) embedding embedding
+      embedding = \i -> xs!!i
+
+-- | Apply a controlled pathsum
+applyControlled :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> [Int] -> Pathsum g -> Pathsum g
+applyControlled g ctrl xs sop
+  | inDeg g /= outDeg g      = error "ApplyOn: input & output dimensions don't match"
+  | length xs /= inDeg g     = error "ApplyOn: Index list not equal to in degree"
+  | outDeg sop < inDeg g + 1 = error "ApplyOn: Can't apply operator on a smaller space"
+  | otherwise                = sop .> embeddedCtrlG where
+      embeddedCtrlG = embed (controlled g) (outDeg sop - (inDeg g + 1)) embedding embedding
+      embedding     = \i -> (ctrl:xs)!!i
+
+-- | Apply a pathsum controlled on a predicate
+applyPControlled :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> SBool Var -> [Int] -> Pathsum g -> Pathsum g
+applyPControlled g pred xs sop = discard (outDeg sop) $ controlledG where
+  controlledG = applyControlled g (outDeg sop) xs sop'
+  sop'        = sop { outDeg = outDeg sop + 1, outVals = outVals sop ++ [pred] }
 
 -- | Drop a qubit
 discard :: Eq g => Int -> Pathsum g -> Pathsum g
@@ -881,7 +912,7 @@ instance (Eq g, Num g) => Monoid (Pathsum g) where
   mempty  = Pathsum 0 0 0 0 0 []
   mappend = (<>)
 
-instance (Eq g, Abelian g) => Num (Pathsum g) where
+instance (Eq g, Abelian g, Dyadic g) => Num (Pathsum g) where
   (+)                          = plus
   (*)                          = (flip times)
   negate (Pathsum a b c d e f) = Pathsum a b c d (lift 1 + e) f
