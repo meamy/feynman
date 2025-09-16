@@ -11,7 +11,7 @@ module Feynman.Algebra.SArith where
 
 import Data.Maybe (isJust, fromJust)
 import Data.Bits
-import Data.List (unfoldr, singleton)
+import Data.List (unfoldr)
 import Data.Word
 
 import Test.QuickCheck hiding ((.&.))
@@ -87,7 +87,7 @@ indicatorSum f s t = foldr (zipWith (+)) (repeat 0) $ zipWith (\l ind -> map (in
 
 -- | If-then-else
 ite :: MVar v => SBool v -> SUInt v -> SUInt v -> SUInt v
-ite p = zipWith (\a b -> (1 + p)*a + p*b) 
+ite p = zipWith (\a b -> p*a + (1 + p)*b) 
 
 {---------------------------
  Bitwise operators
@@ -138,7 +138,7 @@ sRRot = indicatorSum rrot
     rrot (a:x) = x ++ [a]
 
 sPopcount :: MVar v => SUInt v -> SUInt v
-sPopcount s = foldl sPlus (replicate (length s) 0) . map singleton $ s
+sPopcount s = foldl sPlus (replicate (length s) 0) $ map (\a -> [a]) $ s
 
 {---------------------------
  Arithmetic operators
@@ -171,12 +171,37 @@ sMult s t = setWidth v n where
   v = foldr sPlus (makeSUInt 0 (2*n)) . map (\i -> setWidth i (2*n)) $ shifts
   shifts = [replicate i 0 ++ map (*p) t | (i,p) <- zip [0..] s]
 
+-- | Division mod 2^n. Performs binary long division
+sDiv :: MVar v => SUInt v -> SUInt v -> (SUInt v, SUInt v)
+sDiv s t | t == makeSUInt 0 (getWidth t) = error "Divide by 0"
+         | otherwise                     = go ([], makeSUInt 0 n) (n-1) where
+             n          = getWidth s
+             go (q,r) (-1) = (q,r)
+             go (q,r) i    =
+               let r' = (s!!i):(setWidth r (n-1)) in
+                 go ((sGEq r' t):q, ite (sGEq r' t) (sMinus r' t) r') (i-1)
+
+-- | Quotient mod 2^n
+sQuot :: MVar v => SUInt v -> SUInt v -> SUInt v
+sQuot s t = fst $ sDiv s t
+
+-- | Quotient mod 2^n
+sMod :: MVar v => SUInt v -> SUInt v -> SUInt v
+sMod s t = snd $ sDiv s t
+
+-- | Power mod 2^n
+sPow :: MVar v => SUInt v -> SUInt v -> SUInt v
+sPow s t = foldr sMult (makeSUInt 1 n) powers where
+  n       = getWidth s
+  powers  = map (\(s,t) -> ite t s (makeSUInt 1 n)) $ zip squares t
+  squares = [s] ++ [sMult x x | x <- squares]
+
 -- | Singular reduction of an integer mod M. Useful for windowed
 --   modular arithmetic when you know i is in the range [0..k*M]
 --
 --   If /s/ >= /t/, then s - t else s
-sModRed1 :: MVar v => SUInt v -> SUInt v -> SUInt v
-sModRed1 s t = ite (sGEq s t) (sMinus s t) s
+sMod1 :: MVar v => SUInt v -> SUInt v -> SUInt v
+sMod1 s t = ite (sGEq s t) (sMinus s t) s
 
 {---------------------------
  Comparison operators
@@ -184,17 +209,6 @@ sModRed1 s t = ite (sGEq s t) (sMinus s t) s
  <, <=, ==, >, >=
  ----------------------------}
 
-
--- | uint less than (<)
---   casts to size of first arg?
-sLT' :: MVar v => SUInt v -> SUInt v -> SUInt v
-sLT' s t = singleton . foldr (+) 0 $ cases
-  where
-    len   = length s
-    cases = [ p*q | j <- [0..len-1],
-                    i <- [0..j-1],
-                    let p = s !! i,
-                    let q = setWidth t len !! j ]
 
 {-
   a3 a2 a1 a0
@@ -259,16 +273,16 @@ prop_sOr_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sOr (liftWord a) (liftWord b)) == a .|. b
 
 -- fails for a=0
-prop_sNot_correct a = (a > 0) ==>
+prop_sNot_correct a = (a >= 0) ==>
   forceWord (sNot (liftWord a)) == complement a
 
-prop_sLShift_correct a b = (a > 0) && (b > 0) ==>
+prop_sLShift_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sLShift (liftWord a) (liftWord b)) == a `shiftL` (fromIntegral b)
 
 prop_sRShift_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sRShift (liftWord a) (liftWord b)) == a `shiftR` (fromIntegral b)
 
-prop_sLRot_correct a b = (a > 0) && (b > 0) ==>
+prop_sLRot_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sLRot (liftWord a) (liftWord b)) == a `rotateL` (fromIntegral b)
 
 prop_sRRot_correct a b = (a >= 0) && (b >= 0) ==>
@@ -288,6 +302,15 @@ prop_sMinus_correct a b = (a >= 0) && (b >= 0) ==>
 
 prop_sMult_correct a b = (a >= 0) && (b >= 0) ==>
   forceWord (sMult (liftWord a) (liftWord b)) == a * b
+
+prop_sQuot_correct a b = (a >= 0) && (b > 0) ==>
+  forceWord (sQuot (liftWord a) (liftWord b)) == a `quot` b
+
+prop_sMod_correct a b = (a >= 0) && (b > 0) ==>
+  forceWord (sMod (liftWord a) (liftWord b)) == a `mod` b
+
+prop_sPow_correct a b = (a >= 0) && (b >= 0) ==>
+  forceWord (sPow (liftWord a) (liftWord b)) == a ^ b
 
 prop_sLT_correct a b = (a >= 0) && (b >= 0) ==>
   forceBool (sLT (liftWord a) (liftWord b)) == (a < b)
@@ -317,6 +340,9 @@ tests _ = do
   quickCheck $ prop_sNeg_correct
   quickCheck $ prop_sMinus_correct
   quickCheck $ prop_sMult_correct
+  quickCheck $ prop_sQuot_correct
+  quickCheck $ prop_sMod_correct
+  quickCheck $ prop_sPow_correct
   quickCheck $ prop_sLT_correct
   quickCheck $ prop_sLEq_correct
   quickCheck $ prop_sGT_correct
