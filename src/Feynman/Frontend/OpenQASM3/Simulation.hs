@@ -10,7 +10,7 @@ import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Core (ID)
 import Feynman.Frontend.OpenQASM3.Core
 import Feynman.Algebra.Polynomial.Multilinear (SBool)
-import Data.Bits (testBit, xor)
+import Data.Bits (testBit, xor, (.>>.), (.&.))
 import Data.Complex (realPart, imagPart)
 
 data Env a = Env {
@@ -352,8 +352,8 @@ simFor (id, typ) expr stmt = do
       simStmt stmt
       popEnv
 
-listOp :: BinOp -> [SBool Var] -> [SBool Var] -> [SBool Var]
-listOp bop = case bop of
+listOpOfBOp :: BinOp -> [SBool Var] -> [SBool Var] -> [SBool Var]
+listOpOfBOp bop = case bop of
   AndOp    -> sAnd
   OrOp     -> sOr
   XorOp    -> sXor
@@ -361,18 +361,29 @@ listOp bop = case bop of
   RShiftOp -> sRShift
   LRotOp   -> sLRot
   RRotOp   -> sRRot
-  EqOp     -> sEq
-  LTOp     -> sLT
-  LEqOp    -> error "TODO"
-  GTOp     -> error "TODO"
-  GEqOp    -> error "TODO"
   PlusOp   -> sPlus
-  MinusOp  -> error "TODO"
-  TimesOp  -> error "TODO"
-  DivOp    -> error "TODO"
-  ModOp    -> error "TODO"
-  PowOp    -> error "TODO"
+  MinusOp  -> sMinus
+  TimesOp  -> sMult 
+  DivOp    -> sQuot
+  ModOp    -> sMod
+  PowOp    -> sPow
   ConcatOp -> error "++ not supported"
+  _        -> error "given bop does not output list of polynomials"
+
+boolOpOfBop :: BinOp -> [SBool Var] -> [SBool Var] -> SBool Var
+boolOpOfBop bop = case bop of
+  EqOp  -> sEq
+  LTOp  -> sLT 
+  LEqOp -> sLEq
+  GTOp  -> sGT
+  GEqOp -> sGEq
+  _     -> error "given bop does not output boolean polynomial"
+
+listOpOfUop :: UOp -> [SBool Var] -> [SBool Var]
+listOpOfUop uop = case uop of
+  NegOp    -> sNot
+  UMinusOp -> sNeg
+  _        -> error "given uop does not output list of polynomials"
 
 simAssign :: AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign path Nothing expr = case path of
@@ -385,15 +396,13 @@ simAssign path Nothing expr = case path of
 
 simAssign path (Just bop) expr = case path of
   AVar id -> do
-    l1 <- polyListOfExpr $ EVar id
-    l2 <- polyListOfExpr expr
     offset <- getOffset id
-    let newList = listOp bop l1 l2
+    newList <- polyListOfExpr $ EBOp (EVar id) bop expr
     modify $ f newList offset
   where
     f l offset env@(Env ps@(Pathsum _ _ _ _ _ out) _ _) =
       let newOut = take offset out ++ l ++ drop (offset + length l) out in
-      env {pathsum = ps { outVals = newOut } }
+        env {pathsum = ps { outVals = newOut } }
 
 {-
 simAssign path (Just bop) expr = case path of
@@ -408,20 +417,50 @@ simAssign path (Just bop) expr = case path of
           polyListAnd l1 l2 
 -}
 
-polyListOfExpr :: Expr a -> State (Env a) [SBool Var]
-polyListOfExpr expr = case expr of
-  EVar vid -> do
+polyOfExpr :: Expr a -> State (Env a) (SBool Var)
+polyOfExpr expr = case expr of
+  EVar vid     -> do
     maybeBind <- searchBinding vid
     case maybeBind of
-      Nothing -> error "id not bound"
+      Nothing                    -> error "id not bound"
       Just (Symbolic typ offset) -> case typ of
-        TCBit          -> gets $ g offset 1
+        TCBit -> gets $ g offset
+        _     -> error "symbolic type not polynomial list"
+  EIndex e1 e2 -> do
+    l <- polyListOfExpr e1
+    e2' <- reduceExpr e2
+    case e2' of
+      EInt i -> return $ l !! i
+      _      -> error "expr not int value"
+  EBool True  -> return 1
+  EBool False -> return 0
+  EBOp e1 bop e2 -> do             -- need to handle cases where e1 and e2 are bool type
+    l1 <- polyListOfExpr e1
+    l2 <- polyListOfExpr e2
+    return $ (boolOpOfBop bop) l1 l2
+  where
+    g j (Env (Pathsum _ _ _ _ _ out) _ _) = out !! j
+
+polyListOfExpr :: Expr a -> State (Env a) [SBool Var]
+polyListOfExpr expr = case expr of
+  EVar vid       -> do
+    maybeBind <- searchBinding vid
+    case maybeBind of
+      Nothing                    -> error "id not bound"
+      Just (Symbolic typ offset) -> case typ of
         TCReg (EInt n) -> gets $ g offset n
         TUInt (EInt n) -> gets $ g offset n
-  EInt n   -> error "TODO" 
+        _              -> error "symbolic type not polynomial list"
+  EInt n         -> return $ makeSNat . toInteger $ n
+  EBOp e1 bop e2 -> do
+    l1 <- polyListOfExpr e1
+    l2 <- polyListOfExpr e2
+    return $ (listOpOfBOp bop) l1 l2
+  EUOp uop e     -> do
+    l <- polyListOfExpr e
+    return $ (listOpOfUop uop) l
   where
     g start len (Env (Pathsum _ _ _ _ _ out) _ _) = take len . drop start $ out
-
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
 declareSymbolic id typ size init = do
@@ -429,11 +468,13 @@ declareSymbolic id typ size init = do
   addBinding id (Symbolic typ offset)
 
 declareScalar :: ID -> Type a -> Maybe (Expr a) -> State (Env a) ()
-declareScalar id typ expr = addBinding id (Scalar typ expr')
+declareScalar id typ maybeExpr = do
+  expr <- getExpr
+  addBinding id (Scalar typ expr)
   where
-    expr' = case expr of
-      Just e  -> e            -- eval first?
-      Nothing -> case typ of
+    getExpr = case maybeExpr of
+      Just e  -> reduceExpr e            -- eval first?
+      Nothing -> return $ case typ of
         TAngle -> EFloat 0 
         TBool  -> EBool False -- true?
         TInt   -> EInt 0
@@ -536,6 +577,8 @@ simExpr (ECall [] fid args) = do
 getGatePS :: ID -> [Expr a] -> State (Env a) (Pathsum DMod2)
 getGatePS id params = case (id, params) of
   ("x", []) -> return xgate
+
+controlledN = error "TODO"
 
 applyGate :: Bool -> Pathsum DMod2 -> [Int] -> Pathsum DMod2 -> [Int] -> Pathsum DMod2
 applyGate density ps controls gate@(Pathsum _ b _ _ _ _) args
