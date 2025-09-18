@@ -324,6 +324,9 @@ prop_sGT_correct a b = (a >= 0) && (b >= 0) ==>
 prop_sGEq_correct a b = (a >= 0) && (b >= 0) ==>
   forceBool (sGEq (liftWord a) (liftWord b)) == (a >= b)
 
+prop_sEq_correct a b = (a >= 0) && (b >= 0) ==>
+  forceBool (sEq (liftWord a) (liftWord b)) == (a == b)
+
 tests :: () -> IO ()
 tests _ = do
   quickCheck $ prop_SUInt_faithful
@@ -347,4 +350,4 @@ tests _ = do
   quickCheck $ prop_sLEq_correct
   quickCheck $ prop_sGT_correct
   quickCheck $ prop_sGEq_correct
-  
+  quickCheck $ prop_sEq_correct
