@@ -3,6 +3,7 @@ module Feynman.Frontend.OpenQASM3.Simulation where
 import Control.Monad.State.Strict
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Maybe (fromJust)
 import qualified Data.List as List
 import Feynman.Algebra.Base (DMod2)
 import Feynman.Algebra.SArith
@@ -16,7 +17,8 @@ import Data.Complex (realPart, imagPart)
 data Env a = Env {
   pathsum :: Pathsum DMod2,
   binds :: [Map ID (Binding a)],
-  density :: Bool
+  density :: Bool,
+  qwidth :: Int                  -- number of allocated qubits
 } deriving (Show)
 
 data Binding a =
@@ -25,11 +27,21 @@ data Binding a =
   | Block { typ :: Type a, params :: [(ID, Type a)], returns :: Maybe (Type a), body :: Stmt a }
   deriving (Show)
 
+getQWidth :: State (Env a) Int
+getQWidth = gets qwidth
+
+getCWidth :: State (Env a) Int
+getCWidth = gets go
+  where
+    go (Env ps _ False qwidth) = outDeg ps - qwidth
+    go (Env ps _ True  qwidth) = outDeg ps - 2*qwidth
+
+{-
 getEnvSize :: State (Env a) Int
 getEnvSize = gets go
   where
-    go (Env ps _ False) = outDeg ps 
-    go (Env ps _ True)  = outDeg ps `div` 2
+    go (Env ps _ i)  = (outDeg ps - i) `div` 2
+-}
 
 getOffset :: ID -> State (Env a) Int
 getOffset id = do
@@ -62,7 +74,7 @@ addBinding id bind = do
   let ~(b:bs) = binds env
   put $ env { binds = Map.insert id bind b : bs }
 
--- action returns offset of allocated register
+{-
 allocatePathsum :: ID -> Int -> Maybe [SBool String] -> State (Env a) Int
 allocatePathsum v size init = do
   offset <- getEnvSize
@@ -77,22 +89,69 @@ allocatePathsum v size init = do
       where
         embedded = embed ps (size * 2) (\i -> i) (\i -> if i < j then i else i + size)
         newps    = ket (qbits ++ qbits) .> embedded
+-}
+
+-- TODO: size redundant if list given. replace with Either?
+allocateQBits :: ID -> Int -> Maybe [SBool String] -> State (Env a) Int
+allocateQBits v size init = do
+  offset <- getQWidth
+  modify $ allocateQ
+  return $ offset 
+  where
+    qbits                                = case init of
+      Nothing   -> ket $ replicate size 0
+      Just list -> ket $ list
+    allocateQ env@(Env ps _ density w) = env { pathsum = newPs, qwidth = w + size }
+      where
+        psSize   = outDeg ps
+        newOuts  = if density then qbits <> qbits else qbits
+        embedded = embed newOuts psSize (\i -> i) (\i -> if i < size then i + w else i + 2*w)
+        newPs    = ps .> embedded
+
+allocateCBits :: ID -> Int -> Maybe [SBool String] -> State (Env a) Int
+allocateCBits v size init = do
+  offset <- getCWidth
+  modify $ allocateC
+  return $ offset 
+  where
+    bits                                 = case init of
+      Nothing   -> ket $ replicate size 0
+      Just list -> ket $ list
+    allocateC env@(Env ps _ density w) = env { pathsum = newPs }
+      where
+        psSize   = outDeg ps
+        embedded = embed bits psSize (\i -> i) (\i -> i + psSize)
+        newPs    = ps .> embedded
+
+measurePS :: Int -> Env a -> Env a
+measurePS _      env@(Env _ _ False _)      = error "not density matrix"
+measurePS offset env@(Env ps _ True qwidth) = env { pathsum = ps' }
+  where
+    ps' = applyMeasure offset (offset + qwidth) ps
 
 bindParams :: [(ID, Type a)] -> [Expr a] -> State (Env a) ()
 bindParams params args = mapM_ bindParam $ zip params args
 
 -- no type checking
 bindParam :: ((ID, Type a), Expr a) -> State (Env a) ()
-bindParam ((pid, ptype), arg) = case arg of
-  EVar eid            -> do
-    offset <- getOffset eid
+bindParam ((pid, ptype), arg) = case (ptype, arg) of
+  (TQBit, _)                 -> do
+    offset <- evalOffset arg
     addBinding pid $ Symbolic ptype offset
-  EIndex (EVar eid) i -> do
-    offset <- getOffset eid
-    index <- simInt i
-    addBinding pid $ Symbolic ptype (offset + index)
-  e                   ->
-    addBinding pid $ Scalar ptype e       --need to evaluate e first
+  (TCBit, _)                 -> do
+    offset <- evalOffset arg
+    addBinding pid $ Symbolic ptype offset
+  (TQReg (EInt n), EVar eid) -> do
+    offset <- evalOffset arg
+    addBinding pid $ Symbolic ptype offset
+  (TCReg (EInt n), EVar eid) -> do
+    offset <- evalOffset arg
+    addBinding pid $ Symbolic ptype offset
+  (TUInt (EInt n), EVar eid) -> do
+    offset <- evalOffset arg
+    addBinding pid $ Symbolic ptype offset
+  (_, _)                     ->
+    addBinding pid $ Scalar ptype arg
   
 evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
@@ -104,8 +163,8 @@ evalAngle = error "TODO"
 evalFloat = error "TODO"
 evalComplex = error "TODO"
 
-initEnv :: Env a
-initEnv = Env (ket []) [Map.empty] False
+initEnv :: Bool -> Env a
+initEnv b = Env (ket []) [Map.empty] b 0
 
 pushEmptyEnv :: State (Env a) ()
 pushEmptyEnv =
@@ -186,7 +245,7 @@ reduceExpr expr = case expr of
       (AndOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 && b2
       (OrOp    , EBool b1 , EBool b2 ) -> return $ EBool $ b1 || b2
       (XorOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 `xor` b2
-      (LShiftOp, _        , _        ) -> error "check: should work liek rotl?"
+      (LShiftOp, _        , _        ) -> error "check: should work like rotl?"
       (RShiftOp, _        , _        ) -> error "check: should work like rotr?"
       (LRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
       (RRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
@@ -227,7 +286,6 @@ floatOf expr = case expr of
   EBool False -> 0.0
   EBool True  -> 1.0
   _           -> error "cast to float forbidden or not handled"
-
 
 simBool :: Expr a -> State (Env a) Bool
 simBool expr = case expr of
@@ -306,84 +364,68 @@ simList expr = case expr of
       Nothing -> return [ EInt i | i <- [init'..end']]
   _ -> error "not a list"
 
-simStmt :: Stmt a -> State (Env a) ()
-simStmt stmt = case stmt of
-  SInclude _ _               -> return ()
-  SSkip _                    -> return ()
-  SBarrier _ _               -> return ()
-  SPragma _ _                -> return ()
-  SBlock _ stmts             -> mapM_ simStmt stmts
-  SWhile _ cond stmt         -> simWhile cond stmt
-  SIf _ cond stmtT stmtE     -> simIf 1 cond stmtT stmtE
-  
-  SReset _ expr              -> simReset expr
-  SDeclare _ decl            -> simDeclare decl
-  SAssign _ p bop expr       -> simAssign p bop expr
-
-  SAnnotated _ _ stmt        -> simStmt stmt
-  SFor _ (id, typ) expr stmt -> simFor 1 (id, typ) expr stmt
-  SReturn _ _                -> return ()
-  SExpr _ expr               -> simExpr 1 expr
-
-simCStmt :: SBool Var -> Stmt a -> State (Env a) ()
-simCStmt p stmt = case stmt of
-  SInclude _ _               -> error "invalid stmt in symbolic branch"
-  SSkip _                    -> return ()
-  SBarrier _ _               -> return ()
-  SPragma _ _                -> error "invalid stmt in symbolic branch"
-  SBlock _ stmts             -> mapM_ (simCStmt p) stmts
-  SWhile _ cond stmt         -> error "invalid stmt in symbolic branch"
+simStmt :: SBool Var -> Stmt a -> State (Env a) (Maybe (Expr a))
+simStmt p stmt = case stmt of
+  SInclude _ _               -> return Nothing
+  SSkip _                    -> return Nothing
+  SBarrier _ _               -> return Nothing
+  SPragma _ _                -> return Nothing
+  SBlock _ stmts             -> simBlock p stmts
+  SWhile _ cond stmt         -> simWhile p cond stmt
   SIf _ cond stmtT stmtE     -> simIf p cond stmtT stmtE
   
-  SReset _ expr              -> error "invalid stmt in symbolic branch"
-  SDeclare _ decl            -> error "invalid stmt in symbolic branch"
-  SAssign _ p bop expr       -> error "invalid stmt in symbolic branch"
+  SReset _ expr              -> simReset expr >> return Nothing
+  SDeclare _ decl            -> if p == 1 then
+                                  simDeclare decl >> return Nothing
+                                else
+                                  error "invalid stmt in symbolic branch"
+  SAssign _ path bop expr    -> simAssign p path bop expr >> return Nothing
 
-  SAnnotated _ _ stmt        -> simCStmt p stmt
+  SAnnotated _ _ stmt        -> simStmt p stmt
   SFor _ (id, typ) expr stmt -> simFor p (id, typ) expr stmt
-  SReturn _ _                -> error "invalid stmt in symbolic branch"
-  SExpr _ expr               -> simExpr p expr
+  SReturn _ e                -> liftM Just $ reduceExpr e
+  SExpr _ expr               -> simExpr p expr >> return Nothing
 
-simWhile :: Expr a -> Stmt a -> State (Env a) ()
-simWhile cond stmt = do
-  cond' <- simBool cond
+simBlock :: SBool Var -> [Stmt a] -> State (Env a) (Maybe (Expr a))
+simBlock p = foldM f Nothing
+  where
+    f (Just r) _    = return $ Just r
+    f Nothing  stmt = simStmt p stmt
+
+simWhile :: SBool Var -> Expr a -> Stmt a -> State (Env a) (Maybe (Expr a))
+simWhile p cond stmt = do
+  cond' <- simBool cond --symbolic branching?
   case cond' of
     True  -> do
-      simStmt stmt
-      simWhile cond stmt
-    False -> return ()
+      ret <- simStmt p stmt
+      case ret of
+        Nothing -> simWhile p cond stmt
+        Just e  -> return $ Just e
+    False -> return Nothing
 
-simIf :: SBool Var -> Expr a -> Stmt a -> Stmt a -> State (Env a) ()
+simIf :: SBool Var -> Expr a -> Stmt a -> Stmt a -> State (Env a) (Maybe (Expr a))
 simIf p cond stmtT stmtE = do
   cond' <- reduceExpr cond
   case cond' of
-    EBool True  -> simCStmt p stmtT
-    EBool False -> simCStmt p stmtE
+    EBool True  -> simStmt p stmtT
+    EBool False -> simStmt p stmtE
     e           -> do
       q <- polyOfExpr e
-      simCStmt (p*q) stmtT
-      simCStmt (p*(1+q)) stmtE
+      simStmt (p*q) stmtT
+      simStmt (p*(1+q)) stmtE
 
-simFor :: SBool Var -> (ID, Type a) -> Expr a -> Stmt a -> State (Env a) ()
-simFor 1 (id, typ) expr stmt = do
-  list <- simList expr
-  mapM_ iter list
-  where
-    iter e = do
-      pushEmptyEnv
-      bindParam ((id, typ), e)
-      simStmt stmt
-      popEnv
-simFor :: SBool Var -> (ID, Type a) -> Expr a -> Stmt a -> State (Env a) ()
+simFor :: SBool Var -> (ID, Type a) -> Expr a -> Stmt a -> State (Env a) (Maybe (Expr a))
 simFor p (id, typ) expr stmt = do
   list <- simList expr
-  mapM_ iter list
+  foldM iter Nothing list
   where
-    iter e = do
+    iter (Just r) _ = return $ Just r
+    iter Nothing  e = do
       pushEmptyEnv
       bindParam ((id, typ), e)
-      simCStmt p stmt
+      ret <- simStmt p stmt
       popEnv
+      return ret 
 
 listOpOfBOp :: BinOp -> [SBool Var] -> [SBool Var] -> [SBool Var]
 listOpOfBOp bop = case bop of
@@ -425,7 +467,7 @@ exprOfPath path = case path of
 
 exprOfAssign :: AccessPath a -> Maybe BinOp -> Expr a -> Expr a
 exprOfAssign _    Nothing    expr = expr
-exprOfAssign path (Just bop) expr = EBop (exprOfPath path) bop expr
+exprOfAssign path (Just bop) expr = EBOp (exprOfPath path) bop expr
 
 simAssign :: SBool Var -> AccessPath a -> Maybe BinOp -> Expr a -> State (Env a) ()
 simAssign p path maybeBop expr = case path of
@@ -433,8 +475,9 @@ simAssign p path maybeBop expr = case path of
     maybeBind <- searchBinding id
     case maybeBind of
       Nothing                    -> error "id not bound"
-      Just (Scalar typ e)        -> if p == 1 then 
-                                      declareScalar id typ (Just $ reduceExpr e)
+      Just (Scalar typ e)        -> if p == 1 then do
+                                      e' <- reduceExpr e
+                                      declareScalar id typ (Just $ e')
                                     else
                                       error "bad symbolic branching" 
       Just (Symbolic typ offset) -> simSymbolicAssign p offset typ (exprOfAssign path maybeBop expr)
@@ -462,12 +505,13 @@ simSymbolicAssign p offset typ expr =
       polys <- polyListOfExpr expr
       modify $ f polys 
   where
-    f polyl env@(Env ps@(Pathsum _ _ _ _ _ out) _ _) =
-      let n       = length polyl
-          oldList = drop offset . take (offset + n) $ out
-          newList = zipWith (\old new -> p*new + (1+p)*old) oldList polyl
-          newOut  = take offset out ++ newList ++ drop (offset + n) out in
-        env { pathsum = ps { outVals = newOut } }
+    f polyl env@(Env ps@(Pathsum _ _ _ _ _ out) _ density qwidth) =
+      let n            = length polyl
+          (qreg, creg) = splitAt (if density then 2*qwidth else qwidth) out
+          oldList      = drop offset . take (offset + n) $ creg
+          newList      = zipWith (\old new -> p*new + (1+p)*old) oldList polyl
+          newCreg      = take offset creg ++ newList ++ drop (offset + n) creg in
+        env { pathsum = ps { outVals = qreg ++ newCreg } }
 
 {-
 simAssign path (Just bop) expr = case path of
@@ -503,8 +547,12 @@ polyOfExpr expr = case expr of
     l1 <- polyListOfExpr e1
     l2 <- polyListOfExpr e2
     return $ (boolOpOfBop bop) l1 l2
+  EMeasure expr -> do
+    offset <- evalOffset expr
+    modify $ measurePS offset
+    gets $ \env -> (!! offset) . outVals $ pathsum env
   where
-    g j (Env (Pathsum _ _ _ _ _ out) _ _) = out !! j
+    g j (Env (Pathsum _ _ _ _ _ out) _ _ qwidth) = out !! (j + qwidth)
 
 polyListOfExpr :: Expr a -> State (Env a) [SBool Var]
 polyListOfExpr expr = case expr of
@@ -525,12 +573,19 @@ polyListOfExpr expr = case expr of
     l <- polyListOfExpr e
     return $ (listOpOfUop uop) l
   where
-    g start len (Env (Pathsum _ _ _ _ _ out) _ _) = take len . drop start $ out
+    g start len (Env (Pathsum _ _ _ _ _ out) _ _ qwidth) = take len . drop (start + qwidth) $ out
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
 declareSymbolic id typ size init = do
-  offset <- allocatePathsum id size init
+  offset <- f id size init
   addBinding id (Symbolic typ offset)
+  where
+    f = case typ of
+      TCBit   -> allocateCBits
+      TCReg _ -> allocateCBits
+      TUInt _ -> allocateCBits
+      TQBit   -> allocateQBits
+      TQReg _ -> allocateQBits
 
 declareScalar :: ID -> Type a -> Maybe (Expr a) -> State (Env a) ()
 declareScalar id typ maybeExpr = do
@@ -618,68 +673,61 @@ bitVec n size = map f [0..size-1]
 
 stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
 
-simExpr :: SBool Var -> Expr a -> State (Env a) ()
-simExpr p (EStmt stmt) = simCStmt p stmt
-simExpr p (ECall [] fid args)
-  | fid `elem` stdlib  = case (fid, args) of
-    ("x", [arg]) -> do
-      gatePS <- getGatePS "x" []
-      offset <- evalOffset arg
-      env <- get
-      let ps' = applyPControlled gatePS p [offset] (pathsum env)
-      modify $ \env -> env { pathsum = ps' }
-    ("z", [arg]) -> do
-      gatePS <- getGatePS "z" []
-      offset <- evalOffset arg
-      env <- get
-      let ps' = applyPControlled gatePS p [offset] (pathsum env)
-      modify $ \env -> env { pathsum = ps' }
-      
-simExpr 1 (ECall [] fid args) = do
-  bind <- searchBinding fid
-  case bind of
-    Just (Block _ params _ body) -> do
-      pushEmptyEnv
-      bindParams params args
-      simStmt body
-      popEnv
-    Nothing                      -> error "binding not found"
+simStdGate :: SBool Var -> ID -> [Expr a] -> [Expr a] -> State (Env a) ()
+simStdGate p gid cparams args = do
+  gatePS <- getGatePS gid cparams
+  offsets <- mapM evalOffset args
+  env <- get
+  let ps' = applyPControlled gatePS p offsets (pathsum env)
+  modify $ \env -> env { pathsum = ps' }
+
+simExpr :: SBool Var -> Expr a -> State (Env a) (Maybe (Expr a))
+simExpr p (EStmt stmt) = simStmt p stmt
+simExpr p (ECall [] gid args)
+  | gid `elem` stdlib  = do
+      simStdGate p gid [] args
+      return Nothing
+    
 simExpr p (ECall [] fid args) = do
   bind <- searchBinding fid
+  args' <- (liftM $ map fromJust) $ mapM (simExpr p) args
   case bind of
     Just (Block _ params _ body) -> do
       pushEmptyEnv
-      bindParams params args
-      simCStmt p body
+      bindParams params args'
+      ret <- simStmt p body
       popEnv
+      return ret
     Nothing                      -> error "binding not found"
+
+simExpr p expr = liftM Just $ reduceExpr expr
 
 getGatePS :: ID -> [Expr a] -> State (Env a) (Pathsum DMod2)
 getGatePS id params = case (id, params) of
-  ("x", []) -> return xgate
-  ("z", []) -> return zgate
-
-controlledN = error "TODO"
-
-applyGate :: Bool -> Pathsum DMod2 -> [Int] -> Pathsum DMod2 -> [Int] -> Pathsum DMod2
-applyGate density ps controls gate@(Pathsum _ b _ _ _ _) args
-  | not $ null controls = applyGate density ps [] (controlledN (length controls) gate) (controls ++ args)
-  | length args == b    = applyGate' ps args
-  where
-    applyGate' :: Pathsum DMod2 -> [Int] -> Pathsum DMod2
-    applyGate' ps@(Pathsum _ _ c _ _ _) offsets
-      | not density = ps .> embed gate (c - b) f f
-      | density     = ps .> embed (channelize gate) (c - 2*b) g g
-      where
-        f, g :: Int -> Int
-        f = (!!) offsets
-        g = (!!) (offsets ++ map (+ c `div` 2) offsets)
+  ("x", [])   -> return $ xgate
+  ("y", [])   -> return $ ygate
+  ("z", [])   -> return $ zgate
+  ("h", [])   -> return $ hgate
+  ("cx", [])  -> return $ cxgate
+  ("cy", [])  -> return $ controlled ygate
+  ("cz", [])  -> return $ czgate
+  ("ch", [])  -> return $ controlled hgate 
+  ("id", [])  -> return $ identity 1
+  ("s", [])   -> return $ sgate
+  ("sdg", []) -> return $ sdggate
+  ("t", [])   -> return $ tgate
+  ("tdg", []) -> return $ tdggate
+  ("ccx", []) -> return $ ccxgate
+  _           -> error "TODO"
 
 simReset :: Expr a -> State (Env a) ()
 simReset = error "TODO"
 
 simStmts :: [Stmt a] -> State (Env a) ()
-simStmts = mapM_ simStmt
+simStmts = mapM_ $ simStmt 1
+
+simProgPure :: Prog a -> Env a
+simProgPure (Prog _ stmts) = execState (simStmts stmts) (initEnv False)
 
 simProg :: Prog a -> Env a
-simProg (Prog _ stmts) = execState (simStmts stmts) initEnv
+simProg (Prog _ stmts) = execState (simStmts stmts) (initEnv True)
