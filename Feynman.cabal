@@ -38,6 +38,7 @@ library
                        Feynman.Algebra.Polynomial.Multilinear,
                        Feynman.Algebra.Polynomial.Multilinear.Groebner
                        Feynman.Algebra.Pathsum.Balanced,
+                       Feynman.Algebra.SArith
 
                        Feynman.Synthesis.Phase,
                        Feynman.Synthesis.Reversible,
@@ -61,6 +62,7 @@ library
                        Feynman.Frontend.OpenQASM3.Chatty
                        Feynman.Frontend.OpenQASM3.Lexer
                        Feynman.Frontend.OpenQASM3.Parser
+                       Feynman.Frontend.OpenQASM3.Simulation
                        Feynman.Frontend.OpenQASM3.Syntax
                        Feynman.Frontend.OpenQASM3.Utils
                        Feynman.Frontend.OpenQASM3.Core

@@ -157,7 +157,11 @@ evalBool :: Expr a -> Maybe Bool
 evalBool = error "TODO"
 
 evalInt :: Expr a -> Maybe Int
-evalInt = error "TODO"
+evalInt expr = case expr of
+  EInt n -> Just n
+  EBool True -> Just 1
+  EBool False -> Just 0
+  _ -> Nothing
 
 evalAngle = error "TODO"
 evalFloat = error "TODO"
@@ -731,3 +735,9 @@ simProgPure (Prog _ stmts) = execState (simStmts stmts) (initEnv False)
 
 simProg :: Prog a -> Env a
 simProg (Prog _ stmts) = execState (simStmts stmts) (initEnv True)
+
+simulationResult :: Prog a -> String
+simulationResult prog = 
+  let env = simProgPure prog in
+    show (pathsum env)   
+       
