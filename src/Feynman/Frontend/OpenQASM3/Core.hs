@@ -225,8 +225,10 @@ translateExpr node = case node of
 
   S.Node S.IndexExpr [exprnode, idxnode] c -> do
     expr <- translateExpr exprnode
-    idx  <- translateExpr idxnode
-    return $ EIndex expr idx
+    idxs  <- inLst translateExpr idxnode
+    case idxs of
+      [idx] -> return $ EIndex expr idx
+      _     -> Left (Err $ "Error at " ++ (S.pp_source c) ++ ": Multiple indices unsupported")
 
   S.Node (S.UnaryOperatorExpr uop) [exprnode] c -> do
     op   <- translateUOp uop
@@ -519,6 +521,7 @@ translateBOp token = case token of
   S.GreaterEqualsToken   -> return GEqOp
   S.DoubleLessToken      -> return LShiftOp
   S.DoubleGreaterToken   -> return RShiftOp
+  S.DoubleEqualsToken    -> return EqOp
 
 -- | Translation of compound assignment operators
 translateCompoundAOp :: S.Token -> Either ErrMsg (Maybe BinOp)

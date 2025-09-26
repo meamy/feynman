@@ -241,7 +241,9 @@ sGEq :: MVar v => SUInt v -> SUInt v -> SBool v
 sGEq s t = 1 + sLT s t
 
 sEq :: MVar v => SUInt v -> SUInt v -> SBool v
-sEq s t = foldl (*) 1 $ zipWith iff s t
+sEq s t 
+  | length s < length t = sEq t s
+  | otherwise           = foldl (*) 1 $ zipWith iff s (t ++ repeat 0)
   where
     iff p q = 1 + p + q
 

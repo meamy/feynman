@@ -10,9 +10,11 @@ import Feynman.Algebra.SArith
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Core (ID)
 import Feynman.Frontend.OpenQASM3.Core
-import Feynman.Algebra.Polynomial.Multilinear (SBool)
+import Feynman.Algebra.Polynomial.Multilinear (SBool, ofVar)
 import Data.Bits (testBit, xor, (.>>.), (.&.))
 import Data.Complex (realPart, imagPart)
+
+import qualified Feynman.Util.Unicode as U
 
 data Env a = Env {
   pathsum :: Pathsum DMod2,
@@ -60,6 +62,10 @@ evalOffset expr = case expr of
     return $ offset + index
   _ -> error "cannot find offset"
 
+-- | Gives the unicode representation of the ith offset of v
+varOfOffset :: ID -> Int -> String
+varOfOffset v i = U.sub v (fromIntegral i)
+
 searchBinding :: ID -> State (Env a) (Maybe (Binding a))
 searchBinding id = gets $ search . binds
   where
@@ -98,13 +104,16 @@ allocateQBits v size init = do
   modify $ allocateQ
   return $ offset 
   where
-    qbits                                = case init of
-      Nothing   -> ket $ replicate size 0
+    qbits                              = case init of
+      Nothing   -> ket $ [ofVar (varOfOffset v i) | i <- [0..size-1]]
+      Just list -> ket $ list
+    qbits'                             = case init of
+      Nothing   -> ket $ [ofVar (varOfOffset ("'" ++ v) i) | i <- [0..size-1]]
       Just list -> ket $ list
     allocateQ env@(Env ps _ density w) = env { pathsum = newPs, qwidth = w + size }
       where
         psSize   = outDeg ps
-        newOuts  = if density then qbits <> qbits else qbits
+        newOuts  = if density then qbits <> qbits' else qbits
         embedded = embed newOuts psSize (\i -> i) (\i -> if i < size then i + w else i + 2*w)
         newPs    = ps .> embedded
 
@@ -115,7 +124,7 @@ allocateCBits v size init = do
   return $ offset 
   where
     bits                                 = case init of
-      Nothing   -> ket $ replicate size 0
+      Nothing   -> ket $ [ofVar (varOfOffset v i) | i <- [0..size-1]]
       Just list -> ket $ list
     allocateC env@(Env ps _ density w) = env { pathsum = newPs }
       where
@@ -249,15 +258,15 @@ reduceExpr expr = case expr of
       (AndOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 && b2
       (OrOp    , EBool b1 , EBool b2 ) -> return $ EBool $ b1 || b2
       (XorOp   , EBool b1 , EBool b2 ) -> return $ EBool $ b1 `xor` b2
-      (LShiftOp, _        , _        ) -> error "check: should work like rotl?"
-      (RShiftOp, _        , _        ) -> error "check: should work like rotr?"
+--      (LShiftOp, _        , _        ) -> error "check: should work like rotl?"
+--      (RShiftOp, _        , _        ) -> error "check: should work like rotr?"
       (LRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
       (RRotOp  , _        , _        ) -> error "check: how should this work for symbolic bvectors"
       (EqOp    , EBool b1 , EBool b2 ) -> return $ EBool $ b1 == b2
       (EqOp    , EInt i1  , EInt i2  ) -> return $ EBool $ i1 == i2
       (EqOp    , EFloat f1, EFloat f2) -> return $ EBool $ f1 == f2
       (EqOp    , ECmplx c1, ECmplx c2) -> return $ EBool $ c1 == c2
-      (EqOp    , _        , _        ) -> error "constraint propagation? ex uint = int"
+--      (EqOp    , _        , _        ) -> error "constraint propagation? ex uint = int"
       (LTOp    , EInt i1  , EInt i2  ) -> return $ EBool $ i1 < i2
       (LTOp    , EFloat f1, EFloat f2) -> return $ EBool $ f1 < f2
       (LEqOp   , EInt i1  , EInt i2  ) -> return $ EBool $ i1 <= i2
@@ -556,7 +565,8 @@ polyOfExpr expr = case expr of
     modify $ measurePS offset
     gets $ \env -> (!! offset) . outVals $ pathsum env
   where
-    g j (Env (Pathsum _ _ _ _ _ out) _ _ qwidth) = out !! (j + qwidth)
+    g j (Env (Pathsum _ _ _ _ _ out) _ False qwidth) = out !! (j + qwidth)
+    g j (Env (Pathsum _ _ _ _ _ out) _ True  qwidth) = out !! (j + 2*qwidth)
 
 polyListOfExpr :: Expr a -> State (Env a) [SBool Var]
 polyListOfExpr expr = case expr of
@@ -576,8 +586,12 @@ polyListOfExpr expr = case expr of
   EUOp uop e     -> do
     l <- polyListOfExpr e
     return $ (listOpOfUop uop) l
+  EIndex e1 e2   -> do
+    p <- polyOfExpr expr
+    return $ [p]
   where
-    g start len (Env (Pathsum _ _ _ _ _ out) _ _ qwidth) = take len . drop (start + qwidth) $ out
+    g start len (Env (Pathsum _ _ _ _ _ out) _ False qwidth) = take len . drop (start + qwidth) $ out
+    g start len (Env (Pathsum _ _ _ _ _ out) _ True  qwidth) = take len . drop (start + 2*qwidth) $ out
 
 declareSymbolic :: ID -> Type a -> Int -> Maybe [SBool String] -> State (Env a) ()
 declareSymbolic id typ size init = do
@@ -621,8 +635,8 @@ simDeclare decl = case decl of
     TCReg n -> case evalInt n of
       Nothing   -> error $ "invalid register size"
       Just size -> case val of
-        Nothing -> declareSymbolic vid (TCReg $ EInt size) size Nothing
-        Just _  -> error $ "invalid array value"
+        Nothing       -> declareSymbolic vid (TCReg $ EInt size) size Nothing
+        Just (EInt j) -> declareSymbolic vid (TCReg $ EInt size) size (Just $ bitVec j size)
     TQBit   -> case val of
       Nothing -> declareSymbolic vid TQBit 1 Nothing
       Just v  -> case evalBool v of
@@ -677,13 +691,20 @@ bitVec n size = map f [0..size-1]
 
 stdlib = ["x", "y", "z", "h", "cx", "cy", "cz", "ch", "id", "s", "sdg", "t", "tdg", "rz", "rx", "ry", "ccx", "crz", "u3", "u2", "u1", "cu1", "cu3"]
 
+applyPS :: Pathsum DMod2 -> SBool Var -> [Int] -> State (Env a) ()
+applyPS gatePS p offsets = modify $ f
+  where
+    f env@(Env ps _ False _) = env { pathsum = applyPControlled gatePS p offsets ps }
+    f env@(Env ps _ True qwidth) = 
+      let offsets' = map (+qwidth) offsets in
+        env { pathsum = applyPControlled gatePS p offsets' . applyPControlled gatePS p offsets $ ps }
+
 simStdGate :: SBool Var -> ID -> [Expr a] -> [Expr a] -> State (Env a) ()
 simStdGate p gid cparams args = do
   gatePS <- getGatePS gid cparams
   offsets <- mapM evalOffset args
   env <- get
-  let ps' = applyPControlled gatePS p offsets (pathsum env)
-  modify $ \env -> env { pathsum = ps' }
+  applyPS gatePS p offsets
 
 simExpr :: SBool Var -> Expr a -> State (Env a) (Maybe (Expr a))
 simExpr p (EStmt stmt) = simStmt p stmt
@@ -725,7 +746,23 @@ getGatePS id params = case (id, params) of
   _           -> error "TODO"
 
 simReset :: Expr a -> State (Env a) ()
-simReset = error "TODO"
+simReset expr = case expr of
+  EVar id -> do
+    bind <- searchBinding id
+    case bind of
+      Nothing -> return ()
+      Just (Symbolic TQBit offset) -> modify $ resetOffset offset
+      Just (Symbolic (TQReg (EInt n)) offset) -> mapM_ modify [resetOffset i | i <- [offset..offset+n-1] ] 
+
+  where
+    resetOffset offset env@(Env ps@(Pathsum _ _ _ _ _ out) _ False _)     =
+      env { pathsum = resetPS offset ps }
+    resetOffset offset env@(Env ps@(Pathsum _ _ _ _ _ out) _ True qwidth) =
+      env { pathsum = resetPS (offset + qwidth) . resetPS offset $ ps }
+
+    resetPS offset ps@(Pathsum _ _ _ _ _ out) = ps { outVals = newOut }
+      where
+        newOut = take offset out ++ [0] ++ drop (offset + 1) out 
 
 simStmts :: [Stmt a] -> State (Env a) ()
 simStmts = mapM_ $ simStmt 1
@@ -738,6 +775,6 @@ simProg (Prog _ stmts) = execState (simStmts stmts) (initEnv True)
 
 simulationResult :: Prog a -> String
 simulationResult prog = 
-  let env = simProgPure prog in
+  let env = simProg prog in
     show (pathsum env)   
        
