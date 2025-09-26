@@ -216,6 +216,13 @@ translateAccessPath node = case node of
       [idx] -> return $ AIndex id idx
       _     -> Left (Err $ "Error at " ++ (S.pp_source c) ++ ": Multiple indices unsupported")
 
+  S.Node S.IndexExpr [idnode, idxlist] c -> do
+    id   <- translateIdent idnode
+    idxs <- inLst translateExpr idxlist
+    case idxs of
+      [idx] -> return $ AIndex id idx
+      _     -> Left (Err $ "Error at " ++ (S.pp_source c) ++ ": Multiple indices unsupported")
+
   _                          -> Left (Err $ "Malformed access path: " ++ show node)
 
 -- | Translation of Expressions
