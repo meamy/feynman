@@ -20,7 +20,14 @@ import qualified Feynman.Frontend.OpenQASM3.Syntax as S
 data ErrMsg = Err String
 
 {- Convenience types -}
-type Annotation = String
+data Annotation a = 
+      Other String
+    | Assert (Expr a,Expr a)
+    | Fn (Expr a,Expr a)
+    | Pre (AccessPath a,Expr a)
+    | Post (AccessPath a,Expr a)
+  deriving (Show)
+
 type Version    = (Int, Maybe Int)
 
 {- Core AST -}
@@ -122,7 +129,7 @@ data Stmt a =
   | SReset a (Expr a)
   | SReturn a (Expr a)
   | SWhile a (Expr a) (Stmt a)
-  | SAnnotated a [Annotation] (Stmt a)
+  | SAnnotated a [Annotation a] (Stmt a)
   | SPragma a String
   deriving (Show)
 
@@ -328,9 +335,9 @@ translateModifier node = case node of
   _                          -> Left (Err $ "Malformed modifier: " ++ show node)
 
 -- | Translation of Annotations
-translateAnnotation :: S.ParseNode -> Either ErrMsg Annotation
+translateAnnotation :: S.ParseNode -> Either ErrMsg (Annotation a)
 translateAnnotation node = case node of
-  S.Node (S.Annotation _ str _) [] c -> return str
+  S.Node (S.Annotation _ str _) [] c -> return (Other str)
   _                                  -> Left (Err $ "Malformed annotation: " ++ show node)
 
 -- | Translation of Arguments
