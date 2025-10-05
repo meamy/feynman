@@ -1,6 +1,6 @@
 module Feynman.Synthesis.HypergraphPartition.PartitionConfigs where
 
-kahyparPath = "src/Feynman/kahypar/build/kahypar/application/KahyPar"
+kahyparPath = "src/Feynman/kahypar/build/kahypar/application/KaHyPar"
 mtKahyparPath = "src/Feynman/mt-kahypar/build/mt-kahypar/application/MtKaHyPar"
 numParts = 2
 numThreads = 50
