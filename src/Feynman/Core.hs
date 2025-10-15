@@ -82,8 +82,9 @@ data Primitive =
   | Rz       Angle ID
   | Rx       Angle ID
   | Ry       Angle ID
-  | Measure  ID ID      -- Comp. basis measurement of /a/ and copied into /b/
+  | Measure  ID ID        -- Comp. basis measurement of /a/ and copied into /b/
   | Reset    ID
+  | CCtrl    ID Primitive -- Classically controlled gate
   | Uninterp ID [ID]
   deriving (Eq)
 
