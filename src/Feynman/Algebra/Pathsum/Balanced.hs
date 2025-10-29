@@ -413,6 +413,22 @@ tdggate :: (Eq g, Abelian g, Dyadic g) => Pathsum g
 tdggate = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
   where p = distribute (-half*half) (ofVar (IVar 0))
 
+-- | Alternate T gate
+tgateAlt :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+tgateAlt = Pathsum 2 1 1 2 p [ofVar (IVar 0)]
+  where p = lift (x*y + y*z) + distribute (half*half) z
+        x = ofVar (IVar 0)
+        y = ofVar (PVar 0)
+        z = ofVar (PVar 1)
+
+-- | Alternate T* gate
+tdggateAlt :: (Eq g, Abelian g, Dyadic g) => Pathsum g
+tdggateAlt = Pathsum 2 1 1 2 p [ofVar (IVar 0)]
+  where p = lift (x*y + y*z) + distribute (-half*half) z
+        x = ofVar (IVar 0)
+        y = ofVar (PVar 0)
+        z = ofVar (PVar 1)
+
 -- | R_k gate
 rkgate :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g
 rkgate k = Pathsum 0 1 1 0 p [ofVar (IVar 0)]
@@ -587,6 +603,29 @@ applyMCRz theta xs (Pathsum s d o p pp ovals) = Pathsum s d o p pp' ovals where
   pp' = pp + distribute (theta) (foldr (*) 1 (map (ovals!!) xs))
 
 {----------------------------
+ Spiders
+ ----------------------------}
+
+-- | Z spider with /n/ inputs and /m/ outputs
+zSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+zSpider a n m = Pathsum (2*n) n m (n+1) pp (replicate m z) where
+  z   = ofVar (PVar n)
+  pp  = distribute (a) z + distribute 1 (foldr (+) 0 tms)
+  tms = [ofVar (PVar i) * (ofVar (IVar i) + z) | i <- [0..n-1]]
+
+-- | X spider with /n/ inputs and /m/ outputs
+xSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+xSpider a n m = hIn .> (zSpider a n m) .> hOut where
+  hIn  = foldr (<>) 0 (replicate n hgate)
+  hOut = foldr (<>) 0 (replicate m hgate)
+
+-- | (a phase variant of the) H spider with /n/ inputs and /m/ outputs
+hSpider :: (Eq g, Abelian g, Dyadic g) => g -> Int -> Int -> Pathsum g
+hSpider a n m = Pathsum 0 n m m pp ovals where
+  ovals = [ofVar (PVar j) | j <- [0..m-1]]
+  pp    = distribute a $ foldr (*) 1 $ [ofVar (IVar i) | i <- [0..n-1]] ++ ovals
+
+{----------------------------
  Channels
  ----------------------------}
 
@@ -624,8 +663,8 @@ traceOut i j sop@(Pathsum s d o p pp ovals) = sop .> embed epsilon (o-2) mp (\_ 
 
 -- | Bind some collection of free variables in a path sum
 bind :: (Foldable f, Eq g, Abelian g) => f String -> Pathsum g -> Pathsum g
-bind = flip (foldr go)
-  where go x sop =
+bind = flip (foldl' go)
+  where go sop x =
           let v = IVar $ inDeg sop in
             sop { inDeg = (inDeg sop) + 1,
                   phasePoly = subst (FVar x) (ofVar v) (phasePoly sop),
@@ -662,6 +701,17 @@ substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
 {----------------------------
  Operators
  ----------------------------}
+
+-- | Apply a predicate to the state
+applyPredicate :: (Eq g, Abelian g) => SBool Var -> Pathsum g -> Pathsum g
+applyPredicate p (Pathsum a b c d e f) = Pathsum a b c (d+1) e' f where
+  e' = e + lift (ofVar (PVar d) * (1 + p))
+
+-- | Return the projector for a state
+projector :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+projector sop@(Pathsum a b c d e f)
+  | b /= 0 = error "Projector must be applied to a state"
+  | otherwise = dagger sop .> sop
 
 -- | Return the dual of a path sum
 dualize :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
@@ -918,6 +968,41 @@ matchHHInternal sop = do
     PVar _ -> return (v, v', p')
     _      -> mzero
 
+-- | Solvable instance of the HH rule where \(f = 1 \oplus \prod_{x\in X} x\)
+matchHHProduct :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
+matchHHProduct sop = do
+  (v, p) <- matchHH sop
+  vars <- case toTermList (1 + p) of
+    [(_, m)] -> return . Set.toList . vars $ m
+    _        -> []
+  return (v, vars)
+
+-- | Fully reducible instance of the HH product. Equivalent to HHProduct
+--   followed by a series of HH rules when there are no input or free variables
+matchHHProduct' :: (Eq g, Periodic g) => Pathsum g -> [(Var, [Var])]
+matchHHProduct' sop = do
+  (v, p) <- matchHH sop
+  vars <- case toTermList (1 + p) of
+    [(_, m)] -> return . Set.toList . vars $ m
+    _        -> []
+  case all isP vars of
+    True  -> return (v, vars)
+    False -> mzero
+
+-- | Subproduct rule
+--
+--   \(\dots(\sum_{y,z} (-1)^{y} e^{P(yz,\dots)})\dots => z=1
+matchSubproduct :: (Eq g, Periodic g) => Pathsum g -> [Var]
+matchSubproduct sop = msum . (map go) $ internalPaths sop
+  where go v            = checkQuotient (quotVar v $ phasePoly sop)
+        checkQuotient f =
+          let factors = vars . fst . factorizeTrivial . dropConstant $ f
+              pfact   = Set.intersection factors (Set.fromList $ internalPaths sop)
+          in
+            case getConstant f == 1 && pfact /= Set.empty of
+              True  -> return (head $ Set.toList pfact)
+              False -> mzero
+
 -- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
@@ -968,6 +1053,14 @@ pattern HHLinear v v' p <- (matchHHLinear -> (v, v', p):_)
 pattern HHInternal :: (Eq g, Periodic g) => Var -> Var -> SBool Var -> Pathsum g
 pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 
+-- | Pattern synonym for HH instances where the polynomial is a product
+pattern HHProduct :: (Eq g, Periodic g) => Var -> [Var] -> Pathsum g
+pattern HHProduct v vs <- (matchHHProduct -> (v, vs):_)
+
+-- | Pattern synonym for Subproduct
+pattern Subproduct :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Subproduct v <- (matchSubproduct -> v:_)
+
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
 pattern HHKill :: (Eq g, Periodic g) => Var -> SBool Var -> Pathsum g
@@ -1004,6 +1097,40 @@ applyHHSolved :: (Eq g, Abelian g) => Var -> Var -> SBool Var -> Pathsum g -> Pa
 applyHHSolved (PVar i) v p (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
   where e' = renameMonotonic varShift . subst v p . remVar (PVar i) $ e
         f' = map (renameMonotonic varShift . subst v p) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+
+-- | Apply an HH product rule. Does not check if the instance is valid
+applyHHProduct :: (Eq g, Abelian g) => Var -> [Var] -> Pathsum g -> Pathsum g
+applyHHProduct (PVar i) vs (Pathsum a b c d e f) = Pathsum a' b c d' e' f
+  where m  = length vs
+        a' = a + 2*(m-1)
+        d' = d + (m-1)
+        e' = foldr (+) (renameMonotonic varShift . remVar (PVar i) $ e) constraints
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+        constraints = [ofVar (PVar i) * (1 + ofVar v) | (i,v) <- zip [d-1..] vs]
+
+-- | Apply a fully reducible HH product. Does not check if the instance is valid
+applyHHProduct' :: (Eq g, Abelian g) => Var -> [Var] -> Pathsum g -> Pathsum g
+applyHHProduct' (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-1) e' f') (reverse $ sort vs)
+  where e' = renameMonotonic varShift . remVar (PVar i) $ e
+        f' = map (renameMonotonic varShift) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
+        go ps = snd . expand ps
+
+-- | Apply a subproduct rule. Does not check if the instance is valid
+applySubproduct :: (Eq g, Abelian g) => Var -> Pathsum g -> Pathsum g
+applySubproduct (PVar i) (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
+  where e' = renameMonotonic varShift . subst (PVar i) 1 $ e
+        f' = map (renameMonotonic varShift . subst (PVar i) 1) f
         varShift (PVar j)
           | j > i     = PVar $ j - 1
           | otherwise = PVar $ j
@@ -1084,6 +1211,7 @@ grind sop = case sop of
   Omega y p      -> grind $ applyOmega y p sop
   HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
+  Subproduct y   -> grind $ applySubproduct y sop
   _              -> sop
 
 -- | A normalization procedure for Clifford circuits
@@ -1097,6 +1225,18 @@ normalizeClifford sop = go $ sop .> hLayer .> hLayer where
     Omega y p        -> go $ applyOmega y p sop
     HHSolved y z p   -> go $ applyHHSolved y z p sop
     _                -> sop
+
+{--------------------------
+ Equivalence
+ --------------------------}
+
+-- | Checks whether two arbitrary path sums are equal by vectorizing them
+(~~) :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g -> Bool
+(~~) a b = grind (vectorize a) == grind (vectorize b)
+
+-- | Checks whether two arbitrary path sums are equal up to global phase
+(~~*) :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> Pathsum g -> Bool
+(~~*) a b = grind (vectorize (a <> dagger a)) == grind (vectorize (b <> dagger b))
 
 {--------------------------
  Simulation
@@ -1460,3 +1600,12 @@ cliffordT14 =
         sdg1 = sdggate <> identity 1
         sdg2 = identity 1 <> sdggate
         xcgate = swapgate .> cxgate .> swapgate
+
+-- | Body of an RUS circuit
+rus :: Pathsum DMod2
+rus = fresh <> fresh <> identity 1 .>
+      hgate <> hgate <> identity 1 .>
+      ccxgate .>
+      identity 2 <> sgate .>
+      ccxgate .>
+      hgate <> hgate <> zgate
