@@ -15,14 +15,15 @@ dist/
 tmp/
 /src/Feynman/kahypar/
 
-# hypergraph files
-*.hgr
+#
 
 # misc
 TAGS
 cabal.sandbox.config
 Setup*
 !Setup.hs
+
+hypergraphpartitiondata
 
 # haskell
 dist

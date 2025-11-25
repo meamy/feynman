@@ -215,7 +215,7 @@ hypToString nQubits (Hypergraph vs hs) =
 --   The file will be named <name>.hgr.
 writeHypToFile :: String -> Int -> Hypergraph -> IO FilePath
 writeHypToFile name nQubits hyp = do
-  let dir      = "Temp"
+  let dir      = Cfg.hypergraphPartitionDataPath
       filePath = dir </> name <.> "hgr"
       contents = hypToString nQubits hyp
   createDirectoryIfMissing True dir
@@ -225,7 +225,7 @@ writeHypToFile name nQubits hyp = do
 -- | Build and partition, invoking KaHyPar with correct flags
 getNumCuts :: [Primitive] -> IO [Primitive]
 getNumCuts circ = do
-  let tempDir      = "Temp"
+  let tempDir      = Cfg.hypergraphPartitionDataPath
       hypergraphFN = "hypergraph.hgr"
       partitionFN  = "partion.hgr"
       hypergraphFP = tempDir </> hypergraphFN
