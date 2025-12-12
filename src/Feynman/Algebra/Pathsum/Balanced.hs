@@ -744,6 +744,16 @@ controlled sop@(Pathsum a b c d e f) = Pathsum a (b+1) (c+1) d e' f' where
   f'      = [lift x] ++ (map g . zip [1..] . map (renameMonotonic shift) $ f)
   g (i,y) = (ofVar $ IVar i) + x*((ofVar $ IVar i) + y)
 
+-- | Apply a controlled pathsum
+applyControlled :: (Eq g, Abelian g, Dyadic g) => Pathsum g -> Int -> [Int] -> Pathsum g -> Pathsum g
+applyControlled g ctrl xs sop
+  | inDeg g /= outDeg g      = error "ApplyOn: input & output dimensions don't match"
+  | length xs /= inDeg g     = error "ApplyOn: Index list not equal to in degree"
+  | outDeg sop < inDeg g + 1 = error "ApplyOn: Can't apply operator on a smaller space"
+  | otherwise                = sop .> embeddedCtrlG where
+      embeddedCtrlG = embed (controlled g) (outDeg sop - (inDeg g + 1)) embedding embedding
+      embedding     = \i -> (ctrl:xs)!!i
+
 -- | Attempt to add two path sums. Only succeeds if the resulting sum is balanced
 --   and the dimensions match.
 plusMaybe :: (Eq g, Abelian g) => Pathsum g -> Pathsum g -> Maybe (Pathsum g)

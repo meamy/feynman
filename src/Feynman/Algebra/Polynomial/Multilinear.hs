@@ -74,7 +74,8 @@ module Feynman.Algebra.Polynomial.Multilinear(
   incExc,
   fourier,
   invFourier,
-  canonicalize
+  canonicalize,
+  differentiate
   ) where
 
 import Data.Kind
@@ -556,6 +557,11 @@ invFourier = normalize . Map.foldrWithKey addTerm zero . getTerms
 -- | Canonicalize an additive multilinear polynomial
 canonicalize :: (Ord v, Ord (Monomial v 'Mult), Ord (Monomial v 'Add), Eq r, Dyadic r, Abelian r) => Multilinear v r 'Add -> Multilinear v r 'Add
 canonicalize = fourier . invFourier
+
+-- | Differentiate a multilinear polynomial in the direction of a
+differentiate :: (Ord v, Ord (Monomial v 'Mult), Eq r, Abelian r) => Set v -> Multilinear v r 'Mult -> Multilinear v r 'Mult
+differentiate a f = fdiff - f where
+  fdiff = substMany (\v -> if Set.member v a then (1 + ofVar v) else ofVar v) f
 
 -- Constants, for testing
 
