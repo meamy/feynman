@@ -82,9 +82,9 @@ data Primitive =
   | Rz       Angle ID
   | Rx       Angle ID
   | Ry       Angle ID
-  | Measure  ID ID        -- Comp. basis measurement of /a/ and copied into /b/
-  | Reset    ID
-  | CCtrl    ID Primitive -- Classically controlled gate
+  | Measure  ID           -- Computational basis measurement
+  | Reset    ID           -- Reset to |0>
+  | Ctrl     ID Primitive -- Controlled gate (coherent or incoherent)
   | Uninterp ID [ID]
   deriving (Eq)
 
@@ -139,7 +139,20 @@ getArgs gate = case gate of
   Rz theta x    -> [x]
   Rx theta x    -> [x]
   Ry theta x    -> [x]
+  Measure x     -> [x]
+  Reset x       -> [x]
+  Ctrl x g      -> x:(getArgs g)
   Uninterp s xs -> xs
+
+isUnitary :: Primitive -> Bool
+isUnitary gate = case gate of
+  Measure _ -> False
+  Reset _   -> False
+  Ctrl _ g  -> isUnitary g
+  _         -> True
+
+isCircuit :: [Primitive] -> Bool
+isCircuit = all isUnitary
 
 -- Transformations
 
@@ -159,6 +172,9 @@ daggerGate x = case x of
   Rz theta x    -> Rz (-theta) x
   Rx theta x    -> Rx (-theta) x
   Ry theta x    -> Ry (-theta) x
+  Measure x     -> error $ "Dagger of measurement"
+  Reset x       -> error $ "Dagger of reset"
+  Ctrl x g      -> Ctrl x (daggerGate g)
   Uninterp s xs -> Uninterp (s ++ "*") xs
 
 dagger :: [Primitive] -> [Primitive]
@@ -180,30 +196,16 @@ substGate f gate = case gate of
   Rz theta x    -> Rz theta (f x)
   Rx theta x    -> Rx theta (f x)
   Ry theta x    -> Ry theta (f x)
+  Measure x     -> Measure (f x)
+  Reset x       -> Reset (f x)
+  Ctrl x g      -> Ctrl (f x) (substGate f g)
   Uninterp s xs -> Uninterp s (map f xs)
 
 subst :: (ID -> ID) -> [Primitive] -> [Primitive]
 subst f = map (substGate f)
 
 ids :: [Primitive] -> [ID]
-ids = Set.toList . foldr f Set.empty
-  where f gate set   = foldr Set.insert set (idsGate gate)
-        idsGate gate = case gate of
-          H x           -> [x]
-          X x           -> [x]
-          Y x           -> [x]
-          Z x           -> [x]
-          CNOT x y      -> [x,y]
-          CZ x y        -> [x,y]
-          S x           -> [x]
-          Sinv x        -> [x]
-          T x           -> [x]
-          Tinv x        -> [x]
-          Swap x y      -> [x,y]
-          Rz theta x    -> [x]
-          Rx theta x    -> [x]
-          Ry theta x    -> [x]
-          Uninterp s xs -> xs
+ids = Set.toList . Set.unions . map (Set.fromList . getArgs)
 
 idsW :: WStmt a -> [ID]
 idsW = Set.toList . go where
@@ -355,6 +357,9 @@ instance Show Primitive where
   show (Rz theta x)    = "Rz(" ++ show theta ++ ") " ++ x
   show (Rx theta x)    = "Rx(" ++ show theta ++ ") " ++ x
   show (Ry theta x)    = "Ry(" ++ show theta ++ ") " ++ x
+  show (Measure x)     = "Measure " ++ x
+  show (Reset x)       = "Reset " ++ x
+  show (Ctrl x g)      = "If " ++ x ++ " then " ++ show g
   show (Uninterp s xs) = s ++ concatMap (" " ++) xs
 
 instance Show Stmt where

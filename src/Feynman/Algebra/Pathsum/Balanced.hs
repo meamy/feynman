@@ -21,7 +21,7 @@ import qualified Data.Set as Set
 import Data.Ratio
 import Data.Semigroup
 import Control.Monad (mzero, msum)
-import Data.Maybe (maybeToList)
+import Data.Maybe (maybeToList,fromJust)
 import Data.Complex (Complex(..), mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
@@ -150,6 +150,11 @@ internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
 freeVars :: Pathsum g -> [String]
 freeVars sop = map unF . Set.toList . Set.filter isF . foldr (Set.union) Set.empty $ xs
   where xs = (vars $ phasePoly sop):(map vars $ outVals sop)
+
+-- | Gives an unused free variable
+freshVar :: Pathsum g -> String
+freshVar sop = fromJust $ find (\v -> not $ v `elem` (freeVars sop)) xs
+  where xs = ["#c" ++ show i | i <- [0..]]
 
 -- | Checks if the path sum is (trivially) the identity
 isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
@@ -607,6 +612,15 @@ applyMeasure i j (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals 
   pp' = pp + (lift $ y * (ovals!!i + ovals!!j))
   y   = ofVar $ PVar p
 
+-- | Apply measurement and leave the result in a collection of states defined
+--   by values of a free variable
+applyMeasurePure :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyMeasurePure i sop@(Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals' where
+  pp'    = pp + (lift $ y * (ovals!!i + m))
+  ovals' = let (a,b) = splitAt i ovals in a ++ (m:tail b)
+  y      = ofVar $ PVar p
+  m      = ofVar $ FVar (freshVar sop)
+
 -- | Trace out a qubit in a vectorized density matrix.
 --
 --   Requires the index of the corresponding input and output.
@@ -651,6 +665,12 @@ unbind xs (Pathsum a b c d e f) = Pathsum a (b - length xs) c d e' f' where
 -- | Open a path sum by instantiating all inputs
 open :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 open sop = unbind [0..(inDeg sop) - 1] sop
+
+-- | Applies a substitution to variables
+substVar :: (Eq g, Abelian g) => (Var -> Var) -> Pathsum g -> Pathsum g
+substVar sub (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e' = rename sub e
+  f' = map (rename sub) f
 
 -- | Substitute a monomial with a symbolic Boolean expression throughout
 --
@@ -700,6 +720,15 @@ dagger (Pathsum a b c d e f) = dualize $ Pathsum a b c d (-e) f
 -- | Take the conjugate (c.f., lower star) of a path sum
 conjugate :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 conjugate (Pathsum a b c d e f) = Pathsum a b c d (-e) f
+
+-- | Reverse the qubit order
+reverseOrder :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+reverseOrder (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e'    = substMany sub e
+  f'    = reverse $ map (substMany sub) f
+  sub x = case x of
+    IVar i -> ofVar $ IVar (b-i-1)
+    _      -> ofVar x
 
 -- | Trace a square morphism. Throws an error if the input and outputs are not
 --   the same size
@@ -836,6 +865,15 @@ embed sop n embedIn embedOut
       outs = map embedOut [0..mOut-1]
       outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
 
+-- | Applies an operator on a specific set of qubits
+applyGate :: (Eq g, Abelian g) => Pathsum g -> [Int] -> Pathsum g -> Pathsum g
+applyGate sop idx sop'
+  | inDeg sop /= outDeg sop = error "Can't apply non-square path sum"
+  | length idx /= inDeg sop = error "Indices to apply on don't match dimension"
+  | outDeg sop' < inDeg sop = error "Can't apply larger path sum to smaller one"
+  | otherwise               = sop' .> embed sop (outDeg sop' - inDeg sop) f f
+  where f = ((Map.fromList $ zip [0..] idx)!)
+  
 -- | Drop a qubit
 discard :: Eq g => Int -> Pathsum g -> Pathsum g
 discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
