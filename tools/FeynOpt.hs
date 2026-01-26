@@ -155,6 +155,8 @@ runDotQC passes verify fname src = do
       putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms" ++ verStr ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
       if verify then putStrLn $ "# Verified" else return ()
+      putStrLn $ "\n" 
+      putStrLn $ "# Result Circuit"
       putStrLn $ show qc'
   where printErr (Left l)  = Left $ show l
         printErr (Right r) = Right r
