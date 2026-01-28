@@ -999,6 +999,16 @@ matchVar sop = do
     (_, 0)      -> mzero
     (PVar _, p) -> return (v, ofVar v + p')
     _           -> mzero
+
+-- | Instances of the ortho rule
+matchOrtho :: (Eq g, Abelian g) => Pathsum g -> [(Var,Var)]
+matchOrtho sop = do
+  v <- internalPaths sop
+  let (quot,rem) = divVar (phasePoly sop) v
+  let (quot',rem') = divVar (subst v (1 + ofVar v) $ phasePoly sop) v
+  y <- Set.toList . Set.filter (isP) $ Set.difference (vars quot) (vars rem)
+  z <- Set.toList . Set.filter (isP) $ Set.difference (vars quot') (vars rem')
+  if (y /= z) then return (y,z) else []
   
 {--------------------------
  Pattern synonyms
@@ -1060,6 +1070,10 @@ pattern Ctrl p <- (matchCtrl -> p:_)
 -- | Pattern synonym for var instances
 pattern Var :: Eq g => Var -> SBool Var -> Pathsum g
 pattern Var v p <- (matchVar -> (v, p):_)
+
+-- | Pattern synonym for ortho instances
+pattern Ortho :: (Eq g, Abelian g) => Var -> Var -> Pathsum g
+pattern Ortho y z <- (matchOrtho -> (y, z):_)
 
 {--------------------------
  Applying reductions
@@ -1148,6 +1162,14 @@ applyCtrl p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
 applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
 applyVar v p (Pathsum a b c d e f) = Pathsum a b c d (subst v p e) (map (subst v p) f)
 
+-- | Apply an ortho rule. Does not check if the instance is valid
+--
+--   Note: Does not eliminate the substituted variable
+applyOrtho :: (Eq g, Abelian g) => Var -> Var -> Pathsum g -> Pathsum g
+applyOrtho y z (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e' = subst y (ofVar z) e
+  f' = map (subst y (ofVar z)) f
+
 -- | Finds and applies the first elimination instance
 rewriteElim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
 rewriteElim sop = case sop of
@@ -1177,6 +1199,12 @@ rewriteVar :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 rewriteVar sop = case sop of
   Var v p -> applyVar v p sop
   _       -> sop
+
+-- | Finds and applies the first var instance
+rewriteOrtho :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+rewriteOrtho sop = case sop of
+  Ortho y z -> applyOrtho y z sop
+  _         -> sop
 
 -- | Abstracts a monomial into a fresh path variable. The reverse of an HH
 abstractMono :: (Eq g, Abelian g) => [Var] -> Pathsum g -> Pathsum g
