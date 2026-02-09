@@ -34,6 +34,7 @@ import Feynman.Core
       Hypergraph(..),
       Hyperedge, Vertex(..), isCZ, isCNOT,ids,getArgs)
 import Test.QuickCheck.Test (test)
+import Feynman.Algebra.Polynomial.Multilinear (distribute)
 
 packCircuit :: [Primitive] -> Circuit
 packCircuit circ = Circuit { qubits = ids circ,
@@ -292,6 +293,23 @@ getNumCuts circ = do
     Nothing  -> hPutStrLn stderr "Warning: could not parse Hyperedge Cut from KaHyPar output."
 
   return circ
+
+-- Note for pseudocode of distribute function
+
+-- pointsTo :: [AccessPath] -> SExpr -> Assertion
+
+-- distribute :: KaHyperData -> [Primitive] -> [Primitive]
+-- distribute data circuit = go 0 circuit
+--   where 
+--     go i [] = []
+--     go i (gates) = 
+--       if gate is local
+--       else if no wire allocated
+--         (b1, b2) = initialize bell pair i
+--         i = i+2
+--         CNOT gateCtrl b1
+  
+
 
 parseHyperedgeCut :: String -> Maybe Int
 parseHyperedgeCut s =
