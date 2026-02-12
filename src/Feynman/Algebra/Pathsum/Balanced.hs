@@ -1163,12 +1163,14 @@ applyVar :: (Eq g, Abelian g) => Var -> SBool Var -> Pathsum g -> Pathsum g
 applyVar v p (Pathsum a b c d e f) = Pathsum a b c d (subst v p e) (map (subst v p) f)
 
 -- | Apply an ortho rule. Does not check if the instance is valid
---
---   Note: Does not eliminate the substituted variable
 applyOrtho :: (Eq g, Abelian g) => Var -> Var -> Pathsum g -> Pathsum g
-applyOrtho y z (Pathsum a b c d e f) = Pathsum a b c d e' f' where
-  e' = subst y (ofVar z) e
-  f' = map (subst y (ofVar z)) f
+applyOrtho y@(PVar i) z (Pathsum a b c d e f) = Pathsum (a-2) b c d e' f' where
+  e' = renameMonotonic varShift $ subst y (ofVar z) e
+  f' = map (renameMonotonic varShift . subst y (ofVar z)) f
+  varShift (PVar j)
+    | j > i     = PVar $ j - 1
+    | otherwise = PVar $ j
+  varShift v = v
 
 -- | Finds and applies the first elimination instance
 rewriteElim :: (Eq g, Periodic g) => Pathsum g -> Pathsum g
@@ -1752,7 +1754,15 @@ left_is_itriangle  = rule_bw_left |>
                      applyVar (PVar 1) (ofVar (PVar 1) + ofVar (PVar 2) + 1) |>
                      grind |>
                      applyVar (PVar 0) (ofVar (PVar 0) + ofVar (PVar 1) + 1) |>
-                     grind
+                     grind |>
+                     applyVar (PVar 1) (ofVar (PVar 1) + ofVar (PVar 3)) |>
+                     grind |>
+                     abstractMono [IVar 0, PVar 0] |>
+                     (\sop -> let (x,y,z) = head (tail $ matchHHSolve sop) in applyHHSolved x y z sop) |>
+                     grind |>
+                     abstractMono [PVar 1, PVar 2] |>
+                     grind |>
+                     applyVar (PVar 1) (ofVar (PVar 1) + 1)
 right_is_itriangle = rule_bw_right |>
                      grind |>
                      applyVar (PVar 0) (ofVar (PVar 0) + ofVar (PVar 1) + 1) |>
