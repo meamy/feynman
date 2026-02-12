@@ -1744,7 +1744,7 @@ c_proof = left ~~ right where
   right = rule_c_right |>
           grind |>
           applyVar (PVar 1) (ofVar (PVar 1) + ofVar (IVar 0) + 1) |>
-          rewriteCtrl
+          rewriteCtrl -- erasable, by abstracting y0 \/ y1
 
 bw_proof = left_is_itriangle ~~ right_is_itriangle
 left_is_itriangle  = rule_bw_left |>
@@ -1777,3 +1777,15 @@ right_is_itriangle = rule_bw_right |>
                      grind |>
                      applyVar (PVar 0) (ofVar (PVar 0) + ofVar (PVar 1) + 1) |>
                      grind
+
+zxCompletenessProof () = do
+  putStrLn $ "s2: " ++ show s2_proof
+  putStrLn $ "s3: " ++ show s3_proof
+  putStrLn $ "e: " ++ show e_proof
+  putStrLn $ "b1: " ++ show b1_proof
+  putStrLn $ "b2: " ++ show b2_proof
+  putStrLn $ "k: " ++ show k_proof
+  putStrLn $ "sup: " ++ show sup_proof
+  putStrLn $ "eu: " ++ show eu_proof
+  putStrLn $ "c: " ++ show c_proof
+  putStrLn $ "bw: " ++ show bw_proof
