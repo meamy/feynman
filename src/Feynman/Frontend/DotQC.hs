@@ -31,7 +31,8 @@ type Nat = Word
 
 data Gate =
     Gate ID Nat [ID]
-  | ParamGate ID Nat Angle [ID] deriving (Eq)
+  | ParamGate ID Nat Angle [ID]
+  | ControlledGate ID Gate deriving (Eq)
 
 data Decl = Decl { name   :: ID,
                    params :: [ID],
@@ -51,6 +52,7 @@ instance Show Gate where
   show (ParamGate name 0 p params) = ""
   show (ParamGate name 1 p params) = name ++ "(" ++ show p ++ ")" ++ " " ++ showLst params
   show (ParamGate name i p params) = name ++ "(" ++ show p ++ ")^" ++ show i ++ " " ++ showLst params
+  show (ControlledGate ctrl gate) = "ctrl " ++ ctrl ++ " | " ++ show gate
 
 instance Show Decl where
   show (Decl name params body) = intercalate "\n" [l1, l2, l3]
@@ -70,16 +72,19 @@ instance Show DotQC where
 {- Accessors -}
 
 repeats :: Num a => Gate -> a
-repeats (Gate _ i _)        = fromIntegral i
-repeats (ParamGate _ i _ _) = fromIntegral i
+repeats (Gate _ i _)         = fromIntegral i
+repeats (ParamGate _ i _ _)  = fromIntegral i
+repeats (ControlledGate _ g) = repeats g
 
 arguments :: Gate -> [ID]
 arguments (Gate _ _ xs)        = xs
 arguments (ParamGate _ _ _ xs) = xs
+arguments (ControlledGate x g) = x:(arguments g)
 
 gateName :: Gate -> ID
-gateName (Gate g _ _)        = g
-gateName (ParamGate g _ a _) = g ++ "(" ++ show a ++ ")"
+gateName (Gate g _ _)         = g
+gateName (ParamGate g _ a _)  = g ++ "(" ++ show a ++ ")"
+gateName (ControlledGate _ g) = gateName g
 
 {- Transformations -}
 
@@ -87,6 +92,7 @@ subst :: (ID -> ID) -> [Gate] -> [Gate]
 subst f = map g
   where g (Gate g i params) = Gate g i $ map f params
         g (ParamGate g i p params) = ParamGate g i p $ map f params
+        g (ControlledGate x gate) = ControlledGate (f x) $ g gate 
 
 -- Inlines all declarations. Doesn't check for cycles, all gates without definitions are uninterpreted
 inlineAll :: DotQC -> DotQC
@@ -97,8 +103,9 @@ inlineAll circ =
             (ctx'', xspand) = accGatelist ctx' xs
         in
           (ctx'', (concat . replicate (repeats x) $ xpand) ++ xspand)
-      gateToList ctx x@(ParamGate _ _ _ _) = (ctx, [x])
-      gateToList ctx x@(Gate g _ args)     = case find (\decl -> name decl == g) (decls circ) of
+      gateToList ctx x@(ControlledGate _ _) = (ctx, [x])
+      gateToList ctx x@(ParamGate _ _ _ _)  = (ctx, [x])
+      gateToList ctx x@(Gate g _ args)      = case find (\decl -> name decl == g) (decls circ) of
         Nothing   -> (ctx, [x])
         Just decl ->
           let (ctx', gatelist) = expandSubdec ctx decl
@@ -147,6 +154,7 @@ inv gate@(ParamGate g i f p) =
     "Rz"   -> Just $ ParamGate g i (-f) p
     "Rx"   -> Just $ ParamGate g i (-f) p
     "Ry"   -> Just $ ParamGate g i (-f) p
+inv gate@(ControlledGate x g) = inv g >>= \g' -> return $ ControlledGate x g'
 
 simplify :: [Gate] -> [Gate]
 simplify circ =
@@ -246,6 +254,8 @@ gateToCliffordT (Gate g i p) =
                             Tinv z, CNOT y x]
         ("tof", xs)     -> toCliffordT $ mct xs
         ("X", xs)       -> toCliffordT $ mct xs
+        ("measure", [x])-> [Measure x]
+        ("reset", [x])  -> [Reset x]
         otherwise       -> [Uninterp g p]
   in
     concat $ genericReplicate i circ
@@ -257,6 +267,7 @@ gateToCliffordT (ParamGate g i theta p) =
         otherwise   -> [Uninterp (g ++ "(" ++ show theta ++ ")") p]
   in
     concat $ genericReplicate i circ
+gateToCliffordT (ControlledGate x g) = map (Ctrl x) $ gateToCliffordT g
 
 toCliffordT :: [Gate] -> [Primitive]
 toCliffordT = concatMap gateToCliffordT
@@ -277,6 +288,9 @@ gateFromCliffordT g = case g of
   Rz f x        -> ParamGate "Rz" 1 f [x]
   Rx f x        -> ParamGate "Rx" 1 f [x]
   Ry f x        -> ParamGate "Ry" 1 f [x]
+  Measure x     -> Gate "measure" 1 [x]
+  Reset x       -> Gate "reset" 1 [x]
+  Ctrl x g      -> ControlledGate x $ gateFromCliffordT g
   Uninterp s xs -> Gate s 1 xs
 
 fromCliffordT :: [Primitive] -> [Gate]
@@ -356,7 +370,7 @@ comment = char '#' >> manyTill anyChar endOfLine >> return '#'
 delimiter = semicolon <|> endOfLine
 
 skipSpace     = skipMany $ sep <|> comment
-skipWithBreak = many1 (skipMany sep >> delimiter >> skipMany sep)
+skipWithBreak = many1 (skipMany sep >> (delimiter <|> comment) >> skipMany sep)
 
 parseID = try $ do
   c  <- letter
@@ -389,6 +403,17 @@ parseGate = do
     Nothing -> return $ Gate name reps params
     Just f  -> return $ ParamGate name reps f params
 
+parseGate' = try parseCtrl <|> parseGate where
+  parseCtrl = do
+    string "ctrl"
+    skipSpace
+    param <- parseID
+    skipSpace
+    char '|'
+    skipSpace
+    gate <- parseGate
+    return $ ControlledGate param gate
+
 parseFormals = do
   skipMany $ char '('
   skipSpace
@@ -404,7 +429,7 @@ parseDecl = do
   skipSpace
   args <- parseFormals 
   skipWithBreak
-  body <- endBy parseGate skipWithBreak
+  body <- endBy parseGate' skipWithBreak
   string "END"
   return $ Decl id args body
 

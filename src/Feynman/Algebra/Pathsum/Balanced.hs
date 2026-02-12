@@ -21,7 +21,7 @@ import qualified Data.Set as Set
 import Data.Ratio
 import Data.Semigroup
 import Control.Monad (mzero, msum)
-import Data.Maybe (maybeToList)
+import Data.Maybe (maybeToList,fromJust)
 import Data.Complex (Complex(..), mkPolar)
 import Data.Bits (shiftL)
 import Data.Map (Map, (!))
@@ -150,6 +150,11 @@ internalPaths sop = [PVar i | i <- [0..pathVars sop - 1]] \\ outVars
 freeVars :: Pathsum g -> [String]
 freeVars sop = map unF . Set.toList . Set.filter isF . foldr (Set.union) Set.empty $ xs
   where xs = (vars $ phasePoly sop):(map vars $ outVals sop)
+
+-- | Gives an unused free variable
+freshVar :: Pathsum g -> String
+freshVar sop = fromJust $ find (\v -> not $ v `elem` (freeVars sop)) xs
+  where xs = ["#c" ++ show i | i <- [0..]]
 
 -- | Checks if the path sum is (trivially) the identity
 isTrivial :: (Eq g, Num g) => Pathsum g -> Bool
@@ -607,6 +612,15 @@ applyMeasure i j (Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals 
   pp' = pp + (lift $ y * (ovals!!i + ovals!!j))
   y   = ofVar $ PVar p
 
+-- | Apply measurement and leave the result in a collection of states defined
+--   by values of a free variable
+applyMeasurePure :: (Eq g, Abelian g, Dyadic g) => Int -> Pathsum g -> Pathsum g
+applyMeasurePure i sop@(Pathsum s d o p pp ovals) = Pathsum (s+2) d o (p+1) pp' ovals' where
+  pp'    = pp + (lift $ y * (ovals!!i + m))
+  ovals' = let (a,b) = splitAt i ovals in a ++ (m:tail b)
+  y      = ofVar $ PVar p
+  m      = ofVar $ FVar (freshVar sop)
+
 -- | Trace out a qubit in a vectorized density matrix.
 --
 --   Requires the index of the corresponding input and output.
@@ -652,6 +666,12 @@ unbind xs (Pathsum a b c d e f) = Pathsum a (b - length xs) c d e' f' where
 open :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 open sop = unbind [0..(inDeg sop) - 1] sop
 
+-- | Applies a substitution to variables
+substVar :: (Eq g, Abelian g) => (Var -> Var) -> Pathsum g -> Pathsum g
+substVar sub (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e' = rename sub e
+  f' = map (rename sub) f
+
 -- | Substitute a monomial with a symbolic Boolean expression throughout
 --
 --   This is generally not a very safe thing to do. Convenience for certain
@@ -664,6 +684,11 @@ substitute xs p (Pathsum a b c d e f) = Pathsum a b c d e' f' where
 {----------------------------
  Operators
  ----------------------------}
+
+-- | Apply a predicate to the state
+applyPredicate :: (Eq g, Abelian g) => SBool Var -> Pathsum g -> Pathsum g
+applyPredicate p (Pathsum a b c d e f) = Pathsum a b c (d+1) e' f where
+  e' = e + lift (ofVar (PVar d) * (1 + p))
 
 -- | Return the projector for a state
 projector :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
@@ -695,6 +720,15 @@ dagger (Pathsum a b c d e f) = dualize $ Pathsum a b c d (-e) f
 -- | Take the conjugate (c.f., lower star) of a path sum
 conjugate :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
 conjugate (Pathsum a b c d e f) = Pathsum a b c d (-e) f
+
+-- | Reverse the qubit order
+reverseOrder :: (Eq g, Abelian g) => Pathsum g -> Pathsum g
+reverseOrder (Pathsum a b c d e f) = Pathsum a b c d e' f' where
+  e'    = substMany sub e
+  f'    = reverse $ map (substMany sub) f
+  sub x = case x of
+    IVar i -> ofVar $ IVar (b-i-1)
+    _      -> ofVar x
 
 -- | Trace a square morphism. Throws an error if the input and outputs are not
 --   the same size
@@ -831,6 +865,15 @@ embed sop n embedIn embedOut
       outs = map embedOut [0..mOut-1]
       outPerm = unpermutation $ ([0..mOut+n-1] \\ outs) ++ outs
 
+-- | Applies an operator on a specific set of qubits
+applyGate :: (Eq g, Abelian g) => Pathsum g -> [Int] -> Pathsum g -> Pathsum g
+applyGate sop idx sop'
+  | inDeg sop /= outDeg sop = error "Can't apply non-square path sum"
+  | length idx /= inDeg sop = error "Indices to apply on don't match dimension"
+  | outDeg sop' < inDeg sop = error "Can't apply larger path sum to smaller one"
+  | otherwise               = sop' .> embed sop (outDeg sop' - inDeg sop) f f
+  where f = ((Map.fromList $ zip [0..] idx)!)
+  
 -- | Drop a qubit
 discard :: Eq g => Int -> Pathsum g -> Pathsum g
 discard i sop@(Pathsum a b c d e f) = Pathsum a b' c' d e f' where
@@ -947,6 +990,20 @@ matchHHProduct' sop = do
     True  -> return (v, vars)
     False -> mzero
 
+-- | Subproduct rule
+--
+--   \(\dots(\sum_{y,z} (-1)^{y} e^{P(yz,\dots)})\dots => z=1
+matchSubproduct :: (Eq g, Periodic g) => Pathsum g -> [Var]
+matchSubproduct sop = msum . (map go) $ internalPaths sop
+  where go v            = checkQuotient (quotVar v $ phasePoly sop)
+        checkQuotient f =
+          let factors = vars . fst . factorizeTrivial . dropConstant $ f
+              pfact   = Set.intersection factors (Set.fromList $ internalPaths sop)
+          in
+            case getConstant f == 1 && pfact /= Set.empty of
+              True  -> return (head $ Set.toList pfact)
+              False -> mzero
+
 -- | Instances of the \(\omega\) rule
 matchOmega :: (Eq g, Periodic g, Dyadic g) => Pathsum g -> [(Var, SBool Var)]
 matchOmega sop = do
@@ -1000,6 +1057,10 @@ pattern HHInternal v v' p <- (matchHHInternal -> (v, v', p):_)
 -- | Pattern synonym for HH instances where the polynomial is a product
 pattern HHProduct :: (Eq g, Periodic g) => Var -> [Var] -> Pathsum g
 pattern HHProduct v vs <- (matchHHProduct -> (v, vs):_)
+
+-- | Pattern synonym for Subproduct
+pattern Subproduct :: (Eq g, Periodic g) => Var -> Pathsum g
+pattern Subproduct v <- (matchSubproduct -> v:_)
 
 -- | Pattern synonym for HH instances where the polynomial is strictly a
 --   function of input variables
@@ -1065,6 +1126,16 @@ applyHHProduct' (PVar i) vs (Pathsum a b c d e f) = foldl' go (Pathsum a b c (d-
           | otherwise = PVar $ j
         varShift v = v
         go ps = snd . expand ps
+
+-- | Apply a subproduct rule. Does not check if the instance is valid
+applySubproduct :: (Eq g, Abelian g) => Var -> Pathsum g -> Pathsum g
+applySubproduct (PVar i) (Pathsum a b c d e f) = Pathsum a b c (d-1) e' f'
+  where e' = renameMonotonic varShift . subst (PVar i) 1 $ e
+        f' = map (renameMonotonic varShift . subst (PVar i) 1) f
+        varShift (PVar j)
+          | j > i     = PVar $ j - 1
+          | otherwise = PVar $ j
+        varShift v = v
 
 -- | Apply an (\omega\) rule. Does not check if the instance is valid
 applyOmega :: (Eq g, Abelian g, Dyadic g) => Var -> SBool Var -> Pathsum g -> Pathsum g
@@ -1141,6 +1212,7 @@ grind sop = case sop of
   Omega y p      -> grind $ applyOmega y p sop
   HHLinear y z p -> grind $ applyHHSolved y z p sop
   HHSolved y z p -> grind $ applyHHSolved y z p sop
+  Subproduct y   -> grind $ applySubproduct y sop
   _              -> sop
 
 -- | A normalization procedure for Clifford circuits
@@ -1529,3 +1601,12 @@ cliffordT14 =
         sdg1 = sdggate <> identity 1
         sdg2 = identity 1 <> sdggate
         xcgate = swapgate .> cxgate .> swapgate
+
+-- | Body of an RUS circuit
+rus :: Pathsum DMod2
+rus = fresh <> fresh <> identity 1 .>
+      hgate <> hgate <> identity 1 .>
+      ccxgate .>
+      identity 2 <> sgate .>
+      ccxgate .>
+      hgate <> hgate <> zgate

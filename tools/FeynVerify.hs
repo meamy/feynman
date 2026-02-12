@@ -18,21 +18,27 @@ import Feynman.Frontend.DotQC
 import Feynman.Algebra.Base (DMod2)
 import Feynman.Algebra.Pathsum.Balanced (Pathsum, grind, (.>))
 import Feynman.Verification.Symbolic
+import qualified Feynman.Verification.Channel as C
 
 -- | Check whether two .qc files are equivalent
 checkEquivalence :: Set String -> (DotQC, DotQC) -> Result
 checkEquivalence options (qc, qc') =
-  let gates  = toCliffordT . toGatelist $ qc
-      gates' = toCliffordT . toGatelist $ qc'
-      vars   = union (qubits qc) (qubits qc')
-      ins    = Set.toList $ inputs qc
-      ignore = Set.member "IgnoreGlobal" options
-      result =
+  let gates      = toCliffordT . toGatelist $ qc
+      gates'     = toCliffordT . toGatelist $ qc'
+      vars       = union (qubits qc) (qubits qc')
+      ins        = Set.toList $ inputs qc
+      ignore     = Set.member "IgnoreGlobal" options
+      result     = if Set.member "Channel" options then resultChannel else resultPure
+      resultPure = 
         if Set.member "PostSelect" options
           then validateWithPost ignore vars ins gates gates'
         else if Set.member "Experimental" options
           then validateExperimental ignore vars ins gates gates'
           else validate ignore vars ins gates gates'
+      resultChannel = case C.validate False vars ins gates gates' of
+        C.Equal          -> Identity
+        C.NotEqual s     -> NotIdentity s
+        C.Inconclusive s -> Inconclusive s
   in
     if inputs qc /= inputs qc'
     then NotIdentity "Inputs don't match"
@@ -40,7 +46,7 @@ checkEquivalence options (qc, qc') =
   
 -- | Get the (reduced) path sum of a DotQC circuit
 getSOP :: DotQC -> Pathsum DMod2
-getSOP qc = grind $ complexAction vars inpts circ where
+getSOP qc = grind $ C.sopOfCircuit vars inpts circ where
   vars  = qubits qc
   inpts = Set.toList (inputs qc)
   circ  = toCliffordT $ toGatelist qc
@@ -106,6 +112,7 @@ run options xs = case xs of
          | x == "-ignore-ancillas"     -> run (Set.insert "IgnoreGarbage" options) xs
          | x == "-postselect-ancillas" -> run (Set.insert "PostSelect" options) xs
          | x == "-experimental"        -> run (Set.insert "Experimental" options) xs
+         | x == "-channel"             -> run (Set.insert "Channel" options) xs
   _ -> do
     lift $ putStrLn "Invalid argument(s)"
     lift $ printHelp
