@@ -1748,6 +1748,7 @@ c_proof = left ~~ right where
 
 bw_proof = left_is_itriangle ~~ right_is_itriangle
 left_is_itriangle  = rule_bw_left |>
+                     -- Linear changes of variable to simplify
                      grind |>
                      applyVar (PVar 2) (ofVar (PVar 2) + ofVar (PVar 3)) |>
                      grind |>
@@ -1757,12 +1758,21 @@ left_is_itriangle  = rule_bw_left |>
                      grind |>
                      applyVar (PVar 1) (ofVar (PVar 1) + ofVar (PVar 3)) |>
                      grind |>
+                     -- Make all phases +/- 1 by abstracting away blocking monomial
                      abstractMono [IVar 0, PVar 0] |>
                      (\sop -> let (x,y,z) = head (tail $ matchHHSolve sop) in applyHHSolved x y z sop) |>
                      grind |>
                      abstractMono [PVar 1, PVar 2] |>
                      grind |>
-                     applyVar (PVar 1) (ofVar (PVar 1) + 1)
+                     -- Now permute the space to force all constructive interference onto y0=1 subspace
+                     applyVar (PVar 0) (ofVar (PVar 0) + (1 + ofVar (PVar 1))*(1 + ofVar (PVar 2))*(1 + ofVar (IVar 0))) |>
+                     applyVar (PVar 2) (ofVar (PVar 2) + (1 + ofVar (PVar 0))*(ofVar (PVar 1))) |>
+                     applyVar (PVar 0) (ofVar (PVar 0) + (ofVar (PVar 1))*(ofVar (PVar 2))) |>
+                     grind |>
+                     -- Swap y0 and y1 just to push the proof through
+                     applyVar (PVar 0) (ofVar (PVar 0) + (ofVar (PVar 1))) |>
+                     applyVar (PVar 1) (ofVar (PVar 1) + (ofVar (PVar 0))) |>
+                     applyVar (PVar 0) (ofVar (PVar 0) + (ofVar (PVar 1)))
 right_is_itriangle = rule_bw_right |>
                      grind |>
                      applyVar (PVar 0) (ofVar (PVar 0) + ofVar (PVar 1) + 1) |>
