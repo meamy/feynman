@@ -1717,6 +1717,10 @@ rule_bw_right = zSpider 0 1 2 <> zSpider pi4 0 1 .>
                 zSpider pi4 1 0 <> zSpider pi4 1 1 <> zSpider pi4 1 0 .>
                 xSpider pi2 1 1
 
+rule_cp_left, rule_cp_right :: Pathsum DMod2
+rule_cp_left = (xSpider 0 0 1 .> zSpider 0 1 0) <> (xSpider 0 0 1 .> zSpider 0 1 2)
+rule_cp_right = xSpider 0 0 1 <> xSpider 0 0 1
+
 s2_proof = rule_s2_left ~~ rule_s2_right
 s3_proof = rule_s3_left ~~ rule_s3_right
 e_proof = rule_e_left |>
@@ -1778,6 +1782,8 @@ right_is_itriangle = rule_bw_right |>
                      applyVar (PVar 0) (ofVar (PVar 0) + ofVar (PVar 1) + 1) |>
                      grind
 
+cp_proof = rule_cp_left ~~ rule_cp_right
+
 zxCompletenessProof () = do
   putStrLn $ "s2: " ++ show s2_proof
   putStrLn $ "s3: " ++ show s3_proof
@@ -1789,3 +1795,4 @@ zxCompletenessProof () = do
   putStrLn $ "eu: " ++ show eu_proof
   putStrLn $ "c: " ++ show c_proof
   putStrLn $ "bw: " ++ show bw_proof
+  putStrLn $ "cp: " ++ show cp_proof
