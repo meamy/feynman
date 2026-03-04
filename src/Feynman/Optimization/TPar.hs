@@ -163,7 +163,7 @@ chunkify vars inputs gates =
       final        = CNOTDihedral (ivals st) (qvals st) (terms st) Map.empty
       global       = GlobalPhase (head vars) (phase st)
   in
-      global:final:chunks
+      reverse chunks ++ [final, global]
   where n        = length vars
         vals     = Map.fromList . map f $ zip vars [0..]
         f (v, i) = (v, if v `elem` inputs then (bitI n i, False) else (bitVec n 0, False))
