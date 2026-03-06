@@ -48,6 +48,7 @@ library
 
                        Feynman.Synthesis.HypergraphPartition.HGraphBuilder,
                        Feynman.Synthesis.HypergraphPartition.PartitionConfigs,
+                       Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,

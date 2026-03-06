@@ -11,9 +11,10 @@ import Feynman.Core (Primitive,
                      annotate,
                      unannotate,
                      expandCZ,
-                     idsW)
+                     idsW,
+                     ids)
 
-import  Feynman.Synthesis.HypergraphPartition.HGraphBuilder (getNumCuts)
+import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder  (buildDistributedCircuit)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -124,7 +125,12 @@ dotQCPass pass = case pass of
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
-  Distribute  -> optimizeDotQC (\_ _ -> unsafePerformIO . getNumCuts)
+  Distribute  -> \qc -> 
+    let qc' = optimizeDotQC (\_ _ -> unsafePerformIO . buildDistributedCircuit) qc
+        -- Extract all IDs present in the new synthesized circuit body
+        newQubits = ids (concatMap (DotQC.toCliffordT . DotQC.body) (DotQC.decls qc'))
+    -- Append any newly discovered qubits to the global .v list, avoiding duplicates
+    in qc' { DotQC.qubits = nub (DotQC.qubits qc ++ newQubits) }
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =

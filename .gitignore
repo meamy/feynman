@@ -16,14 +16,14 @@ tmp/
 /src/Feynman/kahypar/
 
 #
-
+*.DS_Store
 # misc
 TAGS
 cabal.sandbox.config
 Setup*
 !Setup.hs
 
-hypergraphpartitiondata
+/src/Feynman/hypergraphpartitiondata
 
 # haskell
 dist

@@ -210,7 +210,7 @@ ids = Set.toList . Set.unions . map (Set.fromList . getArgs)
 {- Parameters For Hypergraph Parition -}
 data Vertex
   = Wire Int   -- qubit number (1-based)
-  | GateIdx Int   -- CZ gate index
+  | GateIdx Int   -- CNOT gate index
   deriving (Eq, Ord, Show)
 
 type Hyperedge = Set.Set Vertex
@@ -220,6 +220,9 @@ data Hypergraph = Hypergraph
   , hedges   :: [Hyperedge]
   }
   deriving (Eq, Show)
+  
+type Block = Int
+type PartitionData = Map.Map ID Block
 
 idsW :: WStmt a -> [ID]
 idsW = Set.toList . go where
