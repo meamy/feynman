@@ -32,7 +32,7 @@ import Feynman.Algebra.Pathsum.Balanced
 -- Note: Density matrices |psi><psi| are stored as |rev psi*>|psi>
 -- where rev denotes reversing the order of qubits. This is done
 -- so that extending by a pure state is |phi*> tensor rho tensor |phi>
--- Indexing is hence n+i and n-i for the ith qubit and its conjugate
+-- Indexing is hence n+i and n-1-i for the ith qubit and its conjugate
 
 -- | Context for computing path sums of circuits
 data Context = Context {
@@ -86,8 +86,8 @@ findOrAlloc x = do
   case Map.lookup x (idx ctx) of
     Just i  -> return i
     Nothing -> let i = Map.size (idx ctx) in do
-      put ctx{ sop = alloc (mixed ctx) (sop ctx),
-               idx = Map.insert x i (idx ctx) }
+      put ctx { sop = alloc (mixed ctx) (sop ctx),
+                idx = Map.insert x i (idx ctx) }
       return i
   where alloc b sop = case b of
           True  -> ket [ofVar (x ++ "'")] <> sop <> ket [ofVar x]
@@ -115,13 +115,13 @@ applyPrimitive gate = case gate of
     i    <- findOrAlloc x
     n    <- numQubits
     toMixed
-    let op = applyMeasure (n+i) (n-1-i)
+    let op = grind . applyMeasure (n+i) (n-1-i)
     modify $ \s -> s { sop = op $ sop s }
   Reset x -> do
     i    <- findOrAlloc x
     n    <- numQubits
     toMixed
-    let op = applyGate (epsilon .> fresh <> fresh) [n+i, n-1-i]
+    let op = grind . applyGate (epsilon .> fresh <> fresh) [n+i, n-1-i]
     modify $ \s -> s { sop = op $ sop s }
   _       -> do
     args <- mapM findOrAlloc $ getArgs gate
@@ -129,7 +129,7 @@ applyPrimitive gate = case gate of
     b    <- gets mixed
     let op = let u = unitaryAction gate in
           case b of
-            True  -> applyGate (conjugate u) (map (n+) args) . applyGate u (map (n-1-) args)
+            True  -> applyGate u (map (n+) args) . applyGate (conjugate u) (map (n-1-) args)
             False -> applyGate u args
     modify $ \s -> s { sop = op $ sop s }
 
