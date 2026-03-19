@@ -23,7 +23,8 @@ cabal.sandbox.config
 Setup*
 !Setup.hs
 
-/src/Feynman/hypergraphpartitiondata
+hypergraphpartitiondata/
+benchmarks/qc_customized/
 
 # haskell
 dist

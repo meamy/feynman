@@ -133,7 +133,8 @@ getTeleportationBoundaries (Hypergraph _ hedges) partMap = mapMaybe analyzeEdge 
 -- | Core synthesis logic that iterates through the circuit and splices in EPR pairs
 synthesizeDistributed :: [Primitive] -> Int -> Map ID Int -> Map Vertex Block -> [(Vertex, Int, Int)] -> [Primitive]
 synthesizeDistributed circ numQubits qIndexMap partMap boundaries =
-  let -- Reverse map to look up ID string from Wire index
+  -- Reverse map to look up ID string from Wire index
+    let 
       idxToID = Map.fromList [ (idx, qid) | (qid, idx) <- Map.toList qIndexMap ]
       
       -- Pre-compute start and end maps for fast lookup: GateIdx -> [WireIdx]

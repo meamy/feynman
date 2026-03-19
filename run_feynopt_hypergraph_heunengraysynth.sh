@@ -10,7 +10,7 @@ CIRCUITS=(
     barenco_tof_10
     csla_mux_3
     csum_mux_9
-    cycle_17_3
+    # cycle_17_3
     fprenorm
     "gf2^4_mult"
     "gf2^5_mult"
@@ -27,8 +27,8 @@ CIRCUITS=(
     ham15-low
     ham15-med
     hwb6
-    hwb8
-    hwb10
+    # hwb8
+    # hwb10
     mod_adder_1024
     mod_adder_1048576
     mod_mult_55
@@ -56,12 +56,15 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "============================================"
 
     # Run feynopt
-    cabal run feynopt -- -inline -phasefold -simplify -cxcz -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc"
+    cabal run feynopt -- -inline -cnotmin -cxcz -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cz_${CIRCUIT}.qc"
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
         continue
     fi
+
+    # Run feynver
+    cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "benchmarks/qc_customized/distributed_cz_${CIRCUIT}.qc"
 
     # # Destination directory for this circuit
     # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/new_cnot_hyp"
