@@ -20,8 +20,8 @@ CIRCUITS=(
     "gf2^9_mult"
     "gf2^10_mult"
     "gf2^16_mult"
-    "gf2^32_mult"
-    "gf2^64_mult"
+    # "gf2^32_mult"
+    # "gf2^64_mult"
     grover_5
     ham15-high
     ham15-low
@@ -29,15 +29,15 @@ CIRCUITS=(
     hwb6
     # hwb8
     # hwb10
-    mod_adder_1024
-    mod_adder_1048576
+    # mod_adder_1024
+    # mod_adder_1048576
     mod_mult_55
     mod_red_21
     mod5_4
     qcla_adder_10
-    qcla_com_7
-    qcla_mod_7
-    qft_4
+    # qcla_com_7
+    # qcla_mod_7
+    # qft_4
     rc_adder_6
     tof_3
     tof_4
@@ -56,18 +56,20 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "============================================"
 
     # Run feynopt
-    cabal run feynopt -- -inline -cnotmin -cxcz -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cz_${CIRCUIT}.qc"
+    cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
+
+    # cabal run feynopt -- -inline -phasefold -simplify -cxcz -distribute "benchmarks/qc/${CIRCUIT}.qc"
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
         continue
     fi
 
-    # Run feynver
-    cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "benchmarks/qc_customized/distributed_cz_${CIRCUIT}.qc"
+    # # Run feynver
+    cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
 
     # # Destination directory for this circuit
-    # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/new_cnot_hyp"
+    # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/cnot_edgeweighted_hyp"
 
     # # Create destination directory if it doesn't exist
     # mkdir -p "${DEST_DIR}"

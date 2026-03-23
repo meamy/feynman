@@ -32,11 +32,10 @@ import Feynman.Core
       Stmt(..),
       ID,
       Hypergraph(..),
-      Hyperedge, Vertex(..), isCZ, isCNOT,ids,getArgs, Block)
+      Hyperedge, Vertex(..), isCZ, isCNOT, WireRole(..), getCNOTRole,ids,getArgs, Block)
 import Test.QuickCheck.Test (test)
 import Feynman.Algebra.Polynomial.Multilinear (distribute)
 
-data WireRole = Control | Target deriving (Eq, Show)
 
 packCircuit :: [Primitive] -> Circuit
 packCircuit circ = Circuit { qubits = ids circ,
@@ -80,30 +79,21 @@ buildCZHypergraph circuit =
       buildForWire q =
         let wireIdx = qIndexMap Map.! q
             prims   = qubitGatesWithIdx q
-            -- Stateful walk: czSeen tracks if we've started a hedge
-            go :: Bool -> Hyperedge -> [(Primitive,Int)] -> [Hyperedge]
-            -- End of list: emit only if we saw a CZ
+            go :: Bool -> Hyperedge -> [(Primitive,Int)] -> [(Hyperedge, Int)]
             go czSeen hedge []
-              | czSeen    = [hedge]
+              | czSeen    = [(hedge, 1)]
               | otherwise = []
             go czSeen hedge ((g,pos):ps)
-              -- extend hedge on CZ
               | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g) =
                   let idx    = czMap Map.! pos
-                      hedge' = if czSeen
-                               then Set.insert (GateIdx idx) hedge
-                               else Set.fromList [Wire wireIdx, GateIdx idx]
+                      hedge' = if czSeen then Set.insert (GateIdx idx) hedge else Set.fromList [Wire wireIdx, GateIdx idx]
                   in go True hedge' ps
-              -- on non-CZ, flush previous hedge if any, reset
-              | otherwise =
-                  let out = if czSeen then [hedge] else []
-                  in out ++ go False Set.empty ps
+              | otherwise = (if czSeen then [(hedge, 1)] else []) ++ go False Set.empty ps
         in go False Set.empty prims
 
-      -- collect all hyperedges and vertices
-      hs = concatMap buildForWire qs
-      vs = Set.unions hs
-  in (nQubits, Hypergraph vs hs, qIndexMap)
+      weightedHs = concatMap buildForWire qs
+      vs = Set.unions (map fst weightedHs) -- Extract just the vertices to build the set
+  in (nQubits, Hypergraph vs weightedHs, qIndexMap)
 
 -- | Build the hypergraph for a given Circuit with CNOT gates
 --   Qubits are numbered 1..n in declaration order, CNOT gates are globally numbered starting at n+1.
@@ -128,14 +118,6 @@ buildHypergraph circuit =
       cnotPositions = [ pos | (p, pos) <- allPrimsWithIdx, isCNOT p ]
       cnotMap       = Map.fromList $ zip cnotPositions [startCNOT..]
 
-      -- get the role of a wire in a CNOT gate
-      getRole :: Primitive -> ID -> Maybe WireRole
-      getRole (CNOT ctrl tgt) q
-        | q == ctrl = Just Control
-        | q == tgt  = Just Target
-        | otherwise = Nothing
-      getRole _ _ = Nothing
-
       -- extract primitives acting on q, keeping their positions
       qubitGatesWithIdx :: ID -> [(Primitive, Int)]
       qubitGatesWithIdx q =
@@ -145,24 +127,26 @@ buildHypergraph circuit =
         ]
 
       -- process each wire into its hyperedges
-
-      buildForWire :: ID -> [Hyperedge]
+      buildForWire :: ID -> [(Hyperedge,Int)]
       buildForWire q =
         let wireIdx = qIndexMap Map.! q
             prims   = qubitGatesWithIdx q
 
+            weightOf :: WireRole -> Int
+            weightOf Control = 1
+            weightOf Target  = 2
+
             -- Stateful walk: 
             --   cnotSeen: Is a hyperedge creating right now?
-            --   currentRole: is qubit control or target in CNOT gate
-            go :: Bool -> Maybe WireRole -> Hyperedge -> [(Primitive, Int)] -> [Hyperedge]
-            -- End of list: emit only if we saw a CNOT
-            go True _ hedge [] = [hedge]
+            --   currentRole: Check if qubit control or target in CNOT gate
+            go :: Bool -> Maybe WireRole -> Hyperedge -> [(Primitive, Int)] -> [(Hyperedge, Int)]
+            go True r hedge [] = [(hedge, maybe 1 weightOf r)]
             go False _ _ []    = []
 
             go cnotSeen currentRole hedge ((g, pos):ps) = case g of
               CNOT ctrl tgt ->
                 let idx      = cnotMap Map.! pos
-                    thisRole = getRole g q
+                    thisRole = getCNOTRole g q
                 in case (cnotSeen, currentRole, thisRole) of
                      -- First CNOT on this wire: start new hyperedge
                      (False, _, Just role) ->
@@ -175,159 +159,23 @@ buildHypergraph circuit =
                        in go True currentRole hedge' ps
 
                      -- Role changed: close current, start new
-                     (True, Just _, Just role) ->
+                     (True, Just r, Just role) ->
                        let newHedge = Set.fromList [Wire wireIdx, GateIdx idx]
-                       in hedge : go True (Just role) newHedge ps
+                       in (hedge, weightOf r) : go True (Just role) newHedge ps
 
                      -- Not happen if q is in getArgs
                      _ -> go cnotSeen currentRole hedge ps
 
               -- Non-CNOT gate: flush current hyperedge if any, reset
               _ -> if cnotSeen
-                   then hedge : go False Nothing Set.empty ps
+                   then (hedge, maybe 1 weightOf currentRole) : go False Nothing Set.empty ps
                    else go False Nothing Set.empty ps
-
         in go False Nothing Set.empty prims
-      -- buildForWire :: ID -> [Hyperedge]
-      -- buildForWire q =
-      --   let wireIdx = qIndexMap Map.! q
-      --       prims   = qubitGatesWithIdx q
-
-      --       -- Stateful walk: 
-      --       --   cnotSeen: Is a hyperedge creating right now?
-      --       --   currentRole: is qubit control or target in CNOT gate
-      --       go :: Bool -> Maybe WireRole -> Hyperedge -> [(Primitive, Int)] -> [Hyperedge]
-            
-      --       -- Base cases
-      --       go True _ hedge [] = [hedge]
-      --       go False _ _ []    = []
-
-      --       go cnotSeen currentRole hedge ((g, pos):ps) = case g of
-      --         CNOT ctrl tgt ->
-      --           let idx      = cnotMap Map.! pos
-      --               thisRole = getRole g q
-      --           in case thisRole of
-      --                Just Control ->
-      --                  if cnotSeen && currentRole == Just Control
-      --                  then 
-      --                    -- 1. Extend existing Control hyperedge (Batching allowed)
-      --                    let hedge' = Set.insert (GateIdx idx) hedge
-      --                    in go True (Just Control) hedge' ps
-      --                  else 
-      --                    -- 2. Close previous and start new Control hyperedge
-      --                    let newHedge = Set.fromList [Wire wireIdx, GateIdx idx]
-      --                        rest     = go True (Just Control) newHedge ps
-      --                    in if cnotSeen then hedge : rest else rest
-
-      --                Just Target ->
-      --                  -- Emit a standalone hyperedge for this exact target operation
-      --                  let standaloneEdge = Set.fromList [Wire wireIdx, GateIdx idx]
-      --                      -- Because target breaks continuity, reset state for the next gate
-      --                      rest = go False Nothing Set.empty ps
-      --                  in if cnotSeen 
-      --                     then hedge : standaloneEdge : rest 
-      --                     else standaloneEdge : rest
-
-      --                _ -> go cnotSeen currentRole hedge ps
-                     
-      --         -- Non-CNOT gate: flush current hyperedge if any, reset
-      --         _ -> let rest = go False Nothing Set.empty ps
-      --              in if cnotSeen then hedge : rest else rest
-
-      --   in go False Nothing Set.empty prims
-        
       -- collect all hyperedges and vertices
-      hs = concatMap buildForWire qs
-      vs = Set.unions hs
-  in (nQubits, Hypergraph vs hs, qIndexMap)
-
--- buildHypergraph :: Circuit -> (Int, Hypergraph, Map ID Block)
--- buildHypergraph circuit =
---   let qs        = qubits circuit
---       nQubits   = length qs
---       startCNOT = nQubits + 1
---       qIndexMap = Map.fromList (zip qs [1..])
-      
---       allPrimsWithIdx :: [(Primitive, Int)]
---       allPrimsWithIdx =
---         [ (p, idx)
---         | Decl _ _ (Seq stmts) <- decls circuit
---         , (Gate p, idx)        <- zip stmts [0..]
---         ]
- 
---       -- Assign a unique global vertex index to every CNOT gate.
---       -- CNOT vertices are numbered startCNOT .. (startCNOT + numCNOTs - 1).
---       cnotPositions = [ pos | (p, pos) <- allPrimsWithIdx, isCNOT p ]
---       cnotMap       = Map.fromList $ zip cnotPositions [startCNOT..]
- 
---       -- All primitives that mention qubit q, preserving circuit order.
---       qubitGatesWithIdx :: ID -> [(Primitive, Int)]
---       qubitGatesWithIdx q =
---         [ (p, pos)
---         | (p, pos) <- allPrimsWithIdx
---         , q `elem` getArgs p
---         ]
- 
---       -- The role qubit q plays in a given CNOT primitive.
---       getRole :: Primitive -> ID -> Maybe WireRole
---       getRole (CNOT ctrl _) q | q == ctrl = Just Control
---       getRole (CNOT _ tgt)  q | q == tgt  = Just Target
---       getRole _             _ = Nothing
-
---       buildForWire :: ID -> [Hyperedge]
---       buildForWire q =
---         let wireIdx = qIndexMap Map.! q
---             prims   = qubitGatesWithIdx q
- 
---             go :: Bool -> Hyperedge -> [(Primitive, Int)] -> [Hyperedge]
---             -- End of wire: flush any open control batch.
---             go True  hedge []               = [hedge]
---             go False _     []               = []
- 
---             go cnotSeen hedge ((g, pos):ps) =
---               case getRole g q of
- 
---                 Just Control ->
---                   -- Extend or start a control batch.
---                   let idx    = cnotMap Map.! pos
---                       hedge' = if cnotSeen
---                                then Set.insert (GateIdx idx) hedge
---                                else Set.fromList [Wire wireIdx, GateIdx idx]
---                   in go True hedge' ps
- 
---                 Just Target ->
---                   -- Targets are never batched.
---                   -- Flush any open control batch, emit a standalone target edge, reset.
---                   let idx        = cnotMap Map.! pos
---                       standalone = Set.fromList [Wire wireIdx, GateIdx idx]
---                       rest       = go False Set.empty ps
---                   in if cnotSeen
---                      then hedge : standalone : rest   -- close control batch first
---                      else         standalone : rest
- 
---                 Nothing ->
---                   -- Non-CNOT gate: flush any open control batch and reset.
---                   if cnotSeen
---                   then hedge : go False Set.empty ps
---                   else          go False Set.empty ps
- 
---         in go False Set.empty prims
-
---       extraTargetEdges :: [Hyperedge]
---       extraTargetEdges =
---         [ Set.fromList [Wire (qIndexMap Map.! tgt), GateIdx (cnotMap Map.! pos)]
---         | (CNOT _ctrl tgt, pos) <- allPrimsWithIdx
---         ]
- 
---       -- Combine base edges (controls batched, targets standalone) with
---       -- the extra target edges.  Duplicate hyperedges in the list are
---       -- intentional: each appears as a separate line in the .hgr file.
---       baseEdges = concatMap buildForWire qs
---       hs        = baseEdges ++ extraTargetEdges
---       vs        = Set.unions hs        -- vertex set is still deduplicated
- 
---   in (nQubits, Hypergraph vs hs, qIndexMap)
-
+      weightedHs = concatMap buildForWire qs
+      vs = Set.unions (map fst weightedHs)
+  in (nQubits, Hypergraph vs weightedHs, qIndexMap)
+  
 -- | Extract the numeric ID from a Vertex
 vertexNum :: Vertex -> Int
 vertexNum (Wire i) = i
@@ -337,13 +185,12 @@ hypToString :: Int -> Hypergraph -> String
 hypToString nQubits (Hypergraph vs hs) =
   let numH      = length hs
       numV      = Set.size vs
-      header    = unwords [show numH, show numV, "10"]
+      header    = unwords [show numH, show numV, "11"]
       edgeLines =
-        [ unwords . map show . sort . map vertexNum . Set.toList $ hedge
-        | hedge <- hs
+        [ unwords (show w : map show (sort . map vertexNum . Set.toList $ hedge))
+        | (hedge, w) <- hs -- Now unpacked directly from the Hypergraph's hedges field
         ]
-      weights     = [1 | _ <- [1..nQubits]]
-                 ++ [0 | _ <- [nQubits+1..numV]]
+      weights     = [1 | _ <- [1..nQubits]] ++ [0 | _ <- [nQubits+1..numV]]
       weightLines = map show weights
   in unlines $ header : edgeLines ++ weightLines
 
@@ -368,8 +215,6 @@ getNumCuts circ = do
       partitionFP  = tempDir </> partitionFN
       k            = Cfg.numParts
       kahypar      = Cfg.kahyparPath
-  
-  -- putStrLn "# Partition result"
 
   -- Build and write hypergraph
   let (nQubits, hyp, qIndexMap) = buildHypergraph $ packCircuit circ
@@ -399,7 +244,6 @@ getNumCuts circ = do
         , "-m", "direct"
         , "-p", Cfg.subalgorithm
         , "-w", "true"
-        -- ensure not quiet, so it prints metrics (omit -q or pass -q false if your KaHyPar needs it)
         ]
   (ec, out, err) <- readProcessWithExitCode kahypar args ""
   let allOut = out ++ err
@@ -409,7 +253,7 @@ getNumCuts circ = do
       hPutStrLn stderr $ "KaHyPar failed.\n--- stdout ---\n" ++ out ++ "\n--- stderr ---\n" ++ err
       error "KaHyPar exited with an error."
 
-  -- === continue: find latest partition file and rename ===
+  -- Find latest partition file and rename ===
   candFiles <- listDirectory tempDir
   let isPart f = ("hypergraph.hgr.part" `isPrefixOf` f) || (".KaHyPar" `isInfixOf` f)
       parts    = [ f | f <- candFiles, isPart f ]
@@ -422,29 +266,11 @@ getNumCuts circ = do
   renameFile (tempDir </> latest) partitionFP
   -- putStrLn $ "# Partition file written to: " ++ partitionFP
 
-   -- Parse "Hyperedge Cut : <N>"
   case parseHyperedgeCut allOut of
     Just cut -> putStrLn $ "# Hyperedge cut (ebits): " ++ show cut ++ "\n"
     Nothing  -> hPutStrLn stderr "Warning: could not parse Hyperedge Cut from KaHyPar output."
 
   return (hyp, qIndexMap, circ)
-
--- Note for pseudocode of distribute function
-
--- pointsTo :: [AccessPath] -> SExpr -> Assertion
-
--- distribute :: KaHyperData -> [Primitive] -> [Primitive]
--- distribute data circuit = go 0 circuit
---   where 
---     go i [] = []
---     go i (gates) = 
---       if gate is local
---       else if no wire allocated
---         (b1, b2) = initialize bell pair i
---         i = i+2
---         CNOT gateCtrl b1
-  
-
 
 parseHyperedgeCut :: String -> Maybe Int
 parseHyperedgeCut s =

@@ -217,7 +217,7 @@ type Hyperedge = Set.Set Vertex
 
 data Hypergraph = Hypergraph
   { vertices :: Set.Set Vertex
-  , hedges   :: [Hyperedge]
+  , hedges   :: [(Hyperedge,Int)]
   }
   deriving (Eq, Show)
   
@@ -420,6 +420,16 @@ isCZ _        = False
 isCNOT :: Primitive -> Bool
 isCNOT (CNOT _ _) = True
 isCNOT _ = False
+
+data WireRole = Control | Target deriving (Eq, Show)
+
+-- get the role of a wire in a CNOT gate
+getCNOTRole :: Primitive -> ID -> Maybe WireRole
+getCNOTRole (CNOT ctrl tgt) q
+  | q == ctrl = Just Control
+  | q == tgt  = Just Target
+  | otherwise = Nothing
+getCNOTRole _ _ = Nothing
 
 -- Test
 
