@@ -3,24 +3,22 @@ import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 
 import qualified Data.Map as Map
 import           Data.Map   (Map)
-import           Data.List (isPrefixOf, isInfixOf, maximumBy, sort)
+import Data.List (isPrefixOf, isInfixOf, maximumBy, sort, sortBy)
 import Data.Char (isDigit)
 
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, mapMaybe)
 
 import Data.Ord (comparing)
 
 import System.Directory (doesFileExist, renameFile, removeFile, listDirectory, createDirectoryIfMissing ,getModificationTime)
 import System.Exit (ExitCode(..))
 import System.FilePath  ((</>), (<.>))
-import System.Process (callProcess)
-import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode, callProcess)
+import System.IO (hPutStrLn, stderr)
 
 import Control.Monad (unless,  when)
-
 
 import Feynman.Core
     ( Circuit(..),
@@ -32,10 +30,10 @@ import Feynman.Core
       Stmt(..),
       ID,
       Hypergraph(..),
-      Hyperedge, Vertex(..), isCZ, isCNOT, WireRole(..), getCNOTRole,ids,getArgs, Block)
-import Test.QuickCheck.Test (test)
-import Feynman.Algebra.Polynomial.Multilinear (distribute)
+      Hyperedge, Vertex(..), isCZ, isCNOT,isZBasisPhaseGate ,ids, Block)
 
+-- Define WireRole for hyperedge weights
+data WireRole = Control | Target deriving (Eq, Show)
 
 packCircuit :: [Primitive] -> Circuit
 packCircuit circ = Circuit { qubits = ids circ,
@@ -46,137 +44,95 @@ packCircuit circ = Circuit { qubits = ids circ,
                         body = Seq $ map Gate circ
                       }
 
--- | Build the hypergraph for a given Circuit
---   Qubits are numbered 1..n in declaration order, CZ gates are globally numbered starting at n+1.
---   Heunen's original approach for CZ gates
-buildCZHypergraph :: Circuit -> (Int, Hypergraph, Map ID Block)
-buildCZHypergraph circuit =
-  let qs           = qubits circuit
-      nQubits      = length qs
-      startCZ      = nQubits + 1
-      qIndexMap    = Map.fromList (zip qs [1..])
-
-      -- flatten all primitives in declaration order with their positions
-      allPrimsWithIdx :: [(Primitive, Int)]
-      allPrimsWithIdx =
-        [ (p, idx)
-        | Decl _ _ (Seq stmts) <- decls circuit
-        , (Gate p, idx)       <- zip stmts [0..]
-        ]
-
-      -- assign global CZ indices by original position
-      czPositions = [ pos | (p,pos) <- allPrimsWithIdx, isCZ p ]
-      czMap       = Map.fromList $ zip czPositions [startCZ..]
-
-      -- extract primitives acting on q, keeping their positions
-      qubitGatesWithIdx q =
-        [ (p,pos)
-        | (p,pos) <- allPrimsWithIdx
-        , q `elem` getArgs p
-        ]
-
-      -- process each wire into its hyperedges (emitting only after seeing a CZ)
-      buildForWire q =
-        let wireIdx = qIndexMap Map.! q
-            prims   = qubitGatesWithIdx q
-            go :: Bool -> Hyperedge -> [(Primitive,Int)] -> [(Hyperedge, Int)]
-            go czSeen hedge []
-              | czSeen    = [(hedge, 1)]
-              | otherwise = []
-            go czSeen hedge ((g,pos):ps)
-              | isCZ g && wireIdx `elem` map (qIndexMap Map.!) (getArgs g) =
-                  let idx    = czMap Map.! pos
-                      hedge' = if czSeen then Set.insert (GateIdx idx) hedge else Set.fromList [Wire wireIdx, GateIdx idx]
-                  in go True hedge' ps
-              | otherwise = (if czSeen then [(hedge, 1)] else []) ++ go False Set.empty ps
-        in go False Set.empty prims
-
-      weightedHs = concatMap buildForWire qs
-      vs = Set.unions (map fst weightedHs) -- Extract just the vertices to build the set
-  in (nQubits, Hypergraph vs weightedHs, qIndexMap)
-
--- | Build the hypergraph for a given Circuit with CNOT gates
---   Qubits are numbered 1..n in declaration order, CNOT gates are globally numbered starting at n+1.
---   Based on Heunen's hypergraph approach but implement directly for CNOT gates
-
-buildHypergraph :: Circuit -> (Int, Hypergraph, Map ID Block)
+-- Build the hypergraph with Physics-Aware early-breaking logic
+buildHypergraph :: Circuit -> (Int, Hypergraph, Map ID Int)
 buildHypergraph circuit =
   let qs           = qubits circuit
       nQubits      = length qs
       startCNOT    = nQubits + 1
       qIndexMap    = Map.fromList (zip qs [1..])
 
-      -- flatten all primitives in declaration order with their positions
-      allPrimsWithIdx :: [(Primitive, Int)]
-      allPrimsWithIdx =
-        [ (p, idx)
-        | Decl _ _ (Seq stmts) <- decls circuit
-        , (Gate p, idx)       <- zip stmts [0..]
-        ]
-
-      -- assign global CNOT indices by original position
-      cnotPositions = [ pos | (p, pos) <- allPrimsWithIdx, isCNOT p ]
+      stmts = [ g | Decl _ _ (Seq st) <- decls circuit, Gate g <- st ]
+      
+      cnotPositions = [ idx | (g, idx) <- zip stmts [0..], isCNOT g ]
       cnotMap       = Map.fromList $ zip cnotPositions [startCNOT..]
 
-      -- extract primitives acting on q, keeping their positions
-      qubitGatesWithIdx :: ID -> [(Primitive, Int)]
-      qubitGatesWithIdx q =
-        [ (p, pos)
-        | (p, pos) <- allPrimsWithIdx
-        , q `elem` getArgs p
-        ]
+      symDiff s x = if Set.member x s then Set.delete x s else Set.insert x s
 
-      -- process each wire into its hyperedges
-      buildForWire :: ID -> [(Hyperedge,Int)]
-      buildForWire q =
-        let wireIdx = qIndexMap Map.! q
-            prims   = qubitGatesWithIdx q
+      weightOf Control = 1
+      weightOf Target  = 2
 
-            weightOf :: WireRole -> Int
-            weightOf Control = 1
-            weightOf Target  = 2
+      -- fold state: (Active Tabs, Current Edges, Finished Edges)
+      folder (tabs, curr, finished) (pos, gate) =
+        let
+          -- 1. Check if a delayed phase correction tab must be flushed
+          mustFlush (tgt, ctrls) = not (Set.null ctrls) && case gate of
+              CNOT _ t -> Set.member t ctrls                     
+              _        -> any (`Set.member` ctrls) (getArgs gate) 
+          
+          flushedTargets = [ tgt | (tgt, ctrls) <- Map.toList tabs, mustFlush (tgt, ctrls) ]
 
-            -- Stateful walk: 
-            --   cnotSeen: Is a hyperedge creating right now?
-            --   currentRole: Check if qubit control or target in CNOT gate
-            go :: Bool -> Maybe WireRole -> Hyperedge -> [(Primitive, Int)] -> [(Hyperedge, Int)]
-            go True r hedge [] = [(hedge, maybe 1 weightOf r)]
-            go False _ _ []    = []
+          -- 2. Also flush if a wire's role changes, OR if a non-CNOT touches an active wire
+          directTouches = case gate of
+              CNOT ctrl tgt -> 
+                  let ctrlChange = case Map.lookup ctrl curr of
+                                     Just (_, Target) -> [ctrl]
+                                     _ -> []
+                      tgtChange  = case Map.lookup tgt curr of
+                                     Just (_, Control) -> [tgt]
+                                     _ -> []
+                  in ctrlChange ++ tgtChange
+              _ -> [ q | q <- getArgs gate, Map.member q curr ]
 
-            go cnotSeen currentRole hedge ((g, pos):ps) = case g of
-              CNOT ctrl tgt ->
-                let idx      = cnotMap Map.! pos
-                    thisRole = getCNOTRole g q
-                in case (cnotSeen, currentRole, thisRole) of
-                     -- First CNOT on this wire: start new hyperedge
-                     (False, _, Just role) ->
-                       let hedge' = Set.fromList [Wire wireIdx, GateIdx idx]
-                       in go True (Just role) hedge' ps
+          -- Combine all wires that must be severed right now
+          allToFlush = Set.toList $ Set.fromList (flushedTargets ++ directTouches)
 
-                     -- Continuing with same role: extend hyperedge
-                     (True, Just r, Just role) | r == role ->
-                       let hedge' = Set.insert (GateIdx idx) hedge
-                       in go True currentRole hedge' ps
+          -- 3. Flush the required wires to the 'finished' list
+          (tabs', curr', finished') = foldl flush (tabs, curr, finished) allToFlush
+          
+          flush (tbs, cr, fin) q =
+            case Map.lookup q cr of
+              Nothing -> (tbs, cr, fin)
+              Just (gates, role) ->
+                let hedge = Set.insert (Wire (qIndexMap Map.! q)) gates
+                    fin'  = if Set.size gates > 0 then (hedge, weightOf role) : fin else fin
+                in (Map.delete q tbs, Map.delete q cr, fin')
 
-                     -- Role changed: close current, start new
-                     (True, Just r, Just role) ->
-                       let newHedge = Set.fromList [Wire wireIdx, GateIdx idx]
-                       in (hedge, weightOf r) : go True (Just role) newHedge ps
+          -- 4. Update the active tabs and edges for CNOT gates
+          (tabs'', curr'') = case gate of
+            CNOT ctrl tgt ->
+              let idx = cnotMap Map.! pos
+                  gVertex = GateIdx idx
+                  
+                  -- Track the error tab for the target
+                  tbs2 = Map.alter (\mbs -> Just (symDiff (case mbs of Just s -> s; Nothing -> Set.empty) ctrl)) tgt tabs'
+                  
+                  -- Add this CNOT gate to both the control's edge and the target's edge
+                  cr1 = Map.alter (\mVal -> case mVal of
+                                     Just (gates, r) -> Just (Set.insert gVertex gates, r)
+                                     Nothing         -> Just (Set.singleton gVertex, Control)) ctrl curr'
+                  cr2 = Map.alter (\mVal -> case mVal of
+                                     Just (gates, r) -> Just (Set.insert gVertex gates, r)
+                                     Nothing         -> Just (Set.singleton gVertex, Target)) tgt cr1
+              in (tbs2, cr2)
+            _ -> (tabs', curr')
 
-                     -- Not happen if q is in getArgs
-                     _ -> go cnotSeen currentRole hedge ps
+        in (tabs'', curr'', finished')
 
-              -- Non-CNOT gate: flush current hyperedge if any, reset
-              _ -> if cnotSeen
-                   then (hedge, maybe 1 weightOf currentRole) : go False Nothing Set.empty ps
-                   else go False Nothing Set.empty ps
-        in go False Nothing Set.empty prims
-      -- collect all hyperedges and vertices
-      weightedHs = concatMap buildForWire qs
-      vs = Set.unions (map fst weightedHs)
-  in (nQubits, Hypergraph vs weightedHs, qIndexMap)
-  
--- | Extract the numeric ID from a Vertex
+      -- Execute the fold over the circuit
+      (finalTabs, finalCurr, finalFinished) = foldl folder (Map.empty, Map.empty, []) (zip [0..] stmts)
+
+      -- Flush any remaining edges at the very end of the circuit
+      flushAll fin q mVal = case mVal of
+        (gates, role) -> 
+           let hedge = Set.insert (Wire (qIndexMap Map.! q)) gates
+           in if Set.size gates > 0 then (hedge, weightOf role) : fin else fin
+           
+      allEdges = Map.foldlWithKey flushAll finalFinished finalCurr
+      
+      vs = Set.unions (map fst allEdges)
+  in (nQubits, Hypergraph vs allEdges, qIndexMap)
+
 vertexNum :: Vertex -> Int
 vertexNum (Wire i) = i
 vertexNum (GateIdx i) = i
@@ -186,9 +142,19 @@ hypToString nQubits (Hypergraph vs hs) =
   let numH      = length hs
       numV      = Set.size vs
       header    = unwords [show numH, show numV, "11"]
+      
+      -- Sort edges primarily by Wire ID, secondarily by their first GateIdx
+      edgeSortKey (hedge, _) =
+        let vList = Set.toList hedge
+            wires = [i | Wire i <- vList]
+            gates = [i | GateIdx i <- vList]
+        in (listToMaybe wires, listToMaybe (sort gates))
+        
+      sortedHs = sortBy (comparing edgeSortKey) hs
+
       edgeLines =
         [ unwords (show w : map show (sort . map vertexNum . Set.toList $ hedge))
-        | (hedge, w) <- hs -- Now unpacked directly from the Hypergraph's hedges field
+        | (hedge, w) <- sortedHs 
         ]
       weights     = [1 | _ <- [1..nQubits]] ++ [0 | _ <- [nQubits+1..numV]]
       weightLines = map show weights
@@ -279,6 +245,3 @@ parseHyperedgeCut s =
         let ws = reverse (words ln)
         in listToMaybe [ read w :: Int | w <- ws, all isDigit w ]
   in listToMaybe (mapMaybe grabInt linesWith)
-
-mapMaybe :: (a -> Maybe b) -> [a] -> [b]
-mapMaybe f = foldr (\x acc -> case f x of Just y -> y:acc; _ -> acc) []

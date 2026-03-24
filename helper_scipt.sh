@@ -35,7 +35,7 @@ CIRCUITS=(
     mod_red_21
     mod5_4
     qcla_adder_10
-    # qcla_com_7
+    qcla_com_7
     # qcla_mod_7
     # qft_4
     rc_adder_6
@@ -50,6 +50,8 @@ FEYNMAN_DIR="/Users/duykhangnguyentruong/Development/feynman"
 HYPERGRAPH_SRC_DIR="${FEYNMAN_DIR}/hypergraphpartitiondata"
 BENCHMARKS_BASE="/Users/duykhangnguyentruong/Development/benchmarks"
 
+cabal build
+
 for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "============================================"
     echo "Processing circuit: ${CIRCUIT}"
@@ -58,14 +60,14 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     # Run feynopt
     cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
 
-    # cabal run feynopt -- -inline -phasefold -simplify -cxcz -distribute "benchmarks/qc/${CIRCUIT}.qc"
+    # cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc"
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
         continue
     fi
 
-    # # Run feynver
+    # Run feynver
     cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
 
     # # Destination directory for this circuit

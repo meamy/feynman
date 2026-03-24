@@ -431,6 +431,15 @@ getCNOTRole (CNOT ctrl tgt) q
   | otherwise = Nothing
 getCNOTRole _ _ = Nothing
 
+isZBasisPhaseGate :: Primitive -> Bool
+isZBasisPhaseGate (Z _)      = True
+isZBasisPhaseGate (S _)      = True
+isZBasisPhaseGate (Sinv _)   = True
+isZBasisPhaseGate (T _)      = True
+isZBasisPhaseGate (Tinv _)   = True
+isZBasisPhaseGate (Rz _ _)   = True
+isZBasisPhaseGate _          = False
+
 -- Test
 
 toffoli :: Circuit
