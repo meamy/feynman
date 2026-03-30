@@ -58,7 +58,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "============================================"
 
     # Run feynopt
-    cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
+    cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" | tee "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc" > "${BENCHMARKS_BASE}/verified_circuits/distributed_cnot_${CIRCUIT}.qc"
 
     # cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc"
 
@@ -70,23 +70,23 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     # Run feynver
     cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
 
-    # # Destination directory for this circuit
-    # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/cnot_edgeweighted_hyp"
+    # Destination directory for this circuit
+    DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/cnot_edgeweighted_hyp"
 
-    # # Create destination directory if it doesn't exist
-    # mkdir -p "${DEST_DIR}"
+    # Create destination directory if it doesn't exist
+    mkdir -p "${DEST_DIR}"
 
-    # # Copy hypergraph files
-    # echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
-    # cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${DEST_DIR}/"
+    # Copy hypergraph files
+    echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
+    cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${DEST_DIR}/"
 
-    # if [ $? -eq 0 ]; then
-    #     echo "Successfully copied files for ${CIRCUIT}"
-    # else
-    #     echo "ERROR: Failed to copy files for ${CIRCUIT}"
-    # fi
+    if [ $? -eq 0 ]; then
+        echo "Successfully copied files for ${CIRCUIT}"
+    else
+        echo "ERROR: Failed to copy files for ${CIRCUIT}"
+    fi
 
-    # echo ""
+    echo ""
 done
 
 echo "============================================"
