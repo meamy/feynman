@@ -57,9 +57,37 @@ findBestSplitMono xs vecs = (l, c, delete c xs, r)
         c = maximumBy (comparing countCol) xs
         (l, r) = f c
 
+preProcess :: [ID] -> LinearTrans -> [Pt] -> Writer [Primitive] (LinearTrans, [Pt])
+preProcess ids out []     = return (out, [])
+preProcess ids out (p:ps) = go out (p:ps) (candidates p) where
+  k             = length $ vectors p
+  vecsT         = toList . transpose . fromList . fst . unzip $ vectors p
+
+  go out pts []     = return (out, pts)
+  go out pts (c:cs) = do
+    (out',pts') <- foldM (checkOverlap c) (out, pts) cs
+    go out' pts' cs
+
+  checkOverlap c (out,pts) c' =
+    if k > 1 && popCount (vecsT!!c') /= 0 && popCount (vecsT!!c) /= 0 && popCount (vecsT!!c + vecsT!!c') == 0 then
+      let (idc, idc') = (ids!!c, ids!!c')
+          (bvc, bvc') = (out!idc, out!idc')
+          pts'  = adjust c' c pts
+          out' = Map.insert idc' (bvc + bvc') out
+      in do
+        tell [CNOT idc idc']
+        return (out',pts')
+    else
+      return (out,pts)
+
 graySynthesis :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])
-graySynthesis ids out []     may = return (out, may)
-graySynthesis ids out (x:xs) may = case x of
+graySynthesis ids out pts may = do
+  (out',pts') <- preProcess ids out pts
+  graySynthesis' ids out' pts' may
+    
+graySynthesis' :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])
+graySynthesis' ids out []     may = return (out, may)
+graySynthesis' ids out (x:xs) may = case x of
   Pt _ _ _ [] -> graySynthesis ids out xs may
   Pt c (Just t) (Just p) v ->
     let (idp, idt) = (ids!!p, ids!!t)
