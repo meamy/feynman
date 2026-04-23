@@ -281,7 +281,7 @@ phaseSimplifications sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = phaseSimplificationsMCRz sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = phaseSimplificationsMCTRz sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = phaseSimplificationsXAGRz sop
-  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = phaseSimplificationsXAGMBURz sop
+ -- | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGMBURzPhase = phaseSimplificationsXAGMBURz sop
 
 phaseSimplificationsMCRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsMCRz sop = do
@@ -354,6 +354,7 @@ phaseSimplificationsXAGRz sop = do
   let rzGates = xagGates ++ phaseGates ++ xagDagGates
   emitGates sop rzGates
 
+{-
 phaseSimplificationsXAGMBURz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsXAGMBURz sop = do
   prefix <- freshPrefix
@@ -387,6 +388,7 @@ phaseSimplificationsXAGMBURz sop = do
       where tryDiv x  (acc, poly) =
               let (q, r) = divVar poly x in
                 if isZero r then ((ofVar x):acc, q) else (acc, poly)
+-}
 
 -- | Simplify the output ket up to non-linear transformations
 --
