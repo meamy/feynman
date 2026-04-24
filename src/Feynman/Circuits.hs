@@ -34,6 +34,19 @@ ccz x y z = [T x, T y, T z, CNOT x y, CNOT y z,
              CNOT z x, Tinv x, Tinv y, T z, CNOT y x,
              Tinv x, CNOT y z, CNOT z x, CNOT x y]
 
+-- | Doubly-controlled iZ
+cciz :: ID -> ID -> ID -> [Primitive]
+cciz x y z = [T z, CNOT x z, Tinv z, CNOT y z, T z,
+              CNOT x z, Tinv z, CNOT y z]
+
+-- | Temporary AND
+tAND :: ID -> ID -> ID -> [Primitive]
+tAND x y z = [H z] ++ cciz x y z ++ [H z, S z]
+
+-- | Inverse of tAND
+tinvAND :: ID -> ID -> ID -> [Primitive]
+tinvAND x y z = [H z, Measure z "_", CCtrl z (CZ x y)]
+
 {-----------------------------------
  Arithmetic
  -----------------------------------}

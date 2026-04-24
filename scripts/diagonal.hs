@@ -23,14 +23,17 @@ import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Strict (StateT, modify, get, gets, put, runState, evalState, evalStateT)
 
 import Feynman.Core
+import Feynman.Circuits
 import Feynman.Control
 import Feynman.Algebra.Base
 import Feynman.Algebra.Polynomial hiding (Var)
 import Feynman.Algebra.Polynomial.Multilinear
-import Feynman.Algebra.Pathsum.Balanced
+import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 
 import Feynman.Synthesis.Pathsum.Util (ExtractionGates)
 import Feynman.Synthesis.Pathsum.Unitary
+
+import qualified Debug.Trace as Trace
 
 import Test.QuickCheck
 
@@ -71,10 +74,10 @@ diag :: Int -> PseudoBoolean String DMod2 -> Pathsum DMod2
 diag n f = Pathsum 0 n n 0 (conv f) [ofVar (IVar i) | i <- [0..n-1]]
   
 -- | Computes the inner extension of a phase polynomial by merging pairs of monomials
-innerExt :: (Eq r, Abelian r, Dyadic r) => PseudoBoolean String r -> (PseudoBoolean String r, Map ID (String, String))
-innerExt = go Map.empty where
-  go tms p | degree p <= 3 = (p, tms)
-  go tms p | otherwise     =
+innerExt :: (Eq r, Abelian r, Dyadic r, Show r) => Int -> PseudoBoolean String r -> (PseudoBoolean String r, Map ID (String, String))
+innerExt deg = go Map.empty where
+  go tms p | degree p <= deg = (p, tms)
+  go tms p | otherwise       =
              let v        = "(" ++ show (length tms) ++ ")"
                  (x,y,p') = chooseMerge tms v p
              in
@@ -83,17 +86,15 @@ innerExt = go Map.empty where
   -- | Chooses which two variables to merge by minimizing high degree terms
   chooseMerge tms v p =
     let vlst = Set.toList (vars p)
-        f (_,_,p) (_,_,q) = compare (nTerms p) (nTerms q)
+        f (_,_,p) (_,_,q) = compare (totdeg p) (totdeg q)
     in
-      minimumBy f $ map (merge tms p v) [(x,y) | x <- vlst, y <- vlst]
+      minimumBy f $ map (merge tms p v) [(x,y) | x <- vlst, y <- vlst, x /= y]
 
-  -- | Calculates number of high degree terms
-  nTerms = length . filter (\(_,m) -> degree m > 3) . toTermList
+  -- | Calculates the sum of the degrees
+  totdeg = sum . map (\(_,m) -> max 0 (degree m - deg)) . toTermList
 
   -- | Merges two variables into a new variable v
-  merge tms p v (x,y) =
-    let m = Set.union (expand tms x) (expand tms y) in
-      (x,y,substMonomial (Set.toList m) (ofVar v) p)
+  merge tms p v (x,y) = (x,y,substMonomial [x,y] (ofVar v) p)
 
   -- | Maps combined variables into a set of variables
   expand tms x = case Map.lookup x tms of
@@ -101,10 +102,16 @@ innerExt = go Map.empty where
     Just (y,z) -> Set.union (expand tms y) (expand tms z)
   
 -- | Computes the outer extension of a phase polynomial by taking derivatives
-outerExt :: (Ord r, Eq r, Abelian r, Dyadic r) => PseudoBoolean String r -> (PseudoBoolean String r, Map ID ([String], PseudoBoolean String r))
-outerExt f = runState (go 0 [(f, [])]) Map.empty where
+outerExt :: (Ord r, Eq r, Abelian r, Dyadic r) => Int -> PseudoBoolean String r -> (PseudoBoolean String r, Map ID ([String], PseudoBoolean String r))
+outerExt deg f = (ofTermList f0 + f1', ext) where
+  
+  (f0,f1) = partition (\(_,m) -> degree m <= deg) $ toTermList f
+
+  (f1',ext) = runState (go 0 [(ofTermList f1, [])]) Map.empty
+
   go i []             = return 0
-  go i ((f,vs):xs)    = case length vs == 2 || degree f - length vs <= 3 of
+  go i ((0,_):xs)     = go i xs
+  go i ((f,vs):xs)    = case length vs == deg - 1 of
     True  -> do
       modify $ Map.insert ("(" ++ show i ++ ")") (vs, f)
       f' <- go (i+1) xs
@@ -124,6 +131,36 @@ synthDiag p = snd $ runWriter $ evalStateT go ctx where
   ctx = mkctx $ Map.fromList [("x" ++ show i, i) | i <- [1..n]]
   go  = let ?feynmanControl=defaultControl in phaseSimplificationsXAGRz (diag n p)
 
+-- | Synthesizes a CNOT-dihedral circuit
+synthFourier :: PhasePolynomial String DMod2 -> [Primitive]
+synthFourier = concat . map go . toTermList where
+  go (a,m) = case Set.toList $ vars m of
+    []     -> []
+    (x:xs) -> let comp = map (\y -> CNOT y x) xs in
+      comp ++ [Rz (Discrete a) x] ++ reverse comp
+
+-- | Synthesizes an oracle
+synthOracle :: SBool String -> [Primitive]
+synthOracle f =
+  let (fext, g) = innerExt 2 $ (lift $ (ofVar "y")*f) + distribute (dMod2 1 1) f
+      comp      = foldr (\(z, (x,y)) -> (tAND x y z ++)) [] $ Map.toList g
+      uncomp    = foldr (\(z, (x,y)) -> (++ tinvAND x y z)) [] $ Map.toList g
+      ff        =
+        let filt (a,m) = Set.member "y" (vars m) in
+          ofTermList . filter filt . toTermList $ fourier fext
+  in
+    comp ++ synthFourier ff ++ [S "y"] ++ uncomp
+
+-- | Synthesizes an uncomputation
+synthUncompute :: ID -> SBool String -> [Primitive]
+synthUncompute y f =
+  let (fext,g) = innerExt 2 $ lift f
+      comp     = foldr (\(z, (x,y)) -> (tAND x y z ++)) [] $ Map.toList g
+      uncomp   = foldr (\(z, (x,y)) -> (++ tinvAND x y z)) [] $ Map.toList g
+      ff       = fourier fext
+      fcomp    = comp ++ synthFourier ff ++ uncomp
+  in
+    [H y, Measure y "_"] ++ map (CCtrl y) fcomp
 
 {-------------------------------------
  Testing
@@ -140,9 +177,11 @@ x7 = ofVar "x7"
 x8 = ofVar "x8"
 x9 = ofVar "x9"
 
+q = x1*x2*x3 + x2*x3*x4 + x4*x5*x6 + x2*x3*x4*x5*x6
 
 p = x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8
 
+w = x1*x2*x3*x4 + x1*x5*x6*x7
 
 -- | Main script
 main :: IO ()

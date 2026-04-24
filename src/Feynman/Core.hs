@@ -260,9 +260,10 @@ removeSwaps = reverse . go (Map.empty, []) where
 -- Count the number of T-gates
 countT :: [Primitive] -> Int
 countT = foldr (+) 0 . map go where
-  go (T _) = 1
-  go (Tinv _) = 1
-  go _     = 0
+  go (T _)       = 1
+  go (Tinv _)    = 1
+  go (CCtrl _ g) = go g
+  go _           = 0
 
 -- Expand CNOT gates over H and CZ
 expandCNOT :: [Primitive] -> [Primitive]
