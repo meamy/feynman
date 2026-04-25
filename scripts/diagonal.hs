@@ -33,6 +33,8 @@ import Feynman.Algebra.Pathsum.Balanced hiding (dagger)
 import Feynman.Synthesis.Pathsum.Util (ExtractionGates)
 import Feynman.Synthesis.Pathsum.Unitary
 
+import Feynman.Verification.Channel
+
 import qualified Debug.Trace as Trace
 
 import Test.QuickCheck
@@ -142,14 +144,14 @@ synthFourier = concat . map go . toTermList where
 -- | Synthesizes an oracle
 synthOracle :: SBool String -> [Primitive]
 synthOracle f =
-  let (fext, g) = innerExt 2 $ (lift $ (ofVar "y")*f) + distribute (dMod2 1 1) f
+  let (fext, g) = innerExt 2 $ (lift $ (ofVar "y")*f) + distribute (dMod2 (-1) 1) f
       comp      = foldr (\(z, (x,y)) -> (tAND x y z ++)) [] $ Map.toList g
       uncomp    = foldr (\(z, (x,y)) -> (++ tinvAND x y z)) [] $ Map.toList g
-      ff        =
-        let filt (a,m) = Set.member "y" (vars m) in
-          ofTermList . filter filt . toTermList $ fourier fext
+      ff        = fourier fext
+        --let filt (a,m) = Set.member "y" (vars m) in
+        --  ofTermList . filter filt . toTermList $ fourier fext
   in
-    comp ++ synthFourier ff ++ [S "y"] ++ uncomp
+    [H "y"] ++ comp ++ synthFourier ff ++ uncomp ++ [H "y", S "y"]
 
 -- | Synthesizes an uncomputation
 synthUncompute :: ID -> SBool String -> [Primitive]
@@ -160,7 +162,7 @@ synthUncompute y f =
       ff       = fourier fext
       fcomp    = comp ++ synthFourier ff ++ uncomp
   in
-    [H y, Measure y "_"] ++ map (CCtrl y) fcomp
+    [H y, Measure y] ++ map (Ctrl y) fcomp
 
 {-------------------------------------
  Testing

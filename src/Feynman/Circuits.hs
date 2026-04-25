@@ -45,7 +45,7 @@ tAND x y z = [H z] ++ cciz x y z ++ [H z, S z]
 
 -- | Inverse of tAND
 tinvAND :: ID -> ID -> ID -> [Primitive]
-tinvAND x y z = [H z, Measure z "_", CCtrl z (CZ x y)]
+tinvAND x y z = [H z, Measure z, Ctrl z (CZ x y)]
 
 {-----------------------------------
  Arithmetic

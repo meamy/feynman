@@ -204,11 +204,11 @@ synthesizeChunks synth chunks = evalState (foldM synthesizeChunk [] chunks) Map.
 
 gtpar :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtpar synth vars inputs gates = synthesizeChunks (affineTrans synth) chunks
-  where chunks = backPropagate $ chunkify vars inputs gates
+  where chunks = reverse $ chunkify vars inputs gates
 
 gtparFast :: Synthesizer -> [ID] -> [ID] -> [Primitive] -> [Primitive]
 gtparFast synth vars inputs gates = synthesizeChunks (affineTrans synth') chunks
-  where chunks = chunkify vars inputs gates
+  where chunks = reverse $ chunkify vars inputs gates
         synth' = \i o mu ma -> (fst $ synth i o mu [], ma)
 
 {- Optimization algorithms -}

@@ -84,7 +84,7 @@ instance CircuitGate Primitive where
   foldGateReferences f a (Rz theta xID) = f a xID
   foldGateReferences f a (Rx theta xID) = f a xID
   foldGateReferences f a (Ry theta xID) = f a xID
-  foldGateReferences f a (Measure xID yID) = f (f a xID) yID
+  foldGateReferences f a (Measure xID)  = f a xID
   foldGateReferences f a (Reset xID) = f a xID
   foldGateReferences f a (Uninterp name xyIDs) = foldl' f a xyIDs
 
@@ -102,7 +102,7 @@ instance CircuitGate Primitive where
   mapGateReferences f (Rz theta xID) = Rz theta (f xID)
   mapGateReferences f (Rx theta xID) = Rx theta (f xID)
   mapGateReferences f (Ry theta xID) = Ry theta (f xID)
-  mapGateReferences f (Measure xID yID) = Measure (f xID) (f yID)
+  mapGateReferences f (Measure xID)  = Measure (f xID)
   mapGateReferences f (Reset xID) = Reset (f xID)
   mapGateReferences f (Uninterp name xyIDs) = Uninterp name (map f xyIDs)
 

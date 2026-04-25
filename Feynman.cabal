@@ -79,6 +79,7 @@ library
       Feynman.Synthesis.XAG.Util
       Feynman.Util.Unicode
       Feynman.Verification.Symbolic
+      Feynman.Verification.Channel
   hs-source-dirs:
       src
   default-extensions:
