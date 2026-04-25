@@ -160,6 +160,17 @@ executables:
     - containers
     - QuickCheck
   
+  diagonal:
+    main:        diagonal.hs
+    source-dirs: scripts
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+    - QuickCheck
+  
   hs:
     main:        hs.hs
     source-dirs: scripts

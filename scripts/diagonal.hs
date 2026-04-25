@@ -121,8 +121,12 @@ outerExt f = runState (go 0 [(f, [])]) Map.empty where
 synthDiag :: PseudoBoolean String DMod2 -> [ExtractionGates]
 synthDiag p = snd $ runWriter $ evalStateT go ctx where
   n   = Set.size $ vars p
-  ctx = mkctx $ Map.fromList [("x" ++ show i, i) | i <- [1..n]]
-  go  = let ?feynmanControl=defaultControl in phaseSimplificationsXAGRz (diag n p)
+  ctx = mkctx $ Map.fromList [("x" ++ show (i + 1), i) | i <- [0..n-1]]
+  go  = let ?feynmanControl=(defaultControl {
+                              fcfTrace_Synthesis_Pathsum_Unitary = True,
+                              fcfTrace_Synthesis_XAG = True,
+                              fcfTrace_Graph = True
+                            }) in phaseSimplificationsXAGRz (diag n p)
 
 
 {-------------------------------------
@@ -147,4 +151,4 @@ p = x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8
 -- | Main script
 main :: IO ()
 main = do
-  putStrLn "There's nothing here!"
+  putStrLn (show (synthDiag p))
