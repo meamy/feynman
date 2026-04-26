@@ -1,6 +1,6 @@
 cabal-version: 2.2
 
--- This file has been generated from package.yaml by hpack version 0.37.0.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -94,9 +94,9 @@ library
       TupleSections
       TypeFamilies
   ghc-options: -O2 -Wno-unrecognised-pragmas
-  build-tools:
-      alex
-    , happy
+  build-tool-depends:
+      alex:alex
+    , happy:happy
   build-depends:
       QuickCheck
     , array
@@ -162,6 +162,30 @@ executable ar21
   ghc-options: -O2 -Wno-unrecognised-pragmas
   build-depends:
       Feynman
+    , base
+    , containers
+    , mtl
+  default-language: Haskell2010
+
+executable diagonal
+  main-is: diagonal.hs
+  hs-source-dirs:
+      scripts
+  default-extensions:
+      BangPatterns
+      ConstraintKinds
+      ExistentialQuantification
+      FlexibleContexts
+      FlexibleInstances
+      GADTs
+      ImplicitParams
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
+  build-depends:
+      Feynman
+    , QuickCheck
     , base
     , containers
     , mtl
