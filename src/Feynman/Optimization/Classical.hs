@@ -4,21 +4,21 @@ import Control.Monad.State.Strict
 import Data.Bifunctor (bimap, second)
 import Data.Foldable (foldl')
 import Data.Map (Map, (!))
-import Data.Map qualified as Map
+import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.MultiSet (MultiSet)
-import Data.MultiSet qualified as MultiSet
+import qualified Data.MultiSet as MultiSet
 import Data.Multimap (Multimap)
-import Data.Multimap qualified as Multimap
+import qualified Data.Multimap as Multimap
 import Data.Set (Set)
-import Data.Set qualified as Set
+import qualified Data.Set as Set
 import Debug.Trace (trace)
 import Feynman.Core
 import Feynman.Graph
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Reversible.Allocation
 import Feynman.Synthesis.Reversible.Allocation.ComputeFirst (computeFirstAllocate)
-import Feynman.Synthesis.XAG.Graph qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
 import Feynman.Synthesis.XAG.MinMultSat (resynthesizeMinMultSat)
 import Feynman.Synthesis.XAG.Util (fromMCTs, toMCTs)
 

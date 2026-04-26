@@ -80,6 +80,56 @@ cucarro a b =
   in
     go carry (reverse a) (reverse b)
 
+-- | out-of-place adder. 2(n-1) Toffolis 
+oopAdder :: [ID] -> [ID] -> [ID] -> [Primitive]
+oopAdder a b c =
+  let anc                = ["_anc" ++ show i | i <- [0..]]
+      maj2 b c t         = ccx c b t
+      maj a b c t        = [CNOT c a, CNOT c b, CNOT c t] ++ ccx a b t ++ [CNOT c a, CNOT c b]
+      add _ _ [] _ _          = []
+      add [] [] (c:cs) cin _  = [CNOT cin c]
+      add [] b c cin anc = add b [] c cin anc
+      add (a:as) [] (c:cs) cin anc =
+        let cout = head anc in
+          [CNOT a c, CNOT cin c] ++
+          maj2 a cin cout ++
+          add as [] cs cout (tail anc) ++
+          dagger (maj2 a cin cout)
+      add (a:as) (b:bs) (c:cs) cin anc = 
+        let cout = head anc in
+          [CNOT a c, CNOT b c, CNOT cin c] ++
+          maj a b cin cout ++
+          add as bs cs cout (tail anc) ++
+          dagger (maj a b cin cout)
+  in
+    add a b c (head anc) (tail anc)
+
+{-
+-- | Hamming weight calculation
+hamming :: [ID] -> [Primitive]
+hamming xs tgt = go 0 (pairs xs) where
+
+  pairs []       = [[]]
+  pairs [x]      = [[x]]
+  pairs (x:y:xs) = [x,y]:(pairs xs)
+
+  go i []        = []
+  go i [[x]]     = []
+  go i xs        =
+    let (xs',i',circ) = foo i xs in
+      circ ++ go i' xs'
+
+  foo i []        = ([],i,[])
+  go i ([x]:xs)   = let (xs',i',circ) = go i xs in (([x]:xs'),i',circ)
+  go i ([x,y]:xs) =
+    let (xs',i',circ) = go i xs
+        circ'         = add x y ["_hamming_" ++ show j | j <- [i..i+1+(max (length x) (length y))]]
+    in
+      
+    in 
+
+  let anc = ["_anc" ++ show i | i <- [
+-}
 {-----------------------------------
  Algorithms
  -----------------------------------}

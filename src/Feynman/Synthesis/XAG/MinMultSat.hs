@@ -12,18 +12,18 @@ import Control.Exception (assert)
 import Control.Monad (foldM, replicateM)
 import Control.Monad.State.Strict (State, gets, modify, runState)
 import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
+import qualified Data.IntMap.Strict as IntMap
 import Data.IntSet (IntSet)
-import Data.IntSet qualified as IntSet
+import qualified Data.IntSet as IntSet
 import Data.List (intercalate)
 import Data.Map (Map)
-import Data.Map qualified as Map
+import qualified Data.Map as Map
 import Data.Maybe (fromJust, fromMaybe, mapMaybe)
 import Feynman.Control
 import Feynman.Core (HasFeynmanControl)
-import Feynman.Synthesis.XAG.Graph qualified as XAG
-import Feynman.Synthesis.XAG.Simplify qualified as XAG
-import Feynman.Synthesis.XAG.Subgraph qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
+import qualified Feynman.Synthesis.XAG.Simplify as XAG
+import qualified Feynman.Synthesis.XAG.Subgraph as XAG
 import SAT.MiniSat
 
 traceMMS :: (HasFeynmanControl) => String -> a -> a

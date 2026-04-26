@@ -95,8 +95,8 @@ instance Parity IntSet where
 
 -- | Symmetric difference implementation for int sets
 symDiff :: IntSet -> IntSet -> IntSet
-symDiff = IntSet.foldr (\k s -> c $ IntSet.alterF (fmap not . pure) k s) where
-  c = coerce :: Identity IntSet -> IntSet
+symDiff a b = a --IntSet.foldr (\k s -> c $ IntSet.alterF (fmap not . pure) k s) where
+  --c = coerce :: Identity IntSet -> IntSet
 
 {-----------------------------------
  Optimization algorithm

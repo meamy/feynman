@@ -1,4 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
 
 {-# HLINT ignore "Use second" #-}
 
@@ -9,9 +8,9 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Data.Foldable (foldl')
 import Data.Map.Strict (Map, (!))
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Set (Set)
-import Data.Set qualified as Set
+import qualified Data.Set as Set
 import Debug.Trace (traceM)
 import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced

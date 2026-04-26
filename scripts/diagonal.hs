@@ -126,11 +126,11 @@ outerExt deg f = (ofTermList f0 + f1', ext) where
 
   cmp (f0,v,f1) (g0,u,g1) = compare (length $ toTermList f1) (length $ toTermList g1)
 
--- |
+-- | Synthesize a diagonal gate
 synthDiag :: PseudoBoolean String DMod2 -> [ExtractionGates]
 synthDiag p = snd $ runWriter $ evalStateT go ctx where
   n   = Set.size $ vars p
-  ctx = mkctx $ Map.fromList [("x" ++ show i, i) | i <- [1..n]]
+  ctx = mkctx $ Map.fromList [("x" ++ show i, i) | i <- [0..n-1]]
   go  = let ?feynmanControl=defaultControl in phaseSimplificationsXAGRz (diag n p)
 
 -- | Synthesizes a CNOT-dihedral circuit

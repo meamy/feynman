@@ -3,14 +3,14 @@ module Feynman.Synthesis.Reversible.Allocation where
 import Control.Exception (assert)
 import Data.Bifunctor (first)
 import Data.IntMap (IntMap)
-import Data.IntMap qualified as IntMap
+import qualified Data.IntMap as IntMap
 import Data.IntMultiSet (IntMultiSet)
-import Data.IntMultiSet qualified as IntMultiSet
+import qualified Data.IntMultiSet as IntMultiSet
 import Data.Maybe (fromMaybe)
 import Data.Set (Set)
-import Data.Set qualified as Set
+import qualified Data.Set as Set
 import Data.Tuple (swap)
-import Feynman.Synthesis.XAG.Graph qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
 
 newtype Computation = C Int deriving (Eq, Ord, Show)
 

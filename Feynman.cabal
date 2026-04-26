@@ -90,7 +90,6 @@ library
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -133,7 +132,6 @@ executable abr22
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -158,7 +156,6 @@ executable ar21
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -184,7 +181,6 @@ executable feynopt
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -216,7 +212,6 @@ executable feynsim
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -246,7 +241,6 @@ executable feynver
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -276,7 +270,6 @@ executable hs
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -301,7 +294,6 @@ executable qc2qasm
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies
@@ -336,7 +328,6 @@ test-suite FeynmanSpecs
       FlexibleInstances
       GADTs
       ImplicitParams
-      ImportQualifiedPost
       Rank2Types
       TupleSections
       TypeFamilies

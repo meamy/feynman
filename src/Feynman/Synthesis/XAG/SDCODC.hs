@@ -1,5 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-
 module Feynman.Synthesis.XAG.SDCODC
   ( canReduce,
     findAndIDs,
@@ -10,11 +8,11 @@ module Feynman.Synthesis.XAG.SDCODC
   )
 where
 
-import Data.IntMap.Strict qualified as IntMap
-import Data.IntSet qualified as IntSet
+import qualified Data.IntMap.Strict as IntMap
+import qualified Data.IntSet as IntSet
 import Data.List (sort)
 import Data.Maybe (isNothing, mapMaybe)
-import Feynman.Synthesis.XAG.Graph qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
 import SAT.MiniSat
 
 sdcodcOptimize :: XAG.Graph -> XAG.Graph

@@ -1,5 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-
 module Feynman.Synthesis.XAG.Simplify
   ( mergeStructuralDuplicates,
     mergeStructuralDuplicateNodes,
@@ -7,11 +5,11 @@ module Feynman.Synthesis.XAG.Simplify
 where
 
 import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
+import qualified Data.IntMap.Strict as IntMap
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (Maybe (..))
-import Feynman.Synthesis.XAG.Graph qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
 
 data MergeState = MergeState
   { mergeFalse :: Maybe Int,

@@ -8,12 +8,12 @@ import Control.Monad (foldM)
 import Control.Monad.State.Strict
 import Data.Bifunctor (second)
 import Data.Foldable (foldl')
-import Data.IntMap qualified as IntMap
+import qualified Data.IntMap as IntMap
 import Data.Map.Strict (Map, (!))
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (fromJust, isJust, mapMaybe)
 import Data.Set (Set, (\\))
-import Data.Set qualified as Set
+import qualified Data.Set as Set
 import Debug.Trace (trace)
 import Feynman.Synthesis.Reversible.Allocation
 

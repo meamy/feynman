@@ -6,11 +6,11 @@ import Data.Bifunctor (second)
 import Data.Foldable (Foldable (..), foldl')
 import Data.Kind (Type)
 import Data.Map.Strict (Map, (!))
-import Data.Map.Strict qualified as Map
+import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import Data.Semigroup.Union
 import Data.Set (Set)
-import Data.Set qualified as Set
+import qualified Data.Set as Set
 import Data.Traversable (for)
 import Data.Tuple (swap)
 import Feynman.Control

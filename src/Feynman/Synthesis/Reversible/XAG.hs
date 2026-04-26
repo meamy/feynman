@@ -4,9 +4,9 @@ import Data.Maybe (fromMaybe)
 import Feynman.Control
 import Feynman.Core
 import Feynman.Synthesis.Pathsum.Util
-import Feynman.Synthesis.XAG.Graph qualified as XAG
-import Feynman.Synthesis.XAG.MinMultSat qualified as XAG
-import Feynman.Synthesis.XAG.Simplify qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
+import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
+import qualified Feynman.Synthesis.XAG.Simplify as XAG
 import Feynman.Synthesis.XAG.Util (toMCTs)
 
 -- take a boolean function and synthesize input-saving

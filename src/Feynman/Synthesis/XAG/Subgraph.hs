@@ -1,5 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-
 module Feynman.Synthesis.XAG.Subgraph
   ( Subgraph (..),
     coverSubgraph,
@@ -15,13 +13,13 @@ module Feynman.Synthesis.XAG.Subgraph
 where
 
 import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
+import qualified Data.IntMap.Strict as IntMap
 import Data.IntSet (IntSet)
-import Data.IntSet qualified as IntSet
+import qualified Data.IntSet as IntSet
 import Data.List (sort, sortOn)
 import Data.Maybe (isNothing)
-import Feynman.Synthesis.XAG.Graph qualified as XAG
-import Feynman.Synthesis.XAG.Simplify qualified as XAG
+import qualified Feynman.Synthesis.XAG.Graph as XAG
+import qualified Feynman.Synthesis.XAG.Simplify as XAG
 
 data Subgraph = Subgraph
   { subNodes :: [XAG.Node],

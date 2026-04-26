@@ -1,5 +1,4 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE InstanceSigs #-}
 
 module Feynman.Synthesis.XAG.Graph
@@ -20,13 +19,13 @@ where
 
 import Data.Bits (Bits (xor, (.&.)))
 import Data.IntMap.Strict (IntMap)
-import Data.IntMap.Strict qualified as IntMap
+import qualified Data.IntMap.Strict as IntMap
 import Data.IntSet (IntSet)
-import Data.IntSet qualified as IntSet
+import qualified Data.IntSet as IntSet
 import Data.List (sort)
 import GHC.Float (sqrtFloat)
 import GHC.Generics (Generic)
-import Test.QuickCheck qualified as QC
+import qualified Test.QuickCheck as QC
 
 -- The Graph is a list of Node; each node has a nodeID, uniquely identifying it.
 -- Nodes are ordered by increasing nodeID, and the graph should be acyclic, with
