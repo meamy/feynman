@@ -240,6 +240,29 @@ synthUncompute y f =
   in
     [H y, Measure y] ++ map (Ctrl y) fcomp
 
+-- | Synthesizes an uncomputation
+synthUncomputeInner :: Int -> ID -> SBool String -> [Primitive]
+synthUncomputeInner k y f =
+  let (fext,g) = innerExt k $ lift f
+      comp     = foldr (\(z, (x,y)) -> (tAND x y z ++)) [] $ Map.toList g
+      uncomp   = foldr (\(z, (x,y)) -> (++ tinvAND x y z)) [] $ Map.toList g
+      ff       = fourier fext
+      fcomp    = comp ++ synthFourier ff ++ uncomp
+  in
+    [H y, Measure y] ++ map (Ctrl y) fcomp
+
+-- | Synthesizes an uncomputation
+synthUncomputeOuter :: Int -> ID -> SBool String -> [Primitive]
+synthUncomputeOuter k y f =
+  let (fext,g) = outerExt k $ f
+      xagsynth = synthBools . snd . unzip . Map.elems $ g
+      comp     = lowerExtraction xagsynth
+      uncomp   = lowerExtractionInv xagsynth
+      ff       = fourier (lift fext :: PseudoBoolean String DMod2)
+      fcomp    = comp ++ synthFourier ff ++ uncomp
+  in
+    [H y, Measure y] ++ map (Ctrl y) fcomp
+
 {-------------------------------------
  Testing
  -------------------------------------}
