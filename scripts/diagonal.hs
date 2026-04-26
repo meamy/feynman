@@ -11,6 +11,8 @@ Portability : portable
 
 module Main where
 
+import Data.Foldable (foldl')
+
 import Data.List
 
 import Data.Set (Set)
@@ -31,6 +33,8 @@ import Feynman.Algebra.Pathsum.Balanced
 
 import Feynman.Synthesis.Pathsum.Util (ExtractionGates)
 import Feynman.Synthesis.Pathsum.Unitary
+import Feynman.Synthesis.Reversible.XAG (minimizeXAG, inputSavingXAGSynth)
+import Feynman.Synthesis.XAG.Util (fromSBools)
 
 import Test.QuickCheck
 
@@ -117,16 +121,35 @@ outerExt f = runState (go 0 [(f, [])]) Map.empty where
 
   cmp (f0,v,f1) (g0,u,g1) = compare (length $ toTermList f1) (length $ toTermList g1)
 
+
+control = defaultControl {
+            fcfTrace_Synthesis_Pathsum_Unitary = True,
+            fcfTrace_Synthesis_XAG = True,
+            fcfTrace_Graph = True
+          }
+
 -- |
 synthDiag :: PseudoBoolean String DMod2 -> [ExtractionGates]
 synthDiag p = snd $ runWriter $ evalStateT go ctx where
   n   = Set.size $ vars p
   ctx = mkctx $ Map.fromList [("x" ++ show (i + 1), i) | i <- [0..n-1]]
-  go  = let ?feynmanControl=(defaultControl {
-                              fcfTrace_Synthesis_Pathsum_Unitary = True,
-                              fcfTrace_Synthesis_XAG = True,
-                              fcfTrace_Graph = True
-                            }) in phaseSimplificationsXAGRz (diag n p)
+  go  = let ?feynmanControl=control in phaseSimplificationsXAGRz (diag n p)
+
+
+-- foldl' (\(m, ids@(i : remainIDs)) s -> maybe (Map.insert i s, remainIDs) (\_ -> (m, ids)) (lookup s m)) (Map.empty, [0..]) sbools
+
+
+-- |
+synthBools :: [SBool String] -> [ExtractionGates]
+synthBools sbools = xagGates where
+  !allVars       = Set.toList (foldl' Set.union Set.empty (map vars sbools))
+  !idToIndex     = Map.fromList (zip allVars [0..])
+  !indexToID     = Map.fromList (zip [0..] allVars)
+  !idxSBools     = map (rename (IVar . (idToIndex !))) sbools
+  !xag           = let ?feynmanControl=control in minimizeXAG (fromSBools (length allVars) idxSBools)
+  !outputNames   = ["y" ++ show i | i <- [1..length sbools]]
+  ancillaNames   = ["A" ++ show i | i <- [1..]]
+  (xagGates, _)  = let ?feynmanControl=control in inputSavingXAGSynth xag allVars outputNames ancillaNames
 
 
 {-------------------------------------
@@ -134,16 +157,10 @@ synthDiag p = snd $ runWriter $ evalStateT go ctx where
  -------------------------------------}
 
 x1,x2,x3,x4,x5,x6,x7,x8,x9 :: PseudoBoolean String DMod2
-x1 = ofVar "x1"
-x2 = ofVar "x2"
-x3 = ofVar "x3"
-x4 = ofVar "x4"
-x5 = ofVar "x5"
-x6 = ofVar "x6"
-x7 = ofVar "x7"
-x8 = ofVar "x8"
-x9 = ofVar "x9"
+[x1,x2,x3,x4,x5,x6,x7,x8,x9] = [ofVar ("x" ++ show i) | i <- [1..9]]
 
+x1b,x2b,x3b,x4b,x5b,x6b,x7b,x8b,x9b :: SBool String
+[x1b,x2b,x3b,x4b,x5b,x6b,x7b,x8b,x9b] = [ofVar ("x" ++ show i) | i <- [1..9]]
 
 p = x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8
 
@@ -151,4 +168,6 @@ p = x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8
 -- | Main script
 main :: IO ()
 main = do
-  putStrLn (show (synthDiag p))
+  putStrLn (show (synthDiag $ x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8))
+  putStrLn (show (synthBools $ [x1b*x2b*x3b + x1b*x2b*x3b*x5b, x1b*x2b*x3b + x1b*x2b*x3b*x5b]))
+
