@@ -219,15 +219,15 @@ synthOracleOuter k f =
       xagsynth  = synthBools . snd . unzip . Map.elems $ g
       comp      = lowerExtraction xagsynth
       uncomp    = lowerExtractionInv xagsynth
-      ff        = fourier (lift fext :: PseudoBoolean String DMod2)
+      ff        = --fourier (lift fext :: PseudoBoolean String DMod2)
+        let filt (a,m) = Set.member "y" (vars m) in
+          ofTermList . filter filt . toTermList $ fourier (lift fext :: PseudoBoolean String DMod2)
       names     = Map.fromList $ zip (Map.keys $ g) ["y" ++ show i | i <- [1..]]
       sub str   = case Map.lookup str names of
         Nothing   -> str
         Just str' -> str'
-        --let filt (a,m) = Set.member "y" (vars m) in
-        --  ofTermList . filter filt . toTermList $ fourier fext
   in
-    [H "y"] ++ comp ++ subst sub (synthFourier ff) ++ uncomp ++ [H "y"]
+    [H "y"] ++ comp ++ subst sub (synthFourier ff) ++ uncomp ++ [H "y", S "y"]
 
 -- | Synthesizes an uncomputation
 synthUncompute :: ID -> SBool String -> [Primitive]
