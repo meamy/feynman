@@ -306,7 +306,7 @@ shavePseudoBoolean poly maxN =
   where
     dyFrac = distribute (dMod2 1 maxN) sboolFrac
     sboolFrac = ofTermList (map (first (const 1)) oddNFracTerms)
-    oddNFracTerms = filter (odd . numer. unpack . fst) nFracTerms
+    oddNFracTerms = nFracTerms  -- filter (odd . numer. unpack . fst) nFracTerms
     nFracTerms = filter ((\(Dy _ dn) -> maxN == dn)  . unpack . fst) (toTermList poly)
 
 -- | Returns a list of triples of (suggested qubit ID, power, pseudo-boolean)
@@ -345,7 +345,7 @@ phaseSimplificationsXAGRz sop = do
   ctx <- gets idToIndex
   revCtx <- gets indexToID
   sboolShavings <- shavePhase sop prefix
-  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+  let phaseGates = [Phase (dMod2 1 n) [ancN] | (ancN, n, _ ) <- sboolShavings]
   let sbools = [rename (IVar . (ctx !)) sbool | (_, _, sbool) <- sboolShavings]
   traceU ("Phase SBools, using IVars " ++ show sbools) $ return ()
   let xag = minimizeXAG (fromSBools (inDeg sop) sbools)

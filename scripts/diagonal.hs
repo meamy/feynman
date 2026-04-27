@@ -21,6 +21,7 @@ import qualified Data.Set as Set
 import Data.Map (Map,(!))
 import qualified Data.Map as Map
 
+import Control.Monad
 import Control.Monad.Writer.Lazy (Writer, tell, runWriter, execWriter)
 import Control.Monad.State.Strict (StateT, modify, get, gets, put, runState, evalState, evalStateT)
 
@@ -40,9 +41,14 @@ import Feynman.Synthesis.XAG.Util (fromSBools)
 
 import Feynman.Verification.Channel
 
+import Numeric
+import System.CPUTime (getCPUTime)
+
 import qualified Debug.Trace as Trace
 
 import Test.QuickCheck
+
+formatFloatN floatNum numOfDecimals = showFFloat (Just numOfDecimals) floatNum ""
 
 instance Arbitrary (SBool String) where
   arbitrary = sized $ \n -> do
@@ -157,20 +163,40 @@ lowerExtractionInv = concatMap go . reverse where
   go (Hadamard x)      = [H x]
   go (Swapper x y)     = [Swap x y]
 
--- |
+-- | Synthesizes a diagonal gate
 synthDiag :: PseudoBoolean String DMod2 -> [ExtractionGates]
 synthDiag p = snd $ runWriter $ evalStateT go ctx where
   n   = Set.size $ vars p
   ctx = mkctx $ Map.fromList [("x" ++ show (i + 1), i) | i <- [0..n-1]]
   go  = let ?feynmanControl=control in phaseSimplificationsXAGRz (diag n p)
+  
+-- | Fixes the uncomputation step
+synthDiagPrim :: PseudoBoolean String DMod2 -> [Primitive]
+synthDiagPrim p =
+  let isPhase g      = case g of
+        Phase _ _ -> True
+        _         -> False
+      xagsynth       = synthDiag p
+      (forward,rest) = span (not . isPhase) xagsynth
+      (phase,back)   = span (isPhase) rest
+  in
+    lowerExtraction (forward ++ phase) ++ lowerExtractionInv forward
 
-
--- foldl' (\(m, ids@(i : remainIDs)) s -> maybe (Map.insert i s, remainIDs) (\_ -> (m, ids)) (lookup s m)) (Map.empty, [0..]) sbools
-
+-- | Baseline diagonal gate synthesis
+synthDiagBase :: PseudoBoolean String DMod2 -> [Primitive]
+synthDiagBase p =
+  let tms       = toTermList $ p
+      xagsynth  = synthBools . map ofMonomial . snd . unzip $ tms
+      comp      = lowerExtraction xagsynth
+      rot       = [Rz (Discrete a) ("y" ++ show i) | (a,i) <- zip (fst . unzip $ tms) [1..]]
+      uncomp    = lowerExtractionInv xagsynth
+  in
+    comp ++ rot ++ uncomp
 
 -- |
 synthBools :: [SBool String] -> [ExtractionGates]
-synthBools sbools = xagGates where
+synthBools sbools' = xagGates where
+  !sbools        = map dropConstant . filter (\p -> not $ isConst p) $ sbools'
   !allVars       = Set.toList (foldl' Set.union Set.empty (map vars sbools))
   !idToIndex     = Map.fromList (zip allVars [0..])
   !indexToID     = Map.fromList (zip [0..] allVars)
@@ -187,6 +213,14 @@ synthFourier = concat . map go . toTermList where
     []     -> []
     (x:xs) -> let comp = map (\y -> CNOT y x) xs in
       comp ++ [Rz (Discrete a) x] ++ reverse comp
+
+-- | Baseline oracle synthesis
+synthBool :: SBool String -> [Primitive]
+synthBool 0 = []
+synthBool 1 = []
+synthBool f = circ ++ xcorr where
+  circ  = lowerExtraction . synthBools $ [dropConstant f]
+  xcorr = if (getConstant f == 1) then [X "y1"] else []
 
 -- | Synthesizes an oracle
 synthOracle :: SBool String -> [Primitive]
@@ -216,7 +250,7 @@ synthOracleInner k f =
 synthOracleOuter :: Int -> SBool String -> [Primitive]
 synthOracleOuter k f =
   let (fext, g) = outerExt k $ (ofVar "y")*f
-      xagsynth  = synthBools . snd . unzip . Map.elems $ g
+      xagsynth  = synthBools . map (dropConstant) . snd . unzip . Map.elems $ g
       comp      = lowerExtraction xagsynth
       uncomp    = lowerExtractionInv xagsynth
       ff        = --fourier (lift fext :: PseudoBoolean String DMod2)
@@ -255,13 +289,61 @@ synthUncomputeInner k y f =
 synthUncomputeOuter :: Int -> ID -> SBool String -> [Primitive]
 synthUncomputeOuter k y f =
   let (fext,g) = outerExt k $ f
-      xagsynth = synthBools . snd . unzip . Map.elems $ g
+      xagsynth = synthBools . map (dropConstant) . snd . unzip . Map.elems $ g
       comp     = lowerExtraction xagsynth
       uncomp   = lowerExtractionInv xagsynth
       ff       = fourier (lift fext :: PseudoBoolean String DMod2)
       fcomp    = comp ++ synthFourier ff ++ uncomp
   in
     [H y, Measure y] ++ map (Ctrl y) fcomp
+
+{-------------------------------------
+ Utilities for experiments
+ -------------------------------------}
+
+-- | Computes the T-count of the hamming weight computation
+hammingTCount :: Int -> Int
+hammingTCount i = go 0 (replicate i 1) where
+
+  pairs []       = []
+  pairs [x]      = [[x]]
+  pairs (x:y:xs) = [x,y]:(pairs xs)
+
+  go i []        = i
+  go i [x]       = i
+  go i xs        = let (j,xs') = addUp (pairs xs) in go (i+j) xs'
+
+  addUp []         = (0,[])
+  addUp [[x]]      = (0,[x])
+  addUp ([x,y]:xs) =
+    let len     = max x y
+        (i,xs') = addUp xs
+    in
+      (i + 4*len, (len+1):xs')
+
+{-------------------------------------
+ Benchmark experiments
+ -------------------------------------}
+
+oracleBench :: Int -> IO ()
+oracleBench nvars = do
+  putStrLn "#,base T, base time, inner 2 T, inner 2 time, outer 2 T, outer 2 time, inner 3 T, inner 3 time, outer 3 T, outer 3 time, uncompute inner 2 T, uncompute inner 2 time, uncompute out 2 T, uncompute outer 2 time, uncompute inner 3 T, uncompute inner 3 time, uncompute outer 3 T, uncompute outer 3 time"
+  forM_ [1..1000] processLine
+  where
+    processLine i = do
+      p <- generate $ randomBool nvars
+      putStr $ show i
+      forM_ [synthBool, synthOracleInner 2, synthOracleOuter 2, synthOracleInner 3, synthOracleOuter 3, synthUncomputeInner 2 "y1", synthUncomputeOuter 2 "y1", synthUncomputeInner 3 "y1", synthUncomputeOuter 3 "y1"] (go p)
+      putStrLn ""
+
+    go p method = do
+      putStr ","
+      start <- getCPUTime
+      putStr $ show $ countT $ method p
+      putStr ","
+      end <- getCPUTime
+      putStr $ formatFloatN ((fromIntegral $ end - start) / 10^9) 3
+      
 
 {-------------------------------------
  Testing
@@ -288,6 +370,9 @@ w = x1*x2*x3*x4 + x1*x5*x6*x7
 -- | Main script
 main :: IO ()
 main = do
-  putStrLn (show (synthDiag $ x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8))
-  putStrLn (show (synthBools $ [x1b*x2b*x3b + x1b*x2b*x3b*x5b, x1b*x2b*x3b + x1b*x2b*x3b*x5b]))
+  -- putStrLn (show (synthDiag $ x1*x2*x3*x4 + x2*x3*x4*x5 + x4*x5*x6*x7 + x2*x3*x4*x5*x6*x8))
+  --putStrLn (show (synthBools $ [x1b*x2b*x3b + x1b*x2b*x3b*x5b, x1b*x2b*x3b + x1b*x2b*x3b*x5b]))
+ -- oracleBench 6
+ -- oracleBench 7
+  oracleBench 8
 
