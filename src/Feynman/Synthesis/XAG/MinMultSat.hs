@@ -60,6 +60,11 @@ resynthesizeMinMultSat g =
                 then resynthesizeAux (multComplexity + 1)
                 else Nothing
 
+    -- This is meant to partition the graph into subgraphs which are
+    -- independent in their inputs-output maps, i.e. no inputs from one
+    -- subgraph are part of another, and no outputs from one subgraph are
+    -- part of another. This partitioning would only help efficiency and not
+    -- correctness, so it's stubbed out for now
     partitionSeparable :: XAG.Subgraph -> [XAG.Subgraph]
     partitionSeparable subG = [subG]
 
@@ -77,6 +82,9 @@ resynthesizeMinMultSat g =
             }
         (tt, inIdxs, outIdxs) = truthTableFromSubgraph subG
 
+    -- This checks if it's possible to perform a trivial affine synthesis for
+    -- some outputs, before doing the heavyweight synthesis, to reduce the
+    -- complexity of the hard problem
     separateTrivialAffine :: XAG.Subgraph -> ([XAG.Subgraph], XAG.Subgraph)
     separateTrivialAffine subG =
       (trivSlices, XAG.coverSubgraph subG (IntSet.toList nonTrivIdxs))

@@ -97,6 +97,8 @@ toSynthesizableTerms mapInput outPoly =
     termIDs term = [mapInput i | IVar i <- Set.toList (vars term)]
 
 genTerm :: (FF2, [Int]) -> State GenState Int
+genTerm (1, []) = addNode (`Const` True)
+genTerm (0, []) = addNode (`Const` False)
 genTerm (1, varIDs) = genTree And varIDs
 genTerm (0, varIDs) = do
   error "Unexpected?"

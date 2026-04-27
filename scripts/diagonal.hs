@@ -195,8 +195,7 @@ synthDiagBase p =
 
 -- |
 synthBools :: [SBool String] -> [ExtractionGates]
-synthBools sbools' = xagGates where
-  !sbools        = map dropConstant . filter (\p -> not $ isConst p) $ sbools'
+synthBools sbools = xagGates where
   !allVars       = Set.toList (foldl' Set.union Set.empty (map vars sbools))
   !idToIndex     = Map.fromList (zip allVars [0..])
   !indexToID     = Map.fromList (zip [0..] allVars)
