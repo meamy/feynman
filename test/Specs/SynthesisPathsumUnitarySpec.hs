@@ -10,13 +10,13 @@ import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 
---import qualified Feynman.Core as Core
+import Feynman.Core (Angle (..), HasFeynmanControl, ID, Primitive (..))
+import qualified Feynman.Core as Core
 import Feynman.Algebra.Base
 import Feynman.Algebra.Pathsum.Balanced
 import qualified Feynman.Algebra.Pathsum.Balanced as PS
 import Feynman.Circuits
 import Feynman.Control
-import Feynman.Core
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Unitary
 import Feynman.Synthesis.Pathsum.Util

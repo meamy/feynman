@@ -4,7 +4,6 @@ import Test.Hspec
 import Test.Hspec.QuickCheck
 import Test.QuickCheck
 
-import Feynman.Core
 import qualified Feynman.Core as Core
 import Feynman.Algebra.Pathsum.Balanced
 import Feynman.Synthesis.Pathsum.Clifford
