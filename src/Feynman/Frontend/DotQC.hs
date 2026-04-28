@@ -219,7 +219,7 @@ mct :: [ID] -> [Gate]
 mct = go 0
   where go i []         = []
         go i (x:[])     = [Gate "X" 1 []]
-        go i (x:y:[])   = [Gate "tof" 1 [x,y]]
+        go i (x:y:[])   = [Gate "cnot" 1 [x,y]]
         go i (x:y:z:[]) = [Gate "tof" 1 [x,y,z]]
         go i (x:y:z:xs) =
           let anc        = "anc" ++ show i
@@ -254,14 +254,14 @@ gateToCliffordT (Gate g i p) =
                             CNOT y x, T x, CNOT y z, CNOT z x, Tinv x,
                             T z, CNOT y x, H z]
         ("X", xs) | length xs > 3 -> toCliffordT $ mct xs
+        ("tof", [x,y])    -> [CNOT x y]
+        ("tof", xs) | length xs > 3 -> toCliffordT $ mct xs
         ("Z", [x,y,z])  -> [T x, T y, CNOT z x, Tinv x, CNOT y z, Tinv z,
                             CNOT y x, T x, CNOT y z, CNOT z x, Tinv x,
                             T z, CNOT y x]
         ("Zd", [x,y,z]) -> [Tinv x, Tinv y, CNOT z x, T x, CNOT y z, T z,
                             CNOT y x, Tinv x, CNOT y z, CNOT z x, T x,
                             Tinv z, CNOT y x]
-        ("tof", xs)     -> toCliffordT $ mct xs
-        ("X", xs)       -> toCliffordT $ mct xs
         ("measure", [x])-> [Measure x]
         ("reset", [x])  -> [Reset x]
         otherwise       -> [Uninterp g p]
@@ -344,7 +344,7 @@ gateCounts = foldl f Map.empty
             Map.alter alterf g counts
 
 depth :: [Gate] -> Int
-depth = maximum . Map.elems . foldl f Map.empty
+depth = maximum . ([0] ++) . Map.elems . foldl f Map.empty
   where f depths gate =
           let maxIn = maximum $ map (\id -> Map.findWithDefault 0 id depths) args
               args  = arguments gate
@@ -352,7 +352,7 @@ depth = maximum . Map.elems . foldl f Map.empty
             foldr (\id -> Map.insert id (maxIn + 1)) depths args
 
 gateDepth :: [ID] -> [Gate] -> Int
-gateDepth gates = maximum . Map.elems . foldl f Map.empty
+gateDepth gates = maximum. ([0] ++) . Map.elems . foldl f Map.empty
   where f depths gate =
           let maxIn = maximum $ map (\id -> Map.findWithDefault 0 id depths) args
               args  = arguments gate

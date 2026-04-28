@@ -105,6 +105,11 @@ applyPrimitive gate sop = case gate of
     j <- findOrAlloc y
     k <- findOrAlloc z
     return $ applyCCX i j k sop
+  Uninterp "tof" [x,y,z] -> do
+    i <- findOrAlloc x
+    j <- findOrAlloc y
+    k <- findOrAlloc z
+    return $ applyCCX i j k sop
   Uninterp "MCZ" xs -> do
     args <- mapM findOrAlloc $ getArgs gate
     return $ applyMCZ args sop
