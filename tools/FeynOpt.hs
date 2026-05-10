@@ -77,7 +77,7 @@ data Pass = Triv
           | CZ
           | CX
           | Decompile
-          | Distribute
+          | Distribute Int
 
 data Options = Options { 
   passes :: [Pass],
@@ -125,8 +125,8 @@ dotQCPass pass = case pass of
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
-  Distribute  -> \qc -> 
-    let qc' = optimizeDotQC (\_ _ -> unsafePerformIO . buildDistributedCircuit) qc
+  Distribute k -> \qc ->  -- Modified: bind the parameter 'k'
+    let qc' = optimizeDotQC (\_ _ -> unsafePerformIO . buildDistributedCircuit k) qc
         -- Extract all IDs present in the new synthesized circuit body
         newQubits = ids (concatMap (DotQC.toCliffordT . DotQC.body) (DotQC.decls qc'))
     -- Append any newly discovered qubits to the global .v list, avoiding duplicates
@@ -309,6 +309,7 @@ printHelp = mapM_ putStrLn lines
           "  -decompile\t\tDecompiles a Clifford+T circuit into multiply-controlled gates",
           "  -cxcz\t\t\tReplaces CNOT gates with H and CZ",
           "  -czcx\t\t\tReplaces CZ gates with H and CNOT",
+          "  -distribute <k>\tDistribute circuit into <k> partitions using KaHyPar",
           "",
           "Optimization passes:",
           "  -simplify\t\tBasic gate-cancellation pass",
@@ -354,7 +355,7 @@ parseArgs doneSwitches options []     = printHelp
 parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
-  "-distribute"  -> parseArgs doneSwitches options {passes = Distribute:passes options} xs
+  "-distribute"  -> parseArgs doneSwitches options {passes = (Distribute $ read (head xs)):passes options} (tail xs)
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
   "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs

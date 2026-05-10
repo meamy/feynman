@@ -2,7 +2,7 @@ module Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder where
 
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 import qualified Feynman.Synthesis.HypergraphPartition.HGraphBuilder as HG
-import Feynman.Core (Primitive(..), getArgs, ID, isCZ, isCNOT,Block, Vertex(..), Hypergraph(..), Hyperedge, substGate)
+import Feynman.Core (Primitive(..), getArgs, ID, isCZ, isCNOT,Block, Vertex(..), Hypergraph(..), Hyperedge, substGate, PartitionData)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Set (Set)
@@ -110,6 +110,19 @@ reorderCommuting (g:gs) qIndexMap partMap =
           sortedBlock = sortBy (comparing sortKey) block
       in sortedBlock ++ reorderCommuting rest qIndexMap partMap
     _ -> g : reorderCommuting gs qIndexMap partMap
+
+verifyDist :: [Primitive] -> PartitionData -> Bool
+verifyDist circuit partitions = all checkGate circuit
+  where
+    checkGate :: Primitive -> Bool
+    checkGate (CNOT ctrl tgt) = isLocal ctrl tgt
+    checkGate (CZ ctrl tgt) = isLocal ctrl tgt
+    checkGate _ = True
+
+    isLocal :: ID -> ID -> Bool
+    isLocal q1 q2 = case (Map.lookup q1 partitions, Map.lookup q2 partitions) of
+      (Just p1, Just p2) -> p1 == p2
+      _ -> True
 
 -- | Core synthesis logic that iterates through the circuit and splices in EPR pairs
 synthesizeCzDQC :: [Primitive] -> Int -> Map ID Int -> Map Vertex Block -> [(Vertex, Int, Int)] -> [Primitive]
@@ -275,9 +288,9 @@ synthesizeDQC circ numQubits qIndexMap partMap boundaries =
                
   in go circ 0 Map.empty Map.empty
   
-buildDistributedCircuit :: [Primitive] -> IO [Primitive]
-buildDistributedCircuit circ = do
-  (hyp, qIndexMap, _) <- HG.getNumCuts circ
+buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
+buildDistributedCircuit numParts circ = do
+  (hyp, qIndexMap, _) <- HG.getNumCuts numParts circ
   
   let numQubits = Map.size qIndexMap
       partitionPath = Cfg.hypergraphPartitionDataPath </> "partition.hgr"
@@ -291,5 +304,19 @@ buildDistributedCircuit circ = do
   
   let (distributedCirc, actualEbits) = synthesizeDQC reorderedCirc numQubits qIndexMap partMap boundaries
   putStrLn $ "# Actual ebits used (Synthesis): " ++ show actualEbits
+
+  let getPart wIdx = 
+        case Map.lookup (Wire wIdx) partMap of
+          Just p  -> p
+          Nothing -> error $ "FATAL: qubit " ++ show wIdx ++ " is completely missing from the partition map!"
+
+      partitions = Map.fromList 
+        [ (qid, getPart wIdx) 
+        | (qid, wIdx) <- Map.toList qIndexMap 
+        ]
+  
+  if verifyDist distributedCirc partitions
+    then putStrLn "# Distribution Verification: PASS"
+    else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
   
   return distributedCirc

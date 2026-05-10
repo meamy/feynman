@@ -82,7 +82,10 @@ preProcess ids out (p:ps) = go out (p:ps) (candidates p) where
 
 graySynthesis :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])
 graySynthesis ids out pts may = do
-  (out',pts') <- preProcess ids out pts
+  -- Modified graysynth
+  -- (out',pts') <- preProcess ids out pts
+  -- Original graysynth
+  let (out',pts') = (out,pts)
   graySynthesis' ids out' pts' may
     
 graySynthesis' :: [ID] -> LinearTrans -> [Pt] -> [Phase] -> Writer [Primitive] (LinearTrans, [Phase])

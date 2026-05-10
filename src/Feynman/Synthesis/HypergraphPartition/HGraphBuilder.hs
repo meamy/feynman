@@ -172,25 +172,26 @@ writeHypToFile name nQubits hyp = do
   return filePath
 
 -- | Build and partition, invoking KaHyPar with correct flags
-getNumCuts :: [Primitive] -> IO (Hypergraph, Map ID Block, [Primitive])
-getNumCuts circ = do
+getNumCuts :: Int -> [Primitive] -> IO (Hypergraph, Map ID Block, [Primitive])
+getNumCuts numParts circ = do
   let tempDir      = Cfg.hypergraphPartitionDataPath
       hypergraphFN = "hypergraph.hgr"
       partitionFN  = "partition.hgr"
       hypergraphFP = tempDir </> hypergraphFN
       partitionFP  = tempDir </> partitionFN
-      k            = Cfg.numParts
       kahypar      = Cfg.kahyparPath
 
   -- Build and write hypergraph
   let (nQubits, hyp, qIndexMap) = buildHypergraph $ packCircuit circ
+
+   -- Clamp the number of partitions to the number of qubits
+  let k = min (fromIntegral numParts) (max 1 nQubits)
   filePath <- writeHypToFile "hypergraph" nQubits hyp
   when (filePath /= hypergraphFP) $ do
     existsInitial <- doesFileExist filePath
     unless existsInitial $
       error $ "Expected hypergraph file not found at: " ++ filePath
     renameFile filePath hypergraphFP
-  -- putStrLn $ "# Hypergraph written to: " ++ hypergraphFP
 
   -- Ensure .hgr exists
   exists <- doesFileExist hypergraphFP
@@ -230,7 +231,6 @@ getNumCuts circ = do
   existing <- doesFileExist partitionFP
   when existing $ removeFile partitionFP
   renameFile (tempDir </> latest) partitionFP
-  -- putStrLn $ "# Partition file written to: " ++ partitionFP
 
   case parseHyperedgeCut allOut of
     Just cut -> putStrLn $ "# Hyperedge cut (ebits): " ++ show cut ++ "\n"
