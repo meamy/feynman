@@ -269,7 +269,8 @@ instance Abelian DMod2 where
   power i (D2 a) = D2 . reduce $ power i a
 
 instance Periodic DMod2 where
-  order (D2 a)   = 2 * denom a
+  order a | a == 0    = 1
+          | otherwise = 2 * denom (unpack a)
 
 instance Dyadic DMod2 where
   fromDyadic    = D2 . reduce
