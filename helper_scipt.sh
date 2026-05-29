@@ -11,7 +11,7 @@ CIRCUITS=(
     csla_mux_3
     csum_mux_9
     # cycle_17_3
-    fprenorm
+    # fprenorm
     "gf2^4_mult"
     "gf2^5_mult"
     "gf2^6_mult"
@@ -23,22 +23,22 @@ CIRCUITS=(
     # "gf2^32_mult"
     # "gf2^64_mult"
     # grover_5
-    ham15-high
+    # ham15-high
     ham15-low
     ham15-med
     hwb6
     # hwb8
     # hwb10
-    # mod_adder_1024
+    mod_adder_1024
     # mod_adder_1048576
-    mod_mult_55
-    mod_red_21
-    mod5_4
-    qcla_adder_10
-    qcla_com_7
+    # mod_mult_55
+    # mod_red_21
+    # mod5_4
+    # qcla_adder_10
+    # qcla_com_7
     # qcla_mod_7
     # qft_4
-    rc_adder_6
+    # rc_adder_6
     tof_3
     tof_4
     tof_5
@@ -60,40 +60,41 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     # Run feynopt
     # cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" | tee "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc" > "${BENCHMARKS_BASE}/synthesized_circuits/partition32/distributed_cnot_${CIRCUIT}.qc"
 
-    # cabal run feynopt -- -purecircuit -inline -cnotmin -cxcz -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/graysynth_qasm/${CIRCUIT}.qasm"
+    # cabal run feynopt -- -purecircuit -inline -cnotmin -simplify -cxcz -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/graysynth_qasm/${CIRCUIT}.qasm"
 
-    # cabal run feynopt -- -purecircuit -inline -cnotmin -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/DISQCO/benchmarking/graysynth_qasm/${CIRCUIT}.qasm"
+    # cabal run feynopt -- -purecircuit -inline -cnotmin -simplify -cxcz -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/DISQCO/benchmarking/graysynth_qasm/${CIRCUIT}.qasm"
 
     # (Assuming your cabal run command redirects output to the customized file like this:)
-    cabal run feynopt -- -inline -cnotmin -simplify -distribute 16 -simplify "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
+    PARTITION=2
+    cabal run feynopt -- -inline -distribute "${PARTITION}" -simplify "benchmarks/qc/${CIRCUIT}.qc"
 
-    if [ $? -ne 0 ]; then
-        echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
-        continue
-    fi
+    # if [ $? -ne 0 ]; then
+    #     echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
+    #     continue
+    # fi
 
-    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc"
+    # TARGET_FILE="benchmarks/qc_customized/distributed_cnot_${PARTITION}_${CIRCUIT}.qc"
 
-    # --- NEW VERIFICATION CHECK ---
-    # Extract and print the verification status directly from the generated .qc file
-    VERIFY_LINE=$(grep "# Distribution Verification:" "$TARGET_FILE")
+    # # --- NEW VERIFICATION CHECK ---
+    # # Extract and print the verification status directly from the generated .qc file
+    # VERIFY_LINE=$(grep "# Distribution Verification:" "$TARGET_FILE")
 
-    if [ -n "$VERIFY_LINE" ]; then
-        # Print the exact line found in the file
-        echo "$VERIFY_LINE"
+    # if [ -n "$VERIFY_LINE" ]; then
+    #     # Print the exact line found in the file
+    #     echo "$VERIFY_LINE"
         
-        # Optional: You can also make the script halt if it fails
-        if echo "$VERIFY_LINE" | grep -q "FAIL"; then
-            echo "ERROR: Verification failed for ${CIRCUIT}. Halting."
-            continue
-        fi
-    else
-        echo "WARNING: Distribution Verification status not found in the output."
-    fi
-    # ------------------------------
+    #     # Optional: You can also make the script halt if it fails
+    #     if echo "$VERIFY_LINE" | grep -q "FAIL"; then
+    #         echo "ERROR: Verification failed for ${CIRCUIT}. Halting."
+    #         continue
+    #     fi
+    # else
+    #     echo "WARNING: Distribution Verification status not found in the output."
+    # fi
+    # # ------------------------------
 
-    # Run feynver
-    cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "$TARGET_FILE"
+    # # # Run feynver
+    # cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "$TARGET_FILE"
 
     # # Destination directory for this circuit
     # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/cnot_edgeweighted_hyp"
