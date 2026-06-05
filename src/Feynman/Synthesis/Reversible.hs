@@ -208,4 +208,17 @@ unifyAffine v input output =
       (out, gates) = unify v (Map.map fst input) (Map.map fst output)
   in
     (Map.map (\bv -> (bv, False)) out, inX ++ gates)
+
+toParity :: [ID] -> [Primitive] -> F2Mat
+toParity qubits circ = fromList . map (st Map.!) $ qubits
+  where
+    n      = length qubits
+    initSt = Map.fromList [(q, bitI n i) | (q, i) <- zip qubits [0..]]
+    st     = foldl' applyGate initSt circ
+
+    applyGate st (CNOT c t) =
+      let cVal = Map.findWithDefault 0 c st
+          tVal = Map.findWithDefault 0 t st
+      in Map.insert t (cVal + tVal) st
+    applyGate st _ = st
   

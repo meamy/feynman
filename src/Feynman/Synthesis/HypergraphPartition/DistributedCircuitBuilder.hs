@@ -3,6 +3,9 @@ module Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder where
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 import qualified Feynman.Synthesis.HypergraphPartition.HGraphBuilder as HG
 import Feynman.Core (Primitive(..), getArgs, ID, isCZ, isCNOT,Block, Vertex(..), Hypergraph(..), Hyperedge, substGate, PartitionData)
+import Feynman.Algebra.Linear
+import Feynman.Synthesis.Reversible(linearSynth, toParity)
+
 import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Set (Set)
@@ -10,9 +13,10 @@ import qualified Data.Set as Set
 import Data.Maybe (mapMaybe)
 import System.FilePath ((</>))
 
-import Data.List (sortBy, groupBy)
+import Data.List (sortBy, groupBy, foldl')
 import Data.Ord (comparing)
 
+import Control.Monad.Writer.Lazy
 
 initBellPairs :: ID -> ID -> [Primitive]
 initBellPairs bell1 bell2 = [H bell1, CNOT bell1 bell2]
@@ -387,6 +391,157 @@ synthesizeDQC circ numQubits qIndexMap partMap boundaries =
 --     else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
   
 --   return distributedCirc
+
+rankFactorization :: F2Mat -> (F2Mat, F2Mat)
+rankFactorization a
+  | m a > n a = let (f, c) = rankFactorization (transpose a)
+                in  (transpose c, transpose f)
+  | otherwise =
+      -- FIX: We MUST use toReducedEchelon so that A = C * F mathematically holds.
+      let ref       = fst . runWriter . toReducedEchelon $ a   
+          pivots    = findPivots ref
+          aT        = transpose a
+          cT        = fromList [ row aT p | p <- pivots ] -- pivot COLUMNS of original
+          f         = fromList [ row ref i | i <- [0 .. length pivots - 1] ]
+      in  (transpose cT, f)   -- C is m×r, F is r×n
+
+-- Helper: find the column index of each pivot in row echelon form
+findPivots :: F2Mat -> [Int]
+findPivots mat = go 0 0
+  where
+    go i j | i >= m mat || j >= n mat = []
+           | row mat i @. j            = j : go (i+1) (j+1)
+           | otherwise                 = go i (j+1)
+
+synthSplitRank :: [ID] -> F2Mat -> Int -> Bool -> [Primitive]
+synthSplitRank ids b n down
+  | m b == 0 || Feynman.Algebra.Linear.n b == 0 = []   -- empty biadjacency: nothing to do
+  | otherwise = concatMap synthTerm (zip (toList (transpose c)) (toList f))
+  where
+    (c, f) = rankFactorization b
+    numRowsB = m b   -- number of rows of B = size of first group involved
+    numColsB = Feynman.Algebra.Linear.n b  -- number of cols of B = size of second group
+
+    synthTerm (u, v) =
+      let ii = lsb1 u
+          jj = lsb1 v
+          -- u has width numRowsB, index into ids directly (these are group-0 local indices)
+          fanU = [ if down then CNOT (ids !! k)       (ids !! ii)
+                           else CNOT (ids !! ii)      (ids !! k)
+                 | k <- [0 .. numRowsB - 1], u @. k, k /= ii ]
+          -- v has width numColsB, offset by n into ids
+          fanV = [ if down then CNOT (ids !! (jj+n))  (ids !! (k+n))
+                           else CNOT (ids !! (k+n))   (ids !! (jj+n))
+                 | k <- [0 .. numColsB - 1], v @. k, k /= jj ]
+          prep  = fanU ++ fanV
+          cross = if down then CNOT (ids !! ii)       (ids !! (jj+n))
+                          else CNOT (ids !! (jj+n))   (ids !! ii)
+      in  prep ++ [cross] ++ reverse prep
+
+
+blockLduFact :: F2Mat -> Int -> (F2Mat, F2Mat, F2Mat)
+blockLduFact mat n =
+  let sz   = m mat
+      m'   = sz - n
+      a    = subMat mat (0, n)  (0, n)   -- top-left     n×n
+      b    = subMat mat (0, n)  (n, sz)  -- top-right    n×m'
+      c    = subMat mat (n, sz) (0, n)   -- bottom-left  m'×n
+      d    = subMat mat (n, sz) (n, sz)  -- bottom-right m'×m'
+      ainv = pseudoinverse a             -- n×n (true inverse since a is invertible)
+      -- Schur complement of a in mat:
+      schur = add d (mult (mult c ainv) b)  -- m'×m'  (subtraction = addition in GF(2))
+      -- Block-assemble L, D, U:
+      idn  = identity n
+      idm  = identity m'
+      zero_nm = F2Mat n  m' (replicate n  (bitVec m' 0))
+      zero_mn = F2Mat m' n  (replicate m' (bitVec n  0))
+      l    = stackMat (    idn `hcat` zero_nm   )
+                      (mult c ainv `hcat` idm   )
+      d'   = stackMat (    a       `hcat` zero_nm)
+                      (   zero_mn  `hcat` schur  )
+      u    = stackMat (    idn     `hcat` mult ainv b)
+                      (   zero_mn  `hcat` idm        )
+  in  (l, d', u)
+
+-- Horizontal concatenation helper (same number of rows)
+hcat :: F2Mat -> F2Mat -> F2Mat
+hcat a b = transpose $ stackMat (transpose a) (transpose b)
+
+makeUlInv :: F2Mat -> Int -> (F2Mat, F2Mat)
+makeUlInv a n
+  | rank (subMat a (0, n) (0, n)) == n = (identity (m a), a)
+  | otherwise =
+      let sz    = m a
+          -- Column echelon of the left half: rows are [0..sz), cols are [0..n)
+          -- Transposing gives us a matrix whose row echelon reveals pivot *rows* of A
+          leftHalf = subMat a (0, sz) (0, n)
+          ref      = fst . runWriter . toEchelon . transpose $ leftHalf
+          -- pivots are column indices of ref = row indices of leftHalf = row indices of A
+          pivots   = findPivots ref
+          -- which of those pivot rows are in the upper block vs lower block
+          upperPivots  = filter (<  n) pivots
+          lowerPivots  = filter (>= n) pivots
+          -- upper rows that are NOT pivots (need to be fixed)
+          upperNonPivs = filter (`notElem` upperPivots) [0..n-1]
+          -- pair each deficient upper row with a lower pivot row to borrow from
+          pairs        = zip upperNonPivs lowerPivots
+          applyPair (u, r) (i, j) = (addRow j i u, addRow j i r)
+          (u, r)       = foldl' applyPair (identity sz, a) pairs
+      in  (u, r)
+
+blockUlduFact :: F2Mat -> Int -> (F2Mat, F2Mat, F2Mat, F2Mat)
+blockUlduFact a n =
+  let (u, r)    = makeUlInv a n
+      (l, d, u2) = blockLduFact r n
+  in  (u, l, d, u2)
+
+synthDistributed :: [ID] -> F2Mat -> Int -> [Primitive]
+synthDistributed ids a n =
+  let sz        = m a
+      (u, l, d, u2) = blockUlduFact a n
+      -- Biadjacency blocks:
+      uBlock    = subMat u  (0, n)  (n, sz)
+      lBlock    = subMat l  (n, sz) (0, n)
+      d0        = subMat d  (0, n)  (0, n)
+      d1        = subMat d  (n, sz) (n, sz)
+      u2Block   = subMat u2 (0, n)  (n, sz)
+      
+      -- Local synthesis via existing linearSynth
+      ids0      = take n ids
+      ids1      = drop n ids
+      toTrans xs = Map.fromList $ zip xs (toList . identity . length $ xs)
+      synthLocal blk localIds =
+        let target = Map.fromList $ zip localIds (toList blk)
+        in  linearSynth (toTrans localIds) target
+        
+      -- Gate groups in order:
+      gatesU    = synthSplitRank ids uBlock  n False
+      gatesL    = synthSplitRank ids (transpose lBlock) n True
+      gatesD0   = synthLocal d0 ids0
+      gatesD1   = synthLocal d1 ids1
+      gatesU2   = synthSplitRank ids u2Block n False
+      
+  -- FIX: Reverse the order so the overall parity resolves to U * L * D * U2
+  in  gatesU2 ++ gatesD0 ++ gatesD1 ++ gatesL ++ gatesU
+
+-- Shift qubit indices for group-1 local gates (already using ID list so this may be a no-op)
+reindex :: Int -> Primitive -> Primitive
+reindex n (CNOT c t) = CNOT c t  -- IDs already correct since we pass ids1
+reindex _ g = g
+
+synthesizeDistributedCNOT :: [ID] -> [Primitive] -> Int -> [Primitive]
+synthesizeDistributedCNOT ids igates n =
+  let a     = toParity ids igates
+      gates = synthDistributed ids a n
+      b     = toParity ids gates
+  in  if a /= b
+        then error "synthesizeDistributedCNOT: circuits not equivalent"
+        else gates
+
+-- synthesizeDistributedCNOT :: [ID] -> [Primitive] -> Int -> [Primitive]
+-- synthesizeDistributedCNOT ids igates n = synthDistributed ids a n
+--   where
+--     a = toParity ids igates
 
 buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
 buildDistributedCircuit numParts circ = do

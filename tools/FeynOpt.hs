@@ -12,9 +12,9 @@ import Feynman.Core (Primitive,
                      unannotate,
                      expandCZ,
                      idsW,
-                     ids)
+                     ids, isCNOT, Primitive (CNOT))
 
-import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder  (buildDistributedCircuit)
+import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder  (buildDistributedCircuit, synthesizeDistributedCNOT)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -38,6 +38,7 @@ import System.Environment (getArgs)
 import System.CPUTime     (getCPUTime)
 import System.IO (hPutStrLn, stderr)
 import System.IO.Unsafe (unsafePerformIO)
+import System.Random (randomRIO)
 
 import Data.List
 import qualified Data.Set as Set
@@ -78,6 +79,7 @@ data Pass = Triv
           | CX
           | Decompile
           | Distribute Int
+          | SynthDist Int
 
 data Options = Options { 
   passes :: [Pass],
@@ -131,6 +133,10 @@ dotQCPass pass = case pass of
         newQubits = ids (concatMap (DotQC.toCliffordT . DotQC.body) (DotQC.decls qc'))
     -- Append any newly discovered qubits to the global .v list, avoiding duplicates
     in qc' { DotQC.qubits = nub (DotQC.qubits qc ++ newQubits) }
+  
+  SynthDist n -> optimizeDotQC $ \qubits _inputs circ ->
+    let (cnotSeg, rest) = partition isCNOT circ
+    in  synthesizeDistributedCNOT qubits cnotSeg n ++ rest
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =
@@ -155,6 +161,7 @@ runDotQC passes verify fname src = do
     Right (qc, qc') -> do
       let time = (fromIntegral $ end - start) / 10^9
       let verStr = if verify then ", Verified" else ""
+      putStrLn $ ""
       putStrLn $ "# Feynman -- quantum circuit toolkit"
       putStrLn $ "# Original (" ++ fname ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc
@@ -286,6 +293,40 @@ generateInvariants fname = case drop (length fname - 5) fname == ".qasm" of
           let ids   = idsW wstmt
           return $ summarizeLoops 0 ids ids wstmt
 
+runGenRand :: Int -> Int -> IO ()
+runGenRand numQubits depth = do
+  let qubits = ["q" ++ show i | i <- [0..numQubits - 1]]
+
+  circ <- randomCNOTCircuit qubits depth
+
+  let qc = DotQC.DotQC
+              { DotQC.qubits  = qubits
+              , DotQC.inputs  = Set.fromList qubits
+              , DotQC.outputs = Set.fromList qubits
+              , DotQC.decls   =
+                  [ DotQC.Decl
+                      { DotQC.name   = "main"
+                      , DotQC.params = []
+                      , DotQC.body   = DotQC.fromCliffordT circ
+                      }
+                  ]
+              }
+
+  putStrLn $ "# Feynman -- quantum circuit toolkit"
+  putStrLn $ "# Random CNOT circuit: " ++ show numQubits ++ " qubits, depth " ++ show depth
+  putStrLn ""
+  putStrLn . show $ qc
+
+randomCNOTCircuit :: [ID] -> Int -> IO [Primitive]
+randomCNOTCircuit qubits depth = mapM randomCNOT [1..depth]
+  where
+    n = length qubits
+    randomCNOT _ = do
+      c <- randomRIO (0, n - 1)
+      t <- randomRIO (0, n - 2)
+      let t' = if t >= c then t + 1 else t
+      return $ CNOT (qubits !! c) (qubits !! t')
+
 {- Main program -}
 
 printHelp :: IO ()
@@ -356,6 +397,11 @@ parseArgs doneSwitches options (x:xs) = case x of
   f | doneSwitches -> runFile f
   "-h"           -> printHelp
   "-distribute"  -> parseArgs doneSwitches options {passes = (Distribute $ read (head xs)):passes options} (tail xs)
+  "-synthdist"   -> parseArgs doneSwitches options {passes = (SynthDist  $ read (head xs)):passes options} (tail xs)
+  "-genrand" ->
+    let q     = read (xs !! 0) :: Int
+        depth = read (xs !! 1) :: Int
+    in  runGenRand q depth
   "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
   "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
   "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs

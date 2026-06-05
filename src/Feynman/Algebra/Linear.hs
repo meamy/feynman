@@ -135,6 +135,14 @@ fromVec :: F2Vec -> F2Mat
 fromVec x = F2Mat 1 n [x]
   where n = width x
 
+-- Extract a sub-matrix
+subMat :: F2Mat -> (Int, Int) -> (Int, Int) -> F2Mat
+subMat (F2Mat _ _ vs) (r0,r1) (c0,c1) = 
+   fromList [ v @@ (c1 - 1, c0) | v <- take (r1 - r0) (drop r0 vs) ]
+
+stackMat :: F2Mat -> F2Mat -> F2Mat
+stackMat (F2Mat m1 n vs1) (F2Mat m2 _ vs2) = F2Mat (m1+m2) n (vs1 ++ vs2)
+
 {- Accessors -}
 row :: F2Mat -> Int -> F2Vec
 row (F2Mat m n vals) i

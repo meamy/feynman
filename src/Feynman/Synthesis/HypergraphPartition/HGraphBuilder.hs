@@ -4,7 +4,7 @@ import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 -- Data library
 import qualified Data.Map as Map
 import           Data.Map   (Map)
-import Data.List (isPrefixOf, isInfixOf, maximumBy, sort, sortBy, nub, intercalate)
+import Data.List (isPrefixOf, isInfixOf, maximumBy, sort, sortBy, nub, intercalate, foldl', sortOn)
 import Data.Char (isDigit)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -266,25 +266,86 @@ extractParities qubits circ = ordNub . reverse $ go initSt circ []
           [] -> go st gs acc
       _ -> go st gs acc
 
-buildParityHypergraph :: [ID] -> [F2Vec] -> Hypergraph
-buildParityHypergraph qubits parities = Hypergraph allVertices hEdges
+showParity :: [ID] -> F2Vec -> String
+showParity qubits vec =
+  let activeQubits = [ qubits !! i 
+                     | i <- [0 .. length qubits - 1]
+                     , vec @. i ] -- Checks if the i-th qubit is active in this parity
+  in if null activeQubits 
+     then "0" 
+     else intercalate " + " activeQubits
+
+buildParityHypergraph :: [ID] -> [F2Vec] -> [Primitive] -> Hypergraph
+buildParityHypergraph qubits parities circ = Hypergraph allVertices finalHEdges
   where
     n = length qubits 
     m = length parities
 
-    qubitVertices = [Wire i | i <- [1..n]]
+    qubitVertices  = [Wire i | i <- [1..n]]
     parityVertices = [GateIdx (n + 1 + j) | j <- [0..m-1]]
-    
     allVertices    = Set.fromList (qubitVertices ++ parityVertices)
 
-    hEdges = [ (buildEdgeForQubit i, 1) | i <- [0..n-1] ]
-    buildEdgeForQubit :: Int -> Hyperedge
-    buildEdgeForQubit i =
-      let nativeQubitVertex = Wire (i + 1)
-          associatedParities = [ GateIdx (n + 1 + j) 
-                               | j <- [0..m-1]
-                               , parities !! j @. i ] -- Uses the bit-test operator from Gray.hs
-      in Set.fromList (nativeQubitVertex : associatedParities)
+    qIndexMap = Map.fromList (zip qubits [0..])
+    wireMap   = Map.fromList [(q, Wire (i + 1)) | (q, i) <- zip qubits [0..]]
+    parityMap = Map.fromList (zip parities [0..])
+
+
+    initSt     = Map.fromList [(q, bitI n i) | (q, i) <- zip qubits [0..]]
+    initActive = Map.fromList [(q, Set.singleton (wireMap Map.! q)) | q <- qubits]
+
+    (finalActive, finishedEdges) = go initSt initActive [] circ
+
+    go st active fin [] = (active, fin)
+    go st active fin (g:gs) = case g of
+      CNOT c t ->
+        let cVal = Map.findWithDefault 0 c st
+            tVal = Map.findWithDefault 0 t st
+            st'  = Map.insert t (cVal + tVal) st
+        in go st' active fin gs
+
+      _ | isZBasisPhaseGate g ->
+        case getArgs g of
+          (q:_) -> 
+            let p = Map.findWithDefault 0 q st
+            in case Map.lookup p parityMap of
+                 Just j -> 
+                   let parityV = GateIdx (n + 1 + j)
+                       -- Add the parity vertex to ANY physical qubit involved in this parity string
+                       active' = Map.mapWithKey (\qx edge ->
+                           if p @. (qIndexMap Map.! qx)
+                           then Set.insert parityV edge
+                           else edge
+                         ) active
+                   in go st active' fin gs
+                 Nothing -> go st active fin gs
+          [] -> go st active fin gs
+
+      _ -> 
+        let affectedQubits = getArgs g
+            (active', fin') = foldl' closeEdge (active, fin) affectedQubits
+        in go st active' fin' gs
+
+    -- Helper: Closes the current hyperedge and starts a fresh one for that physical wire
+    closeEdge (act, fin) qx = 
+      let edge = Map.findWithDefault Set.empty qx act
+          -- Only save the edge if it actually connected to at least one parity (size > 1)
+          fin' = if Set.size edge > 1 then edge : fin else fin
+          -- Start a new empty hyperedge containing ONLY the physical wire
+          act' = Map.insert qx (Set.singleton (wireMap Map.! qx)) act
+      in (act', fin')
+
+    ordNubSets :: Ord a => [Set.Set a] -> [Set.Set a]
+    ordNubSets = go Set.empty
+      where
+        go _ [] = []
+        go seen (x:xs)
+          | Set.member x seen = go seen xs
+          | otherwise         = x : go (Set.insert x seen) xs
+
+    rawEdges = finishedEdges ++ [ edge | edge <- Map.elems finalActive, Set.size edge > 1 ]
+    allEdges = ordNubSets rawEdges
+
+    finalHEdges = [ (edge, 1) | edge <- sortOn Set.findMin allEdges ]
 
 hypToString :: Int -> Int -> Hypergraph -> String
 hypToString nQubits mParities (Hypergraph vs hs) =
@@ -302,17 +363,6 @@ hypToString nQubits mParities (Hypergraph vs hs) =
     showVertex (Wire i)    = show i
     showVertex (GateIdx i) = show i
 
-
-showParity :: [ID] -> F2Vec -> String
-showParity qubits vec =
-  let activeQubits = [ qubits !! i 
-                     | i <- [0 .. length qubits - 1]
-                     , vec @. i ] -- Checks if the i-th qubit is active in this parity
-  in if null activeQubits 
-     then "0" 
-     else intercalate " + " activeQubits
-
-
 getNumCuts :: Int -> [Primitive] -> IO (Hypergraph, Map ID Int, [Primitive])
 getNumCuts numParts circ = do
   let tempDir      = Cfg.hypergraphPartitionDataPath
@@ -328,19 +378,19 @@ getNumCuts numParts circ = do
       mParities    = length parities
       k            = min (fromIntegral numParts) (max 1 nQubits)
 
-  putStrLn "\n========================================================"
-  putStrLn $ "# Extracted Qubits: " ++ show nQubits
-  putStrLn $ "# Extracted Phase Polynomial Parities: " ++ show mParities
-  putStrLn "========================================================"
+  -- putStrLn "\n========================================================"
+  -- putStrLn $ "# Extracted Qubits: " ++ show nQubits
+  -- putStrLn $ "# Extracted Phase Polynomial Parities: " ++ show mParities
+  -- putStrLn "========================================================"
 
-  putStrLn "# Explicit List of Extracted Unique Parities:"
-  mapM_ (\(idx, p) -> 
-    putStrLn $ "  * Vertex " ++ show (nQubits + 1 + idx) ++ " -> " ++ showParity qubitsList p
-    ) (zip [0..] parities)
-  putStrLn "========================================================"
+  -- putStrLn "# Explicit List of Extracted Unique Parities:"
+  -- mapM_ (\(idx, p) -> 
+  --   putStrLn $ "  * Vertex " ++ show (nQubits + 1 + idx) ++ " -> " ++ showParity qubitsList p
+  --   ) (zip [0..] parities)
+  -- putStrLn "========================================================"
 
   -- 1. Build the updated dual-vertex layout
-  let parityHyp = buildParityHypergraph qubitsList parities
+  let parityHyp = buildParityHypergraph qubitsList parities circ
   let qIndexMap = Map.fromList (zip qubitsList [1..])
 
   -- 2. Clean/Prepare directory and serialize graph data
