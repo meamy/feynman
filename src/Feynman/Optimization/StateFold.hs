@@ -25,6 +25,7 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Control.Monad.State.Strict hiding (join)
+import Control.Monad (msum, liftM)
 import Data.Bits
 import Data.Coerce (coerce)
 import Data.String (IsString(..))

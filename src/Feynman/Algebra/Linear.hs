@@ -143,6 +143,11 @@ subMat (F2Mat _ _ vs) (r0,r1) (c0,c1) =
 stackMat :: F2Mat -> F2Mat -> F2Mat
 stackMat (F2Mat m1 n vs1) (F2Mat m2 _ vs2) = F2Mat (m1+m2) n (vs1 ++ vs2)
 
+findBasis :: [F2Vec] -> [F2Vec]
+findBasis vecs
+  | null vecs = []
+  | otherwise = toList .removeZeroRows .rowReduce $ fromList vecs
+
 {- Accessors -}
 row :: F2Mat -> Int -> F2Vec
 row (F2Mat m n vals) i
