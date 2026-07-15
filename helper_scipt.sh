@@ -57,24 +57,15 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "Processing circuit: ${CIRCUIT}"
     echo "============================================"
 
-    # Run feynopt
-    # cabal run feynopt -- -inline -cnotmin -simplify -distribute "benchmarks/qc/${CIRCUIT}.qc" | tee "benchmarks/qc_customized/distributed_cnot_${CIRCUIT}.qc" > "${BENCHMARKS_BASE}/synthesized_circuits/partition32/distributed_cnot_${CIRCUIT}.qc"
-
-    # cabal run feynopt -- -purecircuit -inline -cnotmin -simplify -cxcz -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/graysynth_qasm/${CIRCUIT}.qasm"
-
-    # cabal run feynopt -- -purecircuit -inline -cnotmin -simplify -cxcz -simplify "benchmarks/qasm/${CIRCUIT}.qasm" > "/Users/duykhangnguyentruong/Development/DISQCO/benchmarking/graysynth_qasm/${CIRCUIT}.qasm"
-
-    # (Assuming your cabal run command redirects output to the customized file like this:)
     PARTITION=2
-    cabal run feynopt -- -O2 -distribute "${PARTITION}" -simplify "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${PARTITION}_${CIRCUIT}.qc"
+    TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_${PARTITION}_${CIRCUIT}.qc"
+    cabal run feynopt -- -O2 -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
         continue
     fi
-
-    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_OldApproach_${PARTITION}_${CIRCUIT}.qc"
-
+    
     # --- NEW VERIFICATION CHECK ---
     # Extract and print the verification status directly from the generated .qc file
     VERIFY_LINE=$(grep "# Distribution Verification:" "$TARGET_FILE")
