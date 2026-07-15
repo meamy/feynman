@@ -66,14 +66,14 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 
     # (Assuming your cabal run command redirects output to the customized file like this:)
     PARTITION=2
-    cabal run feynopt -- -inline -cnotmin -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${PARTITION}_${CIRCUIT}.qc"
+    cabal run feynopt -- -O2 -distribute "${PARTITION}" -simplify "benchmarks/qc/${CIRCUIT}.qc" > "benchmarks/qc_customized/distributed_cnot_${PARTITION}_${CIRCUIT}.qc"
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
         continue
     fi
 
-    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_${PARTITION}_${CIRCUIT}.qc"
+    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_OldApproach_${PARTITION}_${CIRCUIT}.qc"
 
     # --- NEW VERIFICATION CHECK ---
     # Extract and print the verification status directly from the generated .qc file
