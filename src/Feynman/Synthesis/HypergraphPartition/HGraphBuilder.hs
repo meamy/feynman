@@ -29,7 +29,7 @@ import Feynman.Core
       Stmt(..),
       ID,
       Hypergraph(..),
-      Hyperedge, Vertex(..), isCZ, isCNOT,isZBasisPhaseGate ,ids, Block)
+      Hyperedge, Vertex(..), isCZ, isCNOT,isZBasisPhaseGate ,ids,ordNubSets,Block)
 
 import Feynman.Algebra.Linear (F2Vec, bitI, (@.))
 
@@ -333,14 +333,6 @@ buildParityHypergraph qubits parities circ = Hypergraph allVertices finalHEdges
           -- Start a new empty hyperedge containing ONLY the physical wire
           act' = Map.insert qx (Set.singleton (wireMap Map.! qx)) act
       in (act', fin')
-
-    ordNubSets :: Ord a => [Set.Set a] -> [Set.Set a]
-    ordNubSets = go Set.empty
-      where
-        go _ [] = []
-        go seen (x:xs)
-          | Set.member x seen = go seen xs
-          | otherwise         = x : go (Set.insert x seen) xs
 
     rawEdges = finishedEdges ++ [ edge | edge <- Map.elems finalActive, Set.size edge > 1 ]
     allEdges = ordNubSets rawEdges

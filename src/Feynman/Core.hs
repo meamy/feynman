@@ -207,6 +207,14 @@ subst f = map (substGate f)
 ids :: [Primitive] -> [ID]
 ids = Set.toList . Set.unions . map (Set.fromList . getArgs)
 
+ordNubSets :: Ord a => [Set.Set a] -> [Set.Set a]
+ordNubSets = go Set.empty
+  where
+    go _ [] = []
+    go seen (x:xs)
+      | Set.member x seen = go seen xs
+      | otherwise         = x : go (Set.insert x seen) xs
+
 {- Parameters For Hypergraph Parition -}
 data Vertex
   = Wire Int   -- qubit number (1-based)
