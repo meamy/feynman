@@ -58,7 +58,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "============================================"
 
     PARTITION=2
-    TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_${PARTITION}_${CIRCUIT}.qc"
+    TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_beamSearch_${PARTITION}_${CIRCUIT}.qc"
     cabal run feynopt -- -O2 -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
 
     if [ $? -ne 0 ]; then

@@ -389,7 +389,7 @@ getNumCuts numParts circ = do
   createDirectoryIfMissing True tempDir
   writeFile hypergraphFP (hypToString nQubits mParities parityHyp)
 
-  let args = [ "-h", hypergraphFP, "-k", show k, "-e", show Cfg.epsilon, "-o", "km1", "-m", "direct", "-p", Cfg.subalgorithm, "-w", "true" ]
+  let args = [ "-h", hypergraphFP, "-k", show k, "-e", show Cfg.epsilon, "-o", "km1", "-m", "direct", "-p", Cfg.subalgorithm,"-w", "true" ]
   (ec, out, err) <- readProcessWithExitCode kahypar args ""
   
   case ec of
