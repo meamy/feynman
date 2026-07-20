@@ -370,16 +370,16 @@ getNumCuts numParts circ = do
       mParities    = length parities
       k            = min (fromIntegral numParts) (max 1 nQubits)
 
-  -- putStrLn "\n========================================================"
-  -- putStrLn $ "# Extracted Qubits: " ++ show nQubits
-  -- putStrLn $ "# Extracted Phase Polynomial Parities: " ++ show mParities
-  -- putStrLn "========================================================"
+  putStrLn "\n========================================================"
+  putStrLn $ "# Extracted Qubits: " ++ show nQubits
+  putStrLn $ "# Extracted Phase Polynomial Parities: " ++ show mParities
+  putStrLn "========================================================"
 
-  -- putStrLn "# Explicit List of Extracted Unique Parities:"
-  -- mapM_ (\(idx, p) -> 
-  --   putStrLn $ "  * Vertex " ++ show (nQubits + 1 + idx) ++ " -> " ++ showParity qubitsList p
-  --   ) (zip [0..] parities)
-  -- putStrLn "========================================================"
+  putStrLn "# Explicit List of Extracted Unique Parities:"
+  mapM_ (\(idx, p) -> 
+    putStrLn $ "  * Vertex " ++ show (nQubits + 1 + idx) ++ " -> " ++ showParity qubitsList p
+    ) (zip [0..] parities)
+  putStrLn "========================================================"
 
   -- 1. Build the updated dual-vertex layout
   let parityHyp = buildParityHypergraph qubitsList parities circ

@@ -1956,6 +1956,16 @@ readPartitionFile filepath numQubits = do
         
   return $ Map.fromList (map toVertex assignments)
 
+writePartitionFileOut :: FilePath -> Int -> Map Vertex Block -> IO ()
+writePartitionFileOut filepath numQubits partMap =
+  let totalVertices = Map.size partMap
+      toVertex idx
+        | idx <= numQubits = Wire idx
+        | otherwise        = GateIdx idx
+      blockLines = [ show (Map.findWithDefault 0 (toVertex idx) partMap)
+                   | idx <- [1 .. totalVertices] ]
+  in writeFile filepath (unlines blockLines)
+
 -- | Analyzes hyperedges to find where to insert entanglers and disentanglers
 -- getTeleportationBoundaries :: Hypergraph -> Map Vertex Block -> [(Vertex, Int, Int)]
 -- getTeleportationBoundaries (Hypergraph _ hedges) partMap = mapMaybe (analyzeEdge . fst) hedges
@@ -2855,9 +2865,7 @@ dedupPartitions = go Set.empty
          then go seen rest
          else pm : go (Set.insert key seen) rest
 
--- | Round-1 diagnostic. Tells you WHICH regime the seed is in, so you know
--- whether "no improvement" means the seed is a local minimum, is balance-
--- blocked, or is genuinely good. Pure; print the resulting String from IO.
+
 diagnoseSeed :: [Primitive] -> Map ID Int -> Map Vertex Block -> Double -> String
 diagnoseSeed circ qIndexMap seed eps =
   let score pm     = scorePartition circ qIndexMap pm
@@ -2923,9 +2931,9 @@ buildDistributedCircuit numParts circ = do
       ids1 = [ qid | (qid, part) <- idPartitions, part == 1 ]
       partitions = Map.fromList idPartitions
 
-  -- putStrLn   "# Qubit partition assignments (after beam search):"
-  -- putStrLn $ "#   QPU 0 (" ++ show (length ids0) ++ " qubits): " ++ unwords (sortBy compare ids0)
-  -- putStrLn $ "#   QPU 1 (" ++ show (length ids1) ++ " qubits): " ++ unwords (sortBy compare ids1)
+  putStrLn   "# Qubit partition assignments (after beam search):"
+  putStrLn $ "#   QPU 0 (" ++ show (length ids0) ++ " qubits): " ++ unwords (sortBy compare ids0)
+  putStrLn $ "#   QPU 1 (" ++ show (length ids1) ++ " qubits): " ++ unwords (sortBy compare ids1)
 
   putStrLn $ "# Baseline ebit cost (KaHyPar partition):   " ++ show baselineEbits
   putStrLn $ "# Total ebit cost (beam-search partition): " ++ show totalEbits
@@ -2934,5 +2942,8 @@ buildDistributedCircuit numParts circ = do
   if verifyDist distributedCirc partitions
     then putStrLn "# Distribution Verification: PASS"
     else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
+
+  let optimalPartitionPath = Cfg.hypergraphPartitionDataPath </> "optimalPartition.hgr"
+  writePartitionFileOut optimalPartitionPath numQubits partMap
 
   return distributedCirc

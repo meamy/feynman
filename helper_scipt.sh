@@ -48,7 +48,7 @@ CIRCUITS=(
 
 FEYNMAN_DIR="/Users/duykhangnguyentruong/Development/feynman"
 HYPERGRAPH_SRC_DIR="${FEYNMAN_DIR}/hypergraphpartitiondata"
-BENCHMARKS_BASE="/Users/duykhangnguyentruong/Development/Benchmark_Analysis_Report"
+BENCHMARKS_BASE="/Users/duykhangnguyentruong/Development/Benchmark_Analysis_Data/Partitions"
 
 cabal build
 
@@ -88,24 +88,24 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     cabal run feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "$TARGET_FILE"
 
     # # Destination directory for this circuit
-    # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}/cnot_edgeweighted_hyp"
+    DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}"
 
     # # Create destination directory if it doesn't exist
-    # mkdir -p "${DEST_DIR}"
+    mkdir -p "${DEST_DIR}"
 
     # # Copy hypergraph files
-    # echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
-    # cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${DEST_DIR}/"
+    echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
+    cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${HYPERGRAPH_SRC_DIR}/optimalpartition.hgr" "${DEST_DIR}/"
 
     # cp "${HYPERGRAPH_SRC_DIR}/partition.hgr" "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/partitions/${CIRCUIT}.hgr"
 
-    # if [ $? -eq 0 ]; then
-    #     echo "Successfully copied files for ${CIRCUIT}"
-    # else
-    #     echo "ERROR: Failed to copy files for ${CIRCUIT}"
-    # fi
+    if [ $? -eq 0 ]; then
+        echo "Successfully copied files for ${CIRCUIT}"
+    else
+        echo "ERROR: Failed to copy files for ${CIRCUIT}"
+    fi
 
-    # echo ""
+    echo ""
 done
 
 echo "============================================"
