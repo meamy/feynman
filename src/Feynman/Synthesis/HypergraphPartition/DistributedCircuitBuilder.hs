@@ -2282,39 +2282,39 @@ synthesizeDQC circ numQubits qIndexMap partMap boundaries =
                
   in go circ 0 Map.empty Map.empty
 
--- -- Old approach
--- buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
--- buildDistributedCircuit numParts circ = do
---   (hyp, qIndexMap, _) <- HG.getNumCuts numParts circ
+-- Old approach
+buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
+buildDistributedCircuit numParts circ = do
+  (hyp, qIndexMap, _) <- HG.getNumCuts numParts circ
   
---   let numQubits = Map.size qIndexMap
---       partitionPath = Cfg.hypergraphPartitionDataPath </> "partition.hgr"
+  let numQubits = Map.size qIndexMap
+      partitionPath = Cfg.hypergraphPartitionDataPath </> "partition.hgr"
       
---   partMap <- readPartitionFile partitionPath numQubits
---   let boundaries = getTeleportationBoundaries hyp partMap
+  partMap <- readPartitionFile partitionPath numQubits
+  let boundaries = getTeleportationBoundaries hyp partMap
   
---   -- Pre-processing pass: Annotate and reorder the circuit
---   let annotatedCirc = annotateCircuit circ numQubits
---       reorderedCirc = reorderCommuting annotatedCirc qIndexMap partMap
+  -- Pre-processing pass: Annotate and reorder the circuit
+  let annotatedCirc = annotateCircuit circ numQubits
+      reorderedCirc = reorderCommuting annotatedCirc qIndexMap partMap
   
---   let (distributedCirc, actualEbits) = synthesizeDQC reorderedCirc numQubits qIndexMap partMap boundaries
---   putStrLn $ "# Actual ebits used (Synthesis): " ++ show actualEbits
+  let (distributedCirc, actualEbits) = synthesizeDQC reorderedCirc numQubits qIndexMap partMap boundaries
+  putStrLn $ "# Actual ebits used (Synthesis): " ++ show actualEbits
 
---   let getPart wIdx = 
---         case Map.lookup (Wire wIdx) partMap of
---           Just p  -> p
---           Nothing -> error $ "FATAL: qubit " ++ show wIdx ++ " is completely missing from the partition map!"
+  let getPart wIdx = 
+        case Map.lookup (Wire wIdx) partMap of
+          Just p  -> p
+          Nothing -> error $ "FATAL: qubit " ++ show wIdx ++ " is completely missing from the partition map!"
 
---       partitions = Map.fromList 
---         [ (qid, getPart wIdx) 
---         | (qid, wIdx) <- Map.toList qIndexMap 
---         ]
+      partitions = Map.fromList 
+        [ (qid, getPart wIdx) 
+        | (qid, wIdx) <- Map.toList qIndexMap 
+        ]
   
---   if verifyDist distributedCirc partitions
---     then putStrLn "# Distribution Verification: PASS"
---     else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
+  if verifyDist distributedCirc partitions
+    then putStrLn "# Distribution Verification: PASS"
+    else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
   
---   return distributedCirc
+  return distributedCirc
 
 rankFactorization :: F2Mat -> (F2Mat, F2Mat)
 rankFactorization a
@@ -2894,56 +2894,56 @@ diagnoseSeed circ qIndexMap seed eps =
 
 -- ===========================================================================
 
--- Toumas's approach buildDistributedCircuit  (now beam-search enhanced)
-buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
-buildDistributedCircuit numParts circ = do
-  (hyp, qIndexMap, _) <- HG.getNumCuts numParts circ
+-- -- Toumas's approach buildDistributedCircuit  (now beam-search enhanced)
+-- buildDistributedCircuit :: Int -> [Primitive] -> IO [Primitive]
+-- buildDistributedCircuit numParts circ = do
+--   (hyp, qIndexMap, _) <- HG.getNumCuts numParts circ
 
-  let numQubits = Map.size qIndexMap
-      partitionPath = Cfg.hypergraphPartitionDataPath </> "partition.hgr"
+--   let numQubits = Map.size qIndexMap
+--       partitionPath = Cfg.hypergraphPartitionDataPath </> "partition.hgr"
 
-  -- Seed partition straight from KaHyPar.
-  seedPartMap <- readPartitionFile partitionPath numQubits
+--   -- Seed partition straight from KaHyPar.
+--   seedPartMap <- readPartitionFile partitionPath numQubits
 
-  -- Baseline cost (KaHyPar's own partition), for reporting the improvement.
-  let baselineEbits = scorePartition circ qIndexMap seedPartMap
+--   -- Baseline cost (KaHyPar's own partition), for reporting the improvement.
+--   let baselineEbits = scorePartition circ qIndexMap seedPartMap
 
-  -- Beam-search knobs. Tune here (or lift into PartitionConfigs).
-  let beamWidth = 8
-      depth     = 10
-      eps       = Cfg.epsilon
+--   -- Beam-search knobs. Tune here (or lift into PartitionConfigs).
+--   let beamWidth = 8
+--       depth     = 10
+--       eps       = Cfg.epsilon
 
-  -- Print the round-1 landscape so you can see WHY the search did or didn't
-  -- improve (local minimum / balance-blocked / genuinely-good seed).
-  putStr (diagnoseSeed circ qIndexMap seedPartMap eps)
+--   -- Print the round-1 landscape so you can see WHY the search did or didn't
+--   -- improve (local minimum / balance-blocked / genuinely-good seed).
+--   putStr (diagnoseSeed circ qIndexMap seedPartMap eps)
 
-  -- Run the search over partition combinations.
-  let (partMap, totalEbits) =
-        beamSearchPartition circ qIndexMap seedPartMap eps beamWidth depth
+--   -- Run the search over partition combinations.
+--   let (partMap, totalEbits) =
+--         beamSearchPartition circ qIndexMap seedPartMap eps beamWidth depth
 
-  -- Synthesize the winning partition.
-  let (distributedCirc, _) = synthesizeUnderPartition circ qIndexMap partMap
+--   -- Synthesize the winning partition.
+--   let (distributedCirc, _) = synthesizeUnderPartition circ qIndexMap partMap
 
-  -- Recover reporting info for the chosen partition.
-  let getPart wIdx = Map.findWithDefault 0 (Wire wIdx) partMap
-      idPartitions = [ (qid, getPart wIdx) | (qid, wIdx) <- Map.toList qIndexMap ]
-      ids0 = [ qid | (qid, part) <- idPartitions, part == 0 ]
-      ids1 = [ qid | (qid, part) <- idPartitions, part == 1 ]
-      partitions = Map.fromList idPartitions
+--   -- Recover reporting info for the chosen partition.
+--   let getPart wIdx = Map.findWithDefault 0 (Wire wIdx) partMap
+--       idPartitions = [ (qid, getPart wIdx) | (qid, wIdx) <- Map.toList qIndexMap ]
+--       ids0 = [ qid | (qid, part) <- idPartitions, part == 0 ]
+--       ids1 = [ qid | (qid, part) <- idPartitions, part == 1 ]
+--       partitions = Map.fromList idPartitions
 
-  putStrLn   "# Qubit partition assignments (after beam search):"
-  putStrLn $ "#   QPU 0 (" ++ show (length ids0) ++ " qubits): " ++ unwords (sortBy compare ids0)
-  putStrLn $ "#   QPU 1 (" ++ show (length ids1) ++ " qubits): " ++ unwords (sortBy compare ids1)
+--   putStrLn   "# Qubit partition assignments (after beam search):"
+--   putStrLn $ "#   QPU 0 (" ++ show (length ids0) ++ " qubits): " ++ unwords (sortBy compare ids0)
+--   putStrLn $ "#   QPU 1 (" ++ show (length ids1) ++ " qubits): " ++ unwords (sortBy compare ids1)
 
-  putStrLn $ "# Baseline ebit cost (KaHyPar partition):   " ++ show baselineEbits
-  putStrLn $ "# Total ebit cost (beam-search partition): " ++ show totalEbits
-  putStrLn $ "# Ebits saved by beam search:              " ++ show (baselineEbits - totalEbits)
+--   putStrLn $ "# Baseline ebit cost (KaHyPar partition):   " ++ show baselineEbits
+--   putStrLn $ "# Total ebit cost (beam-search partition): " ++ show totalEbits
+--   putStrLn $ "# Ebits saved by beam search:              " ++ show (baselineEbits - totalEbits)
 
-  if verifyDist distributedCirc partitions
-    then putStrLn "# Distribution Verification: PASS"
-    else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
+--   if verifyDist distributedCirc partitions
+--     then putStrLn "# Distribution Verification: PASS"
+--     else putStrLn "# Distribution Verification: FAIL (cross-partition gate detected)"
 
-  let optimalPartitionPath = Cfg.hypergraphPartitionDataPath </> "optimalPartition.hgr"
-  writePartitionFileOut optimalPartitionPath numQubits partMap
+--   let optimalPartitionPath = Cfg.hypergraphPartitionDataPath </> "optimalPartition.hgr"
+--   writePartitionFileOut optimalPartitionPath numQubits partMap
 
-  return distributedCirc
+--   return distributedCirc

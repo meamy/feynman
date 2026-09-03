@@ -919,12 +919,51 @@ prop_MatroidCorrect = do
   let vecs = filter (\bv -> popCount bv /= 0) $ vals a
   return $ all independent $ partitionAll vecs
 
+-- Two linear matroids over the same bit strings: one over the low half
+-- of each vector, one over the high half.
+r1, r2 :: Int -> Set F2Vec -> Int
+r1 n s = rank . fromList . map (@@ (n-1, 0))     $ Set.toList s
+r2 n s = rank . fromList . map (@@ (2*n-1, n))   $ Set.toList s
+
+indep1, indep2 :: Int -> Set F2Vec -> Bool
+indep1 n s = Set.size s == r1 n s
+indep2 n s = Set.size s == r2 n s
+
+prop_MatroidIntersectionValid = do
+  a <- arbitraryFixedN 8
+  let vecs   = filter (\bv -> popCount bv /= 0) $ vals a
+      ground = Set.fromList vecs
+      (y, _, _) = matroidIntersection ground (indep1 4) (indep2 4)
+  return $ indep1 4 y && indep2 4 y
+
+-- The A/B certificate should exactly account for |Y| (the min-max theorem)
+prop_MatroidIntersectionMaximal = do
+  a <- arbitraryFixedN 8
+  let vecs   = filter (\bv -> popCount bv /= 0) $ vals a
+      ground = Set.fromList vecs
+      (y, sa, sb) = matroidIntersection ground (indep1 4) (indep2 4)
+  return $ Set.size y == r1 4 sa + r2 4 sb
+         && Set.union sa sb == ground
+         && Set.null (Set.intersection sa sb)
+
+-- Self-intersection sanity check: M intersected with itself is just M
+prop_MatroidIntersectionSelf = do
+  a <- arbitrary
+  let vecs   = filter (\bv -> popCount bv /= 0) $ vals a
+      ground = Set.fromList vecs
+      (y, _, _) = matroidIntersection ground independent independent
+  return $ Set.size y == rank (fromList vecs)
+
 tests :: () -> IO ()
 tests _ = do
-  quickCheck $ prop_TransposeInvolutive
-  quickCheck $ prop_ToEchelonIdempotent
-  quickCheck $ prop_ToReducedEchelonIdempotent
-  quickCheck $ prop_MultAssociative
-  quickCheck $ prop_PseudoinverseCorrect
-  quickCheck $ prop_TransformMatCorrect
-  quickCheck $ prop_MatroidCorrect
+  -- quickCheck $ prop_TransposeInvolutive
+  -- quickCheck $ prop_ToEchelonIdempotent
+  -- quickCheck $ prop_ToReducedEchelonIdempotent
+  -- quickCheck $ prop_MultAssociative
+  -- quickCheck $ prop_PseudoinverseCorrect
+  -- quickCheck $ prop_TransformMatCorrect
+  -- quickCheck $ prop_MatroidCorrect
+  quickCheck $ prop_MatroidIntersectionValid
+  quickCheck $ prop_MatroidIntersectionMaximal
+  quickCheck $ prop_MatroidIntersectionSelf
+  

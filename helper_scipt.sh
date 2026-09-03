@@ -57,9 +57,9 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "Processing circuit: ${CIRCUIT}"
     echo "============================================"
 
-    PARTITION=2
-    TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_beamSearch_${PARTITION}_${CIRCUIT}.qc"
-    cabal run feynopt -- -O2 -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
+    PARTITION=4
+    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_OldApproach_${PARTITION}_${CIRCUIT}.qc"
+    cabal run feynopt -- -inline -cnotmin -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
@@ -93,19 +93,19 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     # # Create destination directory if it doesn't exist
     mkdir -p "${DEST_DIR}"
 
-    # # Copy hypergraph files
-    echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
-    cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${HYPERGRAPH_SRC_DIR}/optimalpartition.hgr" "${DEST_DIR}/"
+    # # # Copy hypergraph files
+    # echo "Copying hypergraph.hgr and partition.hgr to ${DEST_DIR}"
+    # cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${HYPERGRAPH_SRC_DIR}/optimalpartition.hgr" "${DEST_DIR}/"
 
-    # cp "${HYPERGRAPH_SRC_DIR}/partition.hgr" "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/partitions/${CIRCUIT}.hgr"
+    # # cp "${HYPERGRAPH_SRC_DIR}/partition.hgr" "/Users/duykhangnguyentruong/Development/pytket-dqc/examples/partitions/${CIRCUIT}.hgr"
 
-    if [ $? -eq 0 ]; then
-        echo "Successfully copied files for ${CIRCUIT}"
-    else
-        echo "ERROR: Failed to copy files for ${CIRCUIT}"
-    fi
+    # if [ $? -eq 0 ]; then
+    #     echo "Successfully copied files for ${CIRCUIT}"
+    # else
+    #     echo "ERROR: Failed to copy files for ${CIRCUIT}"
+    # fi
 
-    echo ""
+    # echo ""
 done
 
 echo "============================================"
