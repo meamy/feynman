@@ -100,7 +100,7 @@ matroidIntersection ground indep1 indep2 = go Set.empty
   where
     go y = case findAugmentingPath ground indep1 indep2 y of
       -- If there is existed direct path from Z1 to Z2, output Y'
-      -- Y' = {z0,...,zn} \/ {ym+1,...yn} 
+      -- Update Y with Y' = {z0,...,zn} \/ {ym+1,...yn} 
       Right path  -> go (symmetricDifference y (Set.fromList path))
       -- Else Y is the largest common independent set of M1 and M2
       -- Return y, partition A and B
@@ -114,6 +114,7 @@ findAugmentingPath ground indep1 indep2 y
   | not (Set.null trivial) = Right [Set.findMin trivial]
   | otherwise               = bfs initialQueue initialPred
   where
+    -- X \ Y
     outside = ground `Set.difference` y
 
     z1 = Set.filter (\z -> indep1 (Set.insert z y)) outside
@@ -123,16 +124,19 @@ findAugmentingPath ground indep1 indep2 y
     initialQueue = Seq.fromList (Set.toList z1)
     initialPred  = Map.fromList [(z, Nothing) | z <- Set.toList z1]
 
+    -- Arc calculation
     neighbors u
       | Set.member u y = [v | v <- Set.toList outside, indep1 (Set.insert v (Set.delete u y))]
       | otherwise       = [v | v <- Set.toList y,       indep2 (Set.insert u (Set.delete v y))]
 
+    -- Reconstruct the path
     reconstruct pred target = walk target []
       where
         walk n acc = case Map.lookup n pred of
           Just (Just parent) -> walk parent (n:acc)
           _                   -> n:acc
-
+    
+    -- BFS Algo
     bfs queue pred = case viewl queue of
       EmptyL    -> Left (reachable, ground `Set.difference` reachable)
         where reachable = Map.keysSet pred

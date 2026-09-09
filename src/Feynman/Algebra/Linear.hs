@@ -937,15 +937,24 @@ prop_MatroidIntersectionValid = do
   return $ indep1 4 y && indep2 4 y
 
 -- The A/B certificate should exactly account for |Y| (the min-max theorem)
+-- prop_MatroidIntersectionMaximal = do
+--   a <- arbitraryFixedN 8
+--   let vecs   = filter (\bv -> popCount bv /= 0) $ vals a
+--       ground = Set.fromList vecs
+--       (y, sa, sb) = matroidIntersection ground (indep1 4) (indep2 4)
+--   return $ Set.size y == r1 4 sa + r2 4 sb
+--          && Set.union sa sb == ground
+--          && Set.null (Set.intersection sa sb)
+
 prop_MatroidIntersectionMaximal = do
   a <- arbitraryFixedN 8
   let vecs   = filter (\bv -> popCount bv /= 0) $ vals a
       ground = Set.fromList vecs
       (y, sa, sb) = matroidIntersection ground (indep1 4) (indep2 4)
-  return $ Set.size y == r1 4 sa + r2 4 sb
+  return $ Set.size y == r1 4 sb + r2 4 sa
          && Set.union sa sb == ground
          && Set.null (Set.intersection sa sb)
-
+         
 -- Self-intersection sanity check: M intersected with itself is just M
 prop_MatroidIntersectionSelf = do
   a <- arbitrary
@@ -956,13 +965,13 @@ prop_MatroidIntersectionSelf = do
 
 tests :: () -> IO ()
 tests _ = do
-  -- quickCheck $ prop_TransposeInvolutive
-  -- quickCheck $ prop_ToEchelonIdempotent
-  -- quickCheck $ prop_ToReducedEchelonIdempotent
-  -- quickCheck $ prop_MultAssociative
-  -- quickCheck $ prop_PseudoinverseCorrect
-  -- quickCheck $ prop_TransformMatCorrect
-  -- quickCheck $ prop_MatroidCorrect
+  quickCheck $ prop_TransposeInvolutive
+  quickCheck $ prop_ToEchelonIdempotent
+  quickCheck $ prop_ToReducedEchelonIdempotent
+  quickCheck $ prop_MultAssociative
+  quickCheck $ prop_PseudoinverseCorrect
+  quickCheck $ prop_TransformMatCorrect
+  quickCheck $ prop_MatroidCorrect
   quickCheck $ prop_MatroidIntersectionValid
   quickCheck $ prop_MatroidIntersectionMaximal
   quickCheck $ prop_MatroidIntersectionSelf
