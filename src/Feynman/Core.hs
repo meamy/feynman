@@ -232,6 +232,47 @@ data Hypergraph = Hypergraph
 type Block = Int
 type PartitionData = Map.Map ID Block
 
+{-Cat State-}
+initBellPairs :: ID -> ID -> [Primitive]
+initBellPairs bell1 bell2 = [H bell1, CNOT bell1 bell2]
+
+catEntangler :: ID -> ID -> ID -> [Primitive]
+catEntangler srcQubit bell1 bell2 =
+    initBellPairs bell1 bell2 ++ [CNOT srcQubit bell2, Measure bell2, CNOT bell2 bell1]
+
+catDisentangler :: ID -> ID -> [Primitive]
+catDisentangler srcQubit bell = [H bell,Measure bell,CZ bell srcQubit]
+
+catEntanglerMulti :: [ID] -> ID -> ID -> [Primitive]
+catEntanglerMulti srcQubits bell1 bell2 =
+    initBellPairs bell1 bell2 ++
+    [CNOT src bell2 | src <- srcQubits] ++
+    [Measure bell2, CNOT bell2 bell1]
+
+
+catDisentanglerMulti :: [ID] -> ID -> [Primitive]
+catDisentanglerMulti srcQubits bell =
+    [H bell, Measure bell] ++
+    [CZ bell src | src <- srcQubits]
+
+quasiSwap:: ID -> ID -> [Primitive]
+quasiSwap qubit1 qubit2 = [CNOT qubit1 qubit2, CNOT qubit2 qubit1]
+
+-- Phase corrections for the control sets
+phaseCorrection:: ID -> Set ID -> [Primitive]
+phaseCorrection ctrlQubit s = [CZ ctrlQubit c | c <- Set.toList s]
+
+-- | Disentangles a shared target qubit using a secondary Bell pair and applies phase corrections.
+-- 1. Share sA with QPU1 via new Bell pair (f1, f2)
+-- 2. Quasi swap
+-- 3. Disentangle and measure
+-- Phase corrections for the control sets
+-- Standard disentangle for the original target
+targetDisentangler :: ID -> ID -> ID -> ID -> Set ID -> [Primitive]
+targetDisentangler a sA f1 f2 s =
+    catEntangler sA f1 f2 ++ [Reset f2] ++ quasiSwap a f1 ++ [H f1,Measure f1] ++
+    phaseCorrection f1 s ++ catDisentangler a sA
+
 idsW :: WStmt a -> [ID]
 idsW = Set.toList . go where
   go (WSkip _)      = Set.empty

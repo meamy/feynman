@@ -14,7 +14,8 @@ import Feynman.Core (Primitive,
                      idsW,
                      ids, isCNOT, Primitive (CNOT))
 
-import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder  (buildDistributedCircuit, synthesizeDistributedCNOT)
+import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder (
+      buildDistributedCircuit, synthesizeDistributedCNOT, takeDistReport)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -128,7 +129,7 @@ dotQCPass pass = case pass of
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
   Distribute k -> \qc ->  -- Modified: bind the parameter 'k'
-    let qc' = optimizeDotQC (\_ _ -> unsafePerformIO . buildDistributedCircuit k) qc
+    let qc' = optimizeDotQC (\qubits _ -> unsafePerformIO . buildDistributedCircuit k qubits) qc
         -- Extract all IDs present in the new synthesized circuit body
         newQubits = ids (concatMap (DotQC.toCliffordT . DotQC.body) (DotQC.decls qc'))
     -- Append any newly discovered qubits to the global .v list, avoiding duplicates
@@ -167,6 +168,8 @@ runDotQC passes verify fname src = do
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc
       putStrLn $ "# Result (" ++ formatFloatN time 3 ++ "ms" ++ verStr ++ "):"
       mapM_ putStrLn . map ("#   " ++) $ DotQC.showCliffordTStats qc'
+      distLines <- takeDistReport
+      mapM_ putStrLn . map ("#   " ++) $ distLines
       if verify then putStrLn $ "# Verified" else return ()
       putStrLn $ "\n" 
       putStrLn $ "# Result Circuit"

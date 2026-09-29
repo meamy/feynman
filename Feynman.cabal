@@ -47,6 +47,7 @@ library
                        Feynman.Synthesis.Pathsum.Unitary,
 
                        Feynman.Synthesis.HypergraphPartition.HGraphBuilder,
+                       Feynman.Synthesis.HypergraphPartition.QIGBuilder,
                        Feynman.Synthesis.HypergraphPartition.PartitionConfigs,
                        Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder,
 

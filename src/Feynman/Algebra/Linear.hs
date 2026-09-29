@@ -919,6 +919,85 @@ prop_MatroidCorrect = do
   let vecs = filter (\bv -> popCount bv /= 0) $ vals a
   return $ all independent $ partitionAll vecs
 
+{-Toumas helpers-}
+
+rankFactorization :: F2Mat -> (F2Mat, F2Mat)
+rankFactorization a
+  | m a > n a = let (f, c) = rankFactorization (transpose a)
+                in  (transpose c, transpose f)
+  | otherwise =
+      -- MUST use toReducedEchelon so that A = C * F mathematically holds.
+      let ref       = fst . runWriter . toReducedEchelon $ a
+          pivots    = findPivots ref
+          aT        = transpose a
+          cT        = fromList [ row aT p | p <- pivots ] -- pivot COLUMNS of original
+          f         = fromList [ row ref i | i <- [0 .. length pivots - 1] ]
+      in  (transpose cT, f)   -- C is m×r, F is r×n
+
+-- Find the column index of each pivot in row echelon form
+findPivots :: F2Mat -> [Int]
+findPivots mat = go 0 0
+  where
+    go i j | i >= m mat || j >= n mat = []
+           | row mat i @. j            = j : go (i+1) (j+1)
+           | otherwise                 = go i (j+1)
+
+blockLduFact :: F2Mat -> Int -> (F2Mat, F2Mat, F2Mat)
+blockLduFact mat n =
+  let sz   = m mat
+      m'   = sz - n
+      a    = subMat mat (0, n)  (0, n)   -- top-left     n×n
+      b    = subMat mat (0, n)  (n, sz)  -- top-right    n×m'
+      c    = subMat mat (n, sz) (0, n)   -- bottom-left  m'×n
+      d    = subMat mat (n, sz) (n, sz)  -- bottom-right m'×m'
+      ainv = pseudoinverse a             -- n×n (true inverse since a is invertible)
+      -- Schur complement of a in mat:
+      schur = add d (mult (mult c ainv) b)  -- m'×m'  (subtraction = addition in GF(2))
+      -- Block-assemble L, D, U:
+      idn  = identity n
+      idm  = identity m'
+      zero_nm = F2Mat n  m' (replicate n  (bitVec m' 0))
+      zero_mn = F2Mat m' n  (replicate m' (bitVec n  0))
+      l    = stackMat (    idn `hcat` zero_nm   )
+                      (mult c ainv `hcat` idm   )
+      d'   = stackMat (    a       `hcat` zero_nm)
+                      (   zero_mn  `hcat` schur  )
+      u    = stackMat (    idn     `hcat` mult ainv b)
+                      (   zero_mn  `hcat` idm        )
+  in  (l, d', u)
+
+-- Horizontal concatenation helper (same number of rows)
+hcat :: F2Mat -> F2Mat -> F2Mat
+hcat a b = transpose $ stackMat (transpose a) (transpose b)
+
+makeUlInv :: F2Mat -> Int -> (F2Mat, F2Mat)
+makeUlInv a n
+  | rank (subMat a (0, n) (0, n)) == n = (identity (m a), a)
+  | otherwise =
+      let sz    = m a
+          -- Column echelon of the left half: rows are [0..sz), cols are [0..n)
+          -- Transposing gives us a matrix whose row echelon reveals pivot *rows* of A
+          leftHalf = subMat a (0, sz) (0, n)
+          ref      = fst . runWriter . toEchelon . transpose $ leftHalf
+          -- pivots are column indices of ref = row indices of leftHalf = row indices of A
+          pivots   = findPivots ref
+          -- which of those pivot rows are in the upper block vs lower block
+          upperPivots  = filter (<  n) pivots
+          lowerPivots  = filter (>= n) pivots
+          -- upper rows that are NOT pivots (need to be fixed)
+          upperNonPivs = filter (`notElem` upperPivots) [0..n-1]
+          -- pair each deficient upper row with a lower pivot row to borrow from
+          pairs        = zip upperNonPivs lowerPivots
+          applyPair (u, r) (i, j) = (addRow j i u, addRow j i r)
+          (u, r)       = foldl' applyPair (identity sz, a) pairs
+      in  (u, r)
+
+blockUlduFact :: F2Mat -> Int -> (F2Mat, F2Mat, F2Mat, F2Mat)
+blockUlduFact a n =
+  let (u, r)    = makeUlInv a n
+      (l, d, u2) = blockLduFact r n
+  in  (u, l, d, u2)
+
 -- Two linear matroids over the same bit strings: one over the low half
 -- of each vector, one over the high half.
 r1, r2 :: Int -> Set F2Vec -> Int

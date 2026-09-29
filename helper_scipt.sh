@@ -3,47 +3,37 @@
 set -e
 
 CIRCUITS=(
-    adder_8
-    barenco_tof_3
-    barenco_tof_4
-    barenco_tof_5
-    barenco_tof_10
-    csla_mux_3
-    csum_mux_9
-    # cycle_17_3
-    # fprenorm
-    "gf2^4_mult"
-    "gf2^5_mult"
-    "gf2^6_mult"
-    "gf2^7_mult"
-    "gf2^8_mult"
-    "gf2^9_mult"
-    "gf2^10_mult"
-    "gf2^16_mult"
-    # "gf2^32_mult"
-    # "gf2^64_mult"
-    # grover_5
-    # ham15-high
-    ham15-low
-    ham15-med
-    hwb6
-    # hwb8
-    # hwb10
-    mod_adder_1024
-    # mod_adder_1048576
-    mod_mult_55
-    mod_red_21
-    mod5_4
+    # adder_8
+    # barenco_tof_3
+    # barenco_tof_4
+    # barenco_tof_5
+    # barenco_tof_10
+    # csla_mux_3
+    # csum_mux_9
+    # "gf2^4_mult"
+    # "gf2^5_mult"
+    # "gf2^6_mult"
+    # "gf2^7_mult"
+    # "gf2^8_mult"
+    # "gf2^9_mult"
+    # "gf2^10_mult"
+    # "gf2^16_mult"
+    # ham15-low
+    # ham15-med
+    # hwb6
+    # mod_adder_1024
+    # mod_mult_55
+    # mod_red_21
+    # mod5_4
     qcla_adder_10
     qcla_com_7
     qcla_mod_7
-    # qft_4
     rc_adder_6
-    tof_3
-    tof_4
-    tof_5
-    tof_10
-    vbe_adder_3
+    # tof_3
+    # tof_4
+    # tof_5
+    # tof_10
+    # vbe_adder_3
 )
 
 FEYNMAN_DIR="/Users/duykhangnguyentruong/Development/feynman"
@@ -57,9 +47,9 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     echo "Processing circuit: ${CIRCUIT}"
     echo "============================================"
 
-    PARTITION=4
-    TARGET_FILE="benchmarks/qc_customized/distributed_cnot_OldApproach_${PARTITION}_${CIRCUIT}.qc"
-    cabal run feynopt -- -inline -cnotmin -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
+    PARTITION=2
+    TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_${PARTITION}_${CIRCUIT}.qc"
+    cabal run feynopt -- -inline -O2 -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > $TARGET_FILE
 
     if [ $? -ne 0 ]; then
         echo "ERROR: cabal run failed for ${CIRCUIT}. Skipping copy step."
@@ -68,19 +58,18 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     
     # --- NEW VERIFICATION CHECK ---
     # Extract and print the verification status directly from the generated .qc file
-    VERIFY_LINE=$(grep "# Distribution Verification:" "$TARGET_FILE")
+    VERIFY_LINE=$(grep -m1 -E '^#[[:space:]]*Distribution:' "$TARGET_FILE")
 
     if [ -n "$VERIFY_LINE" ]; then
-        # Print the exact line found in the file
-        echo "$VERIFY_LINE"
-        
-        # Optional: You can also make the script halt if it fails
-        if echo "$VERIFY_LINE" | grep -q "FAIL"; then
-            echo "ERROR: Verification failed for ${CIRCUIT}. Halting."
+        # Strip the leading "#   " so it reads cleanly in the script's log
+        echo "${CIRCUIT}: ${VERIFY_LINE#\#*( )}"
+
+        if printf '%s' "$VERIFY_LINE" | grep -q "FAIL"; then
+            echo "ERROR: Verification failed for ${CIRCUIT}. Skipping."
             continue
         fi
     else
-        echo "WARNING: Distribution Verification status not found in the output."
+        echo "WARNING: Distribution verification status not found in the output."
     fi
     # ------------------------------
 
