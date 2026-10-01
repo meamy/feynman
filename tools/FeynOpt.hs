@@ -15,7 +15,7 @@ import Feynman.Core (Primitive,
                      ids, isCNOT, Primitive (CNOT))
 
 import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder (
-      buildDistributedCircuit, synthesizeDistributedCNOT, takeDistReport)
+      buildDistributedCircuit, takeDistReport)
 
 import qualified Feynman.Frontend.DotQC as DotQC
 
@@ -135,9 +135,9 @@ dotQCPass pass = case pass of
     -- Append any newly discovered qubits to the global .v list, avoiding duplicates
     in qc' { DotQC.qubits = nub (DotQC.qubits qc ++ newQubits) }
   
-  SynthDist n -> optimizeDotQC $ \qubits _inputs circ ->
-    let (cnotSeg, rest) = partition isCNOT circ
-    in  synthesizeDistributedCNOT qubits cnotSeg n ++ rest
+  -- SynthDist n -> optimizeDotQC $ \qubits _inputs circ ->
+  --   let (cnotSeg, rest) = partition isCNOT circ
+  --   in  synthesizeDistributedCNOT qubits cnotSeg n ++ rest
 
 equivalenceCheckDotQC :: DotQC.DotQC -> DotQC.DotQC -> Either String DotQC.DotQC
 equivalenceCheckDotQC qc qc' =

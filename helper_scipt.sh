@@ -3,11 +3,11 @@
 set -e
 
 CIRCUITS=(
-    # adder_8
-    # barenco_tof_3
-    # barenco_tof_4
-    # barenco_tof_5
-    # barenco_tof_10
+    adder_8
+    barenco_tof_3
+    barenco_tof_4
+    barenco_tof_5
+    barenco_tof_10
     # csla_mux_3
     # csum_mux_9
     # "gf2^4_mult"
@@ -21,18 +21,18 @@ CIRCUITS=(
     # ham15-low
     # ham15-med
     # hwb6
-    # mod_adder_1024
+    mod_adder_1024
     # mod_mult_55
     # mod_red_21
     # mod5_4
-    qcla_adder_10
-    qcla_com_7
-    qcla_mod_7
-    rc_adder_6
-    # tof_3
-    # tof_4
-    # tof_5
-    # tof_10
+    # qcla_adder_10
+    # qcla_com_7
+    # qcla_mod_7
+    # rc_adder_6
+    tof_3
+    tof_4
+    tof_5
+    tof_10
     # vbe_adder_3
 )
 

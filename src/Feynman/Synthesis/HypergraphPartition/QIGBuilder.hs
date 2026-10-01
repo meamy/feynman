@@ -22,6 +22,10 @@ module Feynman.Synthesis.HypergraphPartition.QIGBuilder
   , qigToHypergraph
   , qigToHMetis
   , partitionQIG
+  , parsePartition
+  , qigAssignment
+  , readQIGPartition
+  , loadQIGPartition
   ) where
 
 import qualified Data.Map as Map
@@ -29,6 +33,9 @@ import           Data.Map   (Map)
 import qualified Data.Set as Set
 import           Data.List  (foldl', tails, isPrefixOf)
 import           Data.Maybe (mapMaybe)
+import           Data.Char  (isSpace)
+import           Text.Read  (readMaybe)
+import           Control.Exception (evaluate)
 import           Control.Monad (forM_, when)
 import           System.Directory (createDirectoryIfMissing, listDirectory, removeFile)
 import           System.Exit (ExitCode(..))
@@ -148,6 +155,66 @@ partitionQIG numParts qs circ = do
       blocks <- runKaHyPar k n (qigToHMetis qig)
       return (qig, toAssign blocks)
 
+-- | Parse the contents of a KaHyPar partition file for @n@ vertices and @k@
+--   blocks. KaHyPar writes one block id per line, line i holding the block of
+--   vertex i (vertices are 1-based in the hMetis file, blocks are 0-based).
+--   Blank lines are skipped; anything else must be an integer in 0 .. k-1,
+--   and there must be exactly @n@ of them.
+parsePartition :: Int -> Int -> String -> Either String [Int]
+parsePartition k n contents = do
+  blocks <- traverse parseLine numbered
+  when (length blocks /= n) $
+    Left ("expected " ++ show n ++ " blocks, got " ++ show (length blocks))
+  return blocks
+  where
+    numbered = [ (ln, s) | (ln, s) <- zip [1 :: Int ..] (lines contents)
+                         , not (all isSpace s) ]
+
+    parseLine (ln, s) = case readMaybe s of
+      Nothing -> Left ("line " ++ show ln ++ ": not a block id: " ++ show s)
+      Just b
+        | b < 0 || b >= k -> Left ("line " ++ show ln ++ ": block " ++ show b
+                                   ++ " is outside 0.." ++ show (k - 1))
+        | otherwise       -> Right b
+
+-- | Turn one block per vertex (vertex 1 first, as KaHyPar lists them) into
+--   the assignment qubit -> block, using the QIG's vertex numbering.
+--   Expects exactly one block per vertex; 'parsePartition' checks that.
+qigAssignment :: QIG -> [Int] -> Map ID Int
+qigAssignment qig blocks = Map.map (byVertex Map.!) (qigIndex qig)
+  where
+    byVertex = Map.fromList (zip [1 ..] blocks)
+
+-- | Read a KaHyPar partition file written for this QIG, e.g. the
+--   @qig.partition@ copy that 'partitionQIG' leaves behind, and return the
+--   assignment qubit -> block (0 .. k-1).
+--
+--   KaHyPar identifies vertices only by line number, so the file must come
+--   from a QIG with the same numbering: built with 'buildQIGOver' over the
+--   same qubit list, in the same order, and the same circuit.
+readQIGPartition :: QIG -> Int -> FilePath -> IO (Map ID Int)
+readQIGPartition qig k fp = do
+  blocks <- readPartitionFile ("readQIGPartition: " ++ fp) k (qigNumQubits qig) fp
+  return (qigAssignment qig blocks)
+
+-- | Same arguments as 'partitionQIG', but reads an existing partition file
+--   instead of running KaHyPar. Rebuilds the QIG with 'buildQIGOver' so the
+--   vertex numbering matches the one the file was written for.
+loadQIGPartition :: Int -> [ID] -> [Primitive] -> FilePath -> IO (QIG, Map ID Int)
+loadQIGPartition numParts qs circ fp = do
+  let qig = buildQIGOver qs circ
+  assignment <- readQIGPartition qig numParts fp
+  return (qig, assignment)
+
+-- | Read and parse a partition file strictly, so the handle is closed before
+--   the caller copies, overwrites or removes the file.
+readPartitionFile :: String -> Int -> Int -> FilePath -> IO [Int]
+readPartitionFile context k n fp = do
+  contents <- readFile fp
+  _ <- evaluate (length contents)
+  either (ioError . userError . ((context ++ ": ") ++)) return
+         (parsePartition k n contents)
+
 -- | Write an hMetis file, run KaHyPar on it and read back one block per vertex.
 runKaHyPar :: Int -> Int -> String -> IO [Int]
 runKaHyPar k n hmetis = do
@@ -187,13 +254,10 @@ runKaHyPar k n hmetis = do
     []  -> ioError (userError "partitionQIG: KaHyPar did not produce a partition file.")
     fs  -> ioError (userError ("partitionQIG: several partition files found: " ++ unwords fs))
 
-  contents <- readFile partFile
-  let blocks = map read (lines contents) :: [Int]
-  when (length blocks /= n) $
-    ioError (userError ("partitionQIG: expected " ++ show n ++ " blocks, got "
-                        ++ show (length blocks)))
+  blocks <- readPartitionFile "partitionQIG" k n partFile
 
-  -- Keep a stable copy next to the other partition files, for inspection.
-  writeFile partFP contents
+  -- Keep a stable copy next to the other partition files, for inspection
+  -- or for reading back later with 'readQIGPartition'.
+  writeFile partFP (unlines (map show blocks))
   removeFile partFile
   return blocks
