@@ -366,7 +366,7 @@ applyStmt stmt = case stmt of
   WGate l gate -> applyGate (gate, l)
   WSeq _ xs    -> mapM_ applyStmt xs
   WReset _ v   -> getSt v >>= \bv -> setSt v nil
-  WMeasure _ v -> getSt v >> return ()
+  WMeasure _ v -> getSt v >> increaseDim >>= \k -> setSt v (var k)
   WIf _ s1 s2  -> do
     ctx <- get
     let vars  = Map.keys $ ket ctx
