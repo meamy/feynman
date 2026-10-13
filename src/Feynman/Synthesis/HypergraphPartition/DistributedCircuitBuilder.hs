@@ -24,7 +24,7 @@ import qualified Data.Map as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
 import Control.Monad.State.Strict (runState)
 
 import Data.IORef (IORef, newIORef, modifyIORef', atomicModifyIORef')
@@ -32,7 +32,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 
 data ChunkSummary = ChunkSummary
-  { 
+  {
      -- phase parities, bit i <-> ids !! i
     chunkParities :: [F2Vec],
      -- linear map B, row i = image of ids !! i
@@ -419,56 +419,72 @@ synthesizeUnderQubitSplit circ ids0 ids1 =
             in (accCirc ++ gates, accEbits + ebits)
   in foldl' processChunk ([], 0) chunks
 
+-- | Report, chunk by chunk, what each synthesis step produces for the chosen
+-- split. Recomputes the same intermediate values synthesizeUnderQubitSplit uses.
+-- Call it once on the final split, never inside the search.
+reportSynthesisSteps :: [Primitive] -> [ID] -> [ID] -> IO ()
+reportSynthesisSteps circ ids0 ids1 = mapM_ step (zip [1 :: Int ..] chunks)
+  where
+    sortedIds = ids0 ++ ids1
+    numQpu0   = length ids0
+    n         = length sortedIds
+    onQpu0 q  = q `elem` ids0
+    shw       = showParity sortedIds
+    list xs   = if null xs then "none" else intercalate ", " xs
 
-synthesizeUnderPartition :: [Primitive] -> Map ID Int -> Map Vertex Block -> ([Primitive], Int)     
-synthesizeUnderPartition circ qIndexMap partMap =
-  let getPart wIdx = Map.findWithDefault 0 (Wire wIdx) partMap
+    isPP (CNOT _ _) = True
+    isPP g          = isZBasisPhaseGate g
+    chunks = groupBy (\g1 g2 -> isPP g1 == isPP g2) circ
 
-      idPartitions = [ (qid, getPart wIdx) | (qid, wIdx) <- Map.toList qIndexMap ]
-      ids0 = [ qid | (qid, part) <- idPartitions, part == 0 ]
-      ids1 = [ qid | (qid, part) <- idPartitions, part == 1 ]
+    mask0 = fromBits (reverse [ i <  numQpu0 | i <- [0 .. n - 1] ])
+    mask1 = fromBits (reverse [ i >= numQpu0 | i <- [0 .. n - 1] ])
 
-      sortedIds = ids0 ++ ids1
-      numQpu0   = length ids0
+    step (k, chunk)
+      | not (isPP (head chunk)) =
+          reportDist $ "Chunk " ++ show k ++ " (copied as-is): " ++ list (map show chunk)
+      | otherwise = do
+          let (phases, finalMat) = extractPhasesAndMatrix sortedIds chunk (identity n)
+              (s0, s1, mv) = matroidPhaseSplit mask0 mask1 (map fst phases)
+              imports s lm rm = if null s then [] else toList (snd (rewriteParities s lm rm))
+              imp0         = imports s0 mask0 mask1
+              imp1         = imports s1 mask1 mask0
+              bRows        = [ q ++ " <- " ++ shw r
+                             | (q, r) <- zip sortedIds (toList finalMat), shw r /= q ]
 
-      origQubits = map fst $ sortBy (comparing snd) $ Map.toList qIndexMap
-      origParities = HG.extractParities origQubits circ
-      n = length origQubits
+              -- The same calls synthDistributedMatroid / distSynth make.
+              parityToPart = Map.fromList ([ (p, 0) | p <- s0 ] ++ [ (p, 1) | p <- s1 ])
+              localQIdx    = Map.fromList (zip sortedIds [1 ..])
+              localPart    = Map.fromList [ (Wire i, if i <= numQpu0 then 0 else 1) | i <- [1 .. n] ]
+              (phaseGates, phaseBells) =
+                synthPhases sortedIds numQpu0 phases parityToPart localQIdx localPart
+              rawLinear    = synthDistributedLinear sortedIds finalMat numQpu0
+              env          = Map.fromList [ (q, if onQpu0 q then 0 else 1) | q <- sortedIds ]
+              (routedLinear, linearBells) =
+                routeLinearGates rawLinear (length phaseBells `div` 2) env
+              resets       = [ Reset b | b <- phaseBells ++ linearBells ]
+              ebits        = (length phaseBells + length linearBells) `div` 2
 
-      translateParity p =
-        let activeQs = [ origQubits !! k | k <- [0..n-1], p @. k ]
-            bools = [ (sortedIds !! i) `elem` activeQs | i <- [0..n-1] ]
-        in fromBits (reverse bools)
-
-      translatedParities = map translateParity origParities
-
-      parityToPart = Map.fromList [ (tp, Map.findWithDefault 0 (GateIdx (n + 1 + j)) partMap)
-                                  | (tp, j) <- zip translatedParities [0..] ]
-
-      isPP (CNOT _ _) = True
-      isPP g | isZBasisPhaseGate g = True
-      isPP _ = False
-
-      chunks = groupBy (\g1 g2 -> isPP g1 == isPP g2) circ
-
-      initialMat = identity n
-
-      processChunk :: ([Primitive], F2Mat, Int) -> [Primitive] -> ([Primitive], F2Mat, Int)
-      processChunk (accCirc, currentMat, accEbits) chunk
-        | null chunk = (accCirc, currentMat, accEbits)
-        | not (isPP (head chunk)) =
-            (accCirc ++ chunk, identity n, accEbits)
-        | otherwise =
-            let (phases, finalMat) = extractPhasesAndMatrix sortedIds chunk currentMat
-                (synths, chunkEbits) = distSynth sortedIds finalMat numQpu0 phases parityToPart qIndexMap partMap
-            in (accCirc ++ synths, finalMat, accEbits + chunkEbits)
-
-      (distributedCirc, _, totalEbits) = foldl' processChunk ([], initialMat, 0) chunks
-  in (distributedCirc, totalEbits)
-
--- Convenience: score only (ebit cost) for a candidate partition.
-scorePartition :: [Primitive] -> Map ID Int -> Map Vertex Block -> Int
-scorePartition circ qIndexMap partMap = snd (synthesizeUnderPartition circ qIndexMap partMap)
+              crossCnots   = [ c ++ " -> " ++ t | CNOT c t <- rawLinear, onQpu0 c /= onQpu0 t ]
+              gates gs     = list (map show gs)
+          reportDist $ "Chunk " ++ show k ++ " (resynthesized, " ++ show (length chunk) ++ " gates)"
+          reportDist $ "  original gates:         " ++ gates chunk
+          reportDist $ "  extractPhasesAndMatrix  phases: "
+                       ++ list [ shw p ++ " : " ++ show a | (p, a) <- phases ]
+          reportDist $ "  extractPhasesAndMatrix  B: "
+                       ++ (if null bRows then "identity" else intercalate ", " bRows)
+          reportDist $ "  matroidPhaseSplit       QPU 0 computes: " ++ list (map shw s0)
+          reportDist $ "  matroidPhaseSplit       QPU 1 computes: " ++ list (map shw s1)
+          reportDist $ "  matroidPhaseSplit       value: " ++ show mv
+          reportDist $ "  synthPhases             QPU 0 imports: " ++ list (map shw imp0)
+          reportDist $ "  synthPhases             QPU 1 imports: " ++ list (map shw imp1)
+          reportDist $ "  synthPhases             gates: " ++ gates phaseGates
+          reportDist $ "  synthDistributedLinear  gates: " ++ gates rawLinear
+          reportDist $ "  synthDistributedLinear  cross-QPU CNOTs: " ++ list crossCnots
+          reportDist $ "  routeLinearGates        gates: " ++ gates routedLinear
+          reportDist $ "  distSynth               resets: " ++ gates resets
+          reportDist $ "  distSynth               ebits: " ++ show ebits
+                       ++ " (phase " ++ show (length imp0 + length imp1)
+                       ++ ", linear " ++ show (length crossCnots) ++ ")"
 
 splitOfPartMap :: Map ID Int -> Map Vertex Block -> ([ID], [ID])
 splitOfPartMap qIndexMap pm = (ids0, ids1)
@@ -514,81 +530,85 @@ reportInputParities ids circ = do
   reportDist $ "Parities (" ++ show (length parities) ++ "): "
                ++ intercalate ", " (map (showParity ids) parities)
 
-
 -- QPU-0 and QPU-1 masks for a split, over the fixed qubit order.
 splitMasks :: [ID] -> [ID] -> (F2Vec, F2Vec)
 splitMasks ids ids0 = (fromBits (reverse onQpu0), fromBits (reverse (map not onQpu0)))
   where onQpu0 = [ q `elem` ids0 | q <- ids ]
 
--- Estimated ebit cost of a split, from the matroid value per chunk.
--- phaseOnly drops the linear estimate, leaving the pure matroid value.
-estimateSplitCost :: Bool -> [ID] -> [ChunkSummary] -> [ID] -> Int
-estimateSplitCost phaseOnly ids summaries ids0 = sum (map chunkScore summaries)
+-- | Reorder a chunk's linear transformation into QPU-0/QPU-1 wire order.
+-- Both rows (output wires) and columns (input basis coordinates) must be
+-- permuted, exactly as extractPhasesAndMatrix does with sortedIds.
+reorderForSplit :: [ID] -> [ID] -> F2Mat -> F2Mat
+reorderForSplit ids ordered a =
+  let positions = Map.fromList (zip ids [0 :: Int ..])
+      reorderVec v = fromBits (reverse [v @. (positions Map.! q) | q <- ordered])
+  in fromList [reorderVec (row a (positions Map.! q)) | q <- ordered]
+
+-- | Number of Bell pairs consumed by the CURRENT block-ULDU linear synthesis,
+-- without generating gates. Each rank-one term in synthSplitRank contains
+-- exactly one nonlocal CNOT, which routeLinearGates turns into one Bell pair.
+linearCostAlgebraic :: [ID] -> [ID] -> F2Mat -> Int
+linearCostAlgebraic ids ids0 finalMat =
+  let side0   = Set.fromList ids0
+      ids1    = [q | q <- ids, Set.notMember q side0]
+      ordered = ids0 ++ ids1
+      b       = reorderForSplit ids ordered finalMat
+      n0      = length ids0
+      sz      = m b
+      (u, l, _, u2) = blockUlduFact b n0
+      uBlock  = subMat u  (0, n0)  (n0, sz)
+      lBlock  = subMat l  (n0, sz) (0, n0)
+      u2Block = subMat u2 (0, n0)  (n0, sz)
+  in rank uBlock + rank lBlock + rank u2Block
+
+-- | Synthesis-free algebraic ebit score for the non-persistent pipeline.
+-- The phase term is Edmonds' matroid intersection optimum. The linear term
+-- mirrors the exact three nonlocal blocks used by synthDistributedLinear.
+algebraicSplitCost :: [ID] -> [ChunkSummary] -> [ID] -> Int
+algebraicSplitCost ids summaries ids0 = sum (map scoreChunk summaries)
   where
     (mask0, mask1) = splitMasks ids ids0
+    scoreChunk cs =
+      let (_, _, phaseEbits) = matroidPhaseSplit mask0 mask1 (chunkParities cs)
+          linearEbits = linearCostAlgebraic ids ids0 (chunkFinal cs)
+      in phaseEbits + linearEbits
 
-    chunkScore cs = phaseCost cs + (if phaseOnly then 0 else linearCost cs)
-
-    -- Exact: matroid intersection gives the optimal phase cost directly.
-    phaseCost cs =
-      let (_, _, c) = matroidPhaseSplit mask0 mask1 (chunkParities cs) in c
-
-    -- Estimate: ranks of the two off-diagonal blocks of B.
-    linearCost cs =
-      let rowsOn side mask = [ v * mask
-                             | (q, v) <- zip ids (toList (chunkFinal cs))
-                             , (q `elem` ids0) == side ]
-          rk vs = if null vs then 0 else rank (fromList vs)
-      in rk (rowsOn True mask1) + rk (rowsOn False mask0)
-
--- Preserve the old chunked synthesis as the base implementation, then optimize
--- its communication schedule across chunk boundaries.
-synthesizeUnderQubitSplitPersistent :: [Primitive] -> [ID] -> [ID] -> ([Primitive], Int)
-synthesizeUnderQubitSplitPersistent circ ids0 ids1 =
-  let (rawCirc, rawEbits) = synthesizeUnderQubitSplit circ ids0 ids1
-      (optCirc, saved)     = fusePersistentCats rawCirc
-  in (optCirc, max 0 (rawEbits - saved))
-
-scoreQubitSplitPersistent :: [Primitive] -> Map ID Int -> Map Vertex Block -> Int
-scoreQubitSplitPersistent circ qIndexMap pm =
-  let (ids0, ids1) = splitOfPartMap qIndexMap pm
-  in snd (synthesizeUnderQubitSplitPersistent circ ids0 ids1)
+-- | Validate a candidate against the actual (non-persistent) synthesized cost.
+-- Use only for diagnostics on small examples, never in the beam score.
+validateAlgebraicSplitCost :: [Primitive] -> [ID] -> [ChunkSummary] -> [ID] -> Bool
+validateAlgebraicSplitCost circ ids summaries ids0 =
+  let side0 = Set.fromList ids0
+      ids1  = [q | q <- ids, Set.notMember q side0]
+  in algebraicSplitCost ids summaries ids0 ==
+     snd (synthesizeUnderQubitSplit circ ids0 ids1)
 
 {- Cost-specific search wrappers (the search itself lives in BeamSearch) -}
-
--- | Beam search scored by the vanilla pipeline (KaHyPar parity blocks).
-beamSearchPartition :: [Primitive] -> Map ID Int -> Map Vertex Block
-                    -> Double -> Int -> Int -> (Map Vertex Block, Int)
-beamSearchPartition circ qIndexMap = beamSearchWith (scorePartition circ qIndexMap)
 
 -- | Beam search on the exact cost. Correct, but synthesizes once per candidate.
 beamSearchQubitSplit :: [Primitive] -> Map ID Int -> Map Vertex Block
                      -> Double -> Int -> Int -> (Map Vertex Block, Int)
 beamSearchQubitSplit circ qIndexMap = beamSearchWith (scoreQubitSplit circ qIndexMap)
 
--- | Beam search on the estimate. Chunks are summarized once, up front.
-beamSearchQubitSplitFast :: Bool -> [Primitive] -> Map ID Int -> Map Vertex Block
-                         -> Double -> Int -> Int -> (Map Vertex Block, Int)
-beamSearchQubitSplitFast phaseOnly circ qIndexMap seed =
-  beamSearchWith score seed
+-- | Beam search with a synthesis-free score matching the raw ebit pipeline.
+beamSearchQubitSplitAlgebraic :: [Primitive] -> Map ID Int -> Map Vertex Block
+                              -> Double -> Int -> Int -> (Map Vertex Block, Int)
+beamSearchQubitSplitAlgebraic circ qIndexMap seed = beamSearchWith score seed
   where
     ids       = Map.keys qIndexMap
     summaries = summarizeChunks ids circ
-    score pm  = estimateSplitCost phaseOnly ids summaries (fst (splitOfPartMap qIndexMap pm))
+    score pm  = algebraicSplitCost ids summaries
+                  (fst (splitOfPartMap qIndexMap pm))
 
--- Exact search under the persistent-cat cost model.  This is intentionally used
--- for small circuits: it removes beam-pruning/tie-order effects entirely.
-exhaustiveQubitSplitPersistent :: [Primitive] -> Map ID Int -> Map Vertex Block
+-- | Exact exploration of balanced assignments, still without synthesis.
+-- Useful for small cases such as tof_4 to diagnose beam-pruning effects.
+exhaustiveQubitSplitAlgebraic :: [Primitive] -> Map ID Int -> Map Vertex Block
                               -> Double -> (Map Vertex Block, Int)
-exhaustiveQubitSplitPersistent circ qIndexMap =
-  exhaustiveSearchWith (scoreQubitSplitPersistent circ qIndexMap)
-
--- Beam-search fallback for larger circuits. the pruning score is the cost of the circuit 
--- after persistent-cat fusion, so search and final synthesis optimize the same objective.
-beamSearchQubitSplitPersistent :: [Primitive] -> Map ID Int -> Map Vertex Block
-                               -> Double -> Int -> Int -> (Map Vertex Block, Int)
-beamSearchQubitSplitPersistent circ qIndexMap =
-  beamSearchWith (scoreQubitSplitPersistent circ qIndexMap)
+exhaustiveQubitSplitAlgebraic circ qIndexMap seed = exhaustiveSearchWith score seed
+  where
+    ids       = Map.keys qIndexMap
+    summaries = summarizeChunks ids circ
+    score pm  = algebraicSplitCost ids summaries
+                  (fst (splitOfPartMap qIndexMap pm))
 
 buildDistributedCircuit :: Int -> [ID] -> [Primitive] -> IO [Primitive]
 buildDistributedCircuit numParts qubits circ
@@ -596,52 +616,65 @@ buildDistributedCircuit numParts qubits circ
       "buildDistributedCircuit: supports exactly 2 QPUs, got " ++ show numParts
   | otherwise = do
       let
-          useBeamSearch = True
+          -- Knobs.
+          useBeamSearch   = True    -- False: keep the starting split, no search
+          useQIGSeed      = False   -- False: naive equal split instead of QIG
+          eps             = Cfg.epsilon
+          beamWidth       = 8
+          depth           = 14
+          exactSplitLimit = 12       -- n <= this: exhaustive algebraic search (no synthesis)
+          validateScore   = True   -- report algebraic-vs-synthesis check on final split
+          showSteps       = False    -- report each synthesis step for the final split
 
           n         = length qubits
           half      = (n + 1) `div` 2
           qIndexMap = Map.fromList (zip qubits [1 ..])
 
-          -- Wires 1..half on QPU 0, the rest on QPU 1.
-      (_, asg) <- QIG.partitionQIG 2 qubits circ
-      let 
-          seedMap = Map.fromList [ (Wire w, b) | (q, b) <- Map.toList asg
-                                         , Just w <- [Map.lookup q qIndexMap] ]
-          -- seedMap = Map.fromList
-          --             [ (Wire w, if w <= half then 0 else 1) | w <- [1 .. n] ]
+          -- Naive split: wires 1..half (declared order) on QPU 0, the rest on QPU 1.
+          naiveSeed = Map.fromList [ (Wire w, if w <= half then 0 else 1) | w <- [1 .. n] ]
 
-          -- Beam search knobs.
-          eps       = Cfg.epsilon
-          beamWidth = 8
-          depth     = 14
-          exactSplitLimit = 12
-          phaseOnly = False
-         
-          -- Search on the estimate (no synthesis per candidate), then
-          -- synthesize the winner once. Swap in beamSearchQubitSplit to
-          -- search on the exact cost instead.
-          (ids0, ids1)
-            | useBeamSearch = splitOfPartMap qIndexMap bestMap
-            | otherwise     = splitAt half qubits
-            where (bestMap, _estBest) =
-                    beamSearchQubitSplitFast phaseOnly circ qIndexMap seedMap eps beamWidth depth
-          -- (ids0, ids1)
-          --   | useBeamSearch = splitOfPartMap qIndexMap bestMap
-          --   | otherwise     = splitAt half qubits
-          --   where (bestMap, _estBest) =
-          --           if n <= exactSplitLimit
-          --           then exhaustiveQubitSplitPersistent circ qIndexMap seedMap eps
-          --           else beamSearchQubitSplitPersistent circ qIndexMap seedMap eps beamWidth depth
+      seedMap <-
+        if useQIGSeed
+        then do
+          (_, asg) <- QIG.partitionQIG 2 qubits circ
+          return $ Map.fromList [ (Wire w, b) | (q, b) <- Map.toList asg
+                                              , Just w <- [Map.lookup q qIndexMap] ]
+        else return naiveSeed
+
+      let
+          -- Score of a split without searching (same score the beam uses).
+          ids        = Map.keys qIndexMap
+          summaries  = summarizeChunks ids circ
+          scoreOf pm = algebraicSplitCost ids summaries (fst (splitOfPartMap qIndexMap pm))
+
+          (bestMap, searchScore)
+            | not useBeamSearch    = (seedMap, scoreOf seedMap)
+            | n <= exactSplitLimit = exhaustiveSearchWith scoreOf seedMap eps
+            | otherwise            = beamSearchWith scoreOf seedMap eps beamWidth depth
+
+          (ids0, ids1) = splitOfPartMap qIndexMap bestMap
 
           partitions = Map.fromList
                          ([ (q, 0) | q <- ids0 ] ++ [ (q, 1) | q <- ids1 ])
 
           (distributedCirc, totalEbits) = synthesizeUnderQubitSplit circ ids0 ids1
 
+          seedName   = if useQIGSeed then "QIG" else "naive equal split"
+          searchName
+            | not useBeamSearch    = "no search"
+            | n <= exactSplitLimit = "exhaustive search"
+            | otherwise            = "beam search"
+          scoreName = "Edmonds phase + exact ULDU ranks (no synthesis in search)"
+
       reportInputParities qubits circ
-      reportDist $ "Qubit assignment: " ++ (if useBeamSearch then "beam search" else "vanilla (declared order)")
+      reportDist $ "Qubit assignment: " ++ searchName ++ " from " ++ seedName
       reportDist $ "QPU 0 (" ++ show (length ids0) ++ " qubits): " ++ unwords (sortBy compare ids0)
       reportDist $ "QPU 1 (" ++ show (length ids1) ++ " qubits): " ++ unwords (sortBy compare ids1)
+      when showSteps $ reportSynthesisSteps circ ids0 ids1
+      reportDist $ "Search score (" ++ scoreName ++ "): " ++ show searchScore
+      when validateScore $
+        reportDist $ "Algebraic score validation: " ++
+                     (if searchScore == totalEbits then "PASS" else "MISMATCH")
       reportDist $ "Ebit cost: " ++ show totalEbits
       reportDist $ "Distribution: " ++ (if verifyDist distributedCirc partitions
                                       then "PASS"
