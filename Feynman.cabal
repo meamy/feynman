@@ -70,6 +70,7 @@ library
       Feynman.Synthesis.Reversible.Gray
       Feynman.Synthesis.Reversible.Parallel
       Feynman.Synthesis.Reversible.XAG
+      Feynman.Synthesis.Reversible.Young
       Feynman.Synthesis.XAG
       Feynman.Synthesis.XAG.Graph
       Feynman.Synthesis.XAG.MinMultSat
