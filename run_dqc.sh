@@ -3,37 +3,37 @@
 set -e
 
 CIRCUITS=(
-    adder_8
-    barenco_tof_3
-    barenco_tof_4
-    barenco_tof_5
-    barenco_tof_10
-    csla_mux_3
-    csum_mux_9
-    "gf2^4_mult"
-    "gf2^5_mult"
-    "gf2^6_mult"
-    "gf2^7_mult"
-    "gf2^8_mult"
-    "gf2^9_mult"
+    # adder_8
+    # barenco_tof_3
+    # barenco_tof_4
+    # barenco_tof_5
+    # barenco_tof_10
+    # csla_mux_3
+    # csum_mux_9
+    # "gf2^4_mult"
+    # "gf2^5_mult"
+    # "gf2^6_mult"
+    # "gf2^7_mult"
+    # "gf2^8_mult"
+    #"gf2^9_mult"
     "gf2^10_mult"
     # "gf2^16_mult"
-    ham15-low
-    ham15-med
-    hwb6
+    # ham15-low
+    # ham15-med
+    # hwb6
     mod_adder_1024
-    mod_mult_55
-    mod_red_21
-    mod5_4
-    qcla_adder_10
-    qcla_com_7
-    qcla_mod_7
-    rc_adder_6
-    tof_3
-    tof_4
-    tof_5
-    tof_10
-    vbe_adder_3
+    # mod_mult_55
+    # mod_red_21
+    # mod5_4
+    # qcla_adder_10
+    # qcla_com_7
+    # qcla_mod_7
+    # rc_adder_6
+    # tof_3
+    # tof_4
+    # tof_5
+    # tof_10
+    # vbe_adder_3
 )
 
 FEYNMAN_DIR="/Users/duykhangnguyentruong/Development/feynman"
@@ -67,7 +67,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_${PARTITION}_${CIRCUIT}.qc"
 
     # --- Step 1: optimise + distribute ---
-    if ! cabal run -v0 feynopt -- -inline -O2 -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > "$TARGET_FILE"; then
+    if ! cabal run -v0 feynopt -- -inline -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > "$TARGET_FILE"; then
         row "$BAD" "Optimize" "feynopt failed"
         row "-" "Verify" "skipped"
         echo ""
@@ -104,11 +104,11 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
         FAILED+=("$CIRCUIT")
     fi
 
-    # Destination directory for this circuit
-    DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}"
+    # # Destination directory for this circuit
+    # DEST_DIR="${BENCHMARKS_BASE}/${CIRCUIT}"
 
-    # Create destination directory if it doesn't exist
-    mkdir -p "${DEST_DIR}"
+    # # Create destination directory if it doesn't exist
+    # mkdir -p "${DEST_DIR}"
 
     # # Copy hypergraph files
     # cp "${HYPERGRAPH_SRC_DIR}/hypergraph.hgr" "${HYPERGRAPH_SRC_DIR}/partition.hgr" "${HYPERGRAPH_SRC_DIR}/optimalpartition.hgr" "${DEST_DIR}/"

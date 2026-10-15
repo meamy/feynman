@@ -9,7 +9,9 @@ module Feynman.Synthesis.HypergraphPartition.BeamSearch
   , neighbours
   , dedupPartitions
   , beamSearchWith
+  , beamSearchWithLexicographic
   , exhaustiveSearchWith
+  , exhaustiveSearchWithLexicographic
   ) where
 
 import Feynman.Core (Block, Vertex(..))
@@ -118,6 +120,20 @@ beamSearchWith score seed eps beamWidth depth =
       finalBeam = iterate step [seedScored] !! depth
   in minimumBy (comparing snd) (seedScored : finalBeam)
 
+beamSearchWithLexicographic :: (Map Vertex Block -> (Int, Int))
+                            -> Map Vertex Block -> Double -> Int -> Int 
+                            -> (Map Vertex Block, (Int, Int))
+beamSearchWithLexicographic score seed eps beamWidth depth =
+  let seedScored = (seed, score seed)
+      step beam =
+        let expanded = concatMap (neighbours eps . fst) beam
+            pool = map fst beam ++ expanded
+            uniquePool = dedupPartitions pool
+            scored = [(pm, score pm) | pm <- uniquePool]
+        in take beamWidth (sortBy (comparing snd) scored)
+      finalBeam = iterate step [seedScored] !! depth
+  in minimumBy (comparing snd) (seedScored : finalBeam)
+
 -- Exhaustive search over every balanced wire assignment, given any scoring
 -- function. Only the seed's non-wire vertices are kept as-is.
 exhaustiveSearchWith :: (Map Vertex Block -> Int) -> Map Vertex Block -> Double
@@ -125,3 +141,10 @@ exhaustiveSearchWith :: (Map Vertex Block -> Int) -> Map Vertex Block -> Double
 exhaustiveSearchWith score seed eps =
   minimumBy (comparing snd)
     [ (pm, score pm) | pm <- allBalancedWirePartitions eps seed ]
+
+exhaustiveSearchWithLexicographic :: (Map Vertex Block -> (Int, Int)) 
+                                  -> Map Vertex Block -> Double
+                                  -> (Map Vertex Block, (Int, Int))
+exhaustiveSearchWithLexicographic score seed eps =
+  minimumBy (comparing snd)
+    [(pm, score pm) | pm <- allBalancedWirePartitions eps seed]

@@ -920,6 +920,26 @@ prop_MatroidCorrect = do
   return $ all independent $ partitionAll vecs
 
 {-Toumas helpers-}
+projectParities :: [F2Vec] -> F2Vec -> [F2Vec]
+projectParities parities mask = map (* mask) parities
+
+rewriteParities :: [F2Vec] -> F2Vec -> F2Vec -> ([(F2Vec, F2Vec)], F2Mat)
+rewriteParities s localMask remoteMask =
+  let localParts              = projectParities s localMask
+      projMat                 = fromList (projectParities s remoteMask)
+      (cMat, fMat)            = rankFactorization projMat
+      basisCombinations       =  if m cMat == 0
+                                then replicate (length s ) (fromBits [])
+                                else toList cMat
+
+  in  if length localParts /= length basisCombinations
+      then error "rewriteParities: s and cMat row count mismatch"
+      else (zip localParts basisCombinations, fMat)
+
+importedBasis :: [F2Vec] -> F2Vec -> F2Vec -> [F2Vec]
+importedBasis s localMask remoteMask
+  | null s    = []
+  | otherwise = toList (snd (rewriteParities s localMask remoteMask))
 
 rankFactorization :: F2Mat -> (F2Mat, F2Mat)
 rankFactorization a
