@@ -4,7 +4,8 @@ import Control.Exception (assert)
 import Debug.Trace (trace)
 
 import Data.Bifunctor (bimap)
-import Data.List (partition, zip4)
+import Data.Foldable (foldl')
+import Data.List (partition, zip4, unzip3)
 import Data.Maybe (listToMaybe)
 import Data.Map qualified as Map
 import Data.Map (Map)
@@ -25,19 +26,19 @@ type Func = SBool Var
 
 -- take a boolean function and synthesize input-erasing
 -- returns ExtractionGates
-youngDecompositionSynth :: (HasFeynmanControl) => [(ID, Func)] -> Maybe [ExtractionGates]
-youngDecompositionSynth sbools = do
+youngDecompositionSynth :: (HasFeynmanControl) => [(ID, Var, Func)] -> Maybe [ExtractionGates]
+youngDecompositionSynth idXiSbools = do
   decomposedFuncs <-
-    -- all vars in all terms in all SBools must be IVar, in range 0 .. n-1
-    assert (all (all (`Set.member` (Set.fromList xiVars)) . vars . snd) sbools) $
-    decomposeAll (zip4 xiVars fiVars siVars (map snd sbools))
+    -- all vars in all terms in all SBools must be IVar i, i >= 0
+    assert (all (\v -> case v of IVar i -> i >= 0; otherwise -> False) xiVars) $
+    decomposeAll (zip4 xiVars fiVars siVars sbools)
   extractCircuit [(xi, gi, hi) | (xi, (gi, hi)) <- zip xiVars decomposedFuncs]
   where
+    (idsList, xiVars, sbools) = unzip3 idXiSbools
     n = length sbools
-    idsList = map fst sbools
-    xiVars = [IVar i | i <- [0 .. n - 1]]
-    fiVars = [IVar (-i) | i <- [0 .. n - 1]]
-    siVars = [IVar (-(n + i)) | i <- [0 .. n - 1]]
+    k = foldl' max 0 [i | (IVar i) <- xiVars]
+    fiVars = [IVar ((max k 100) + i) | i <- [1 .. n]]
+    siVars = [IVar ((max (k + n) 200) + i) | i <- [1 .. n]]
     varToID = Map.fromList (zip xiVars idsList ++ zip fiVars idsList ++ zip siVars idsList)
 
     extractCircuit :: [(Var, Func, Func)] -> Maybe [ExtractionGates]
@@ -52,15 +53,15 @@ youngDecompositionSynth sbools = do
     extractFunc f target = do
       targetID <- Map.lookup target varToID
       -- Check that the term coefficients are all 1
-      _ <- if all (== 1) (map fst (toTermList f)) then Just () else Nothing
+      _ <- if all (== 1) (map fst (toTermList f)) then Just () else (trace ("Term(s) with coefficient /= 1 in " ++ show target ++ " = " ++ show f) $ Nothing)
       let allTermVars = map (Set.toList . vars) (map snd (toTermList f))
       allTermIDs <- mapM (mapM (flip Map.lookup varToID)) allTermVars
-      _ <- if all (/= targetID) (concat allTermIDs) then Just () else Nothing
+      _ <- if all (/= targetID) (concat allTermIDs) then Just () else (trace ("targetID " ++ targetID ++ " in mapped terms of " ++ show target ++ " = " ++ show f) $ Nothing)
       Just [MCT termIDs targetID | termIDs <- allTermIDs]
 
 decomposeAll :: [(Var, Var, Var, Func)] -> Maybe [(Func, Func)]
-decomposeAll funcs = decomposeRemain funcs []
-  where 
+decomposeAll funcs = decomposeRemain funcs [] >>= (Just . reverse)
+  where
     decomposeRemain :: [(Var, Var, Var, Func)] -> [(Var, Func, Func)] -> Maybe [(Func, Func)]
     decomposeRemain [] soFar = Just [(gi, hi) | (_, gi, hi) <- soFar]
     decomposeRemain ((xiVar, fiVar, siVar, fiFunc):remain) soFar = do
@@ -82,7 +83,7 @@ decomposeAll funcs = decomposeRemain funcs []
         -- anyway, but if we're trying to synthesize logic and we have
         -- computed a bunch of qubits to s_j already, it's nice if the g_i
         -- we're synthesizing is written exactly in terms of what we have to
-        -- hand; it saves us doing inversions.
+        -- hand; it saves us doing inversions).
         substRemain gi = [(xjVar, fjVar, sjVar, subst xiVar (gi + ofVar siVar) fjFunc)
                           | (xjVar, fjVar, sjVar, fjFunc) <- remain]
 
@@ -99,9 +100,10 @@ decomposeOne :: Var -> Func -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)
 decomposeOne xiVar fiFunc sjVars fjFuncs =
   -- g_i should be written using s_j's, x_j's
   -- h_i should be written using s_j's, f_j's
-  trace ("i = " ++ show (length sjVars)) $
-  trace ("trivial f_i: " ++ show trivialFiTerms) $
-  trace ("nontrivial f_i: " ++ show nontrivialFiTerms) $
+  trace ("i = " ++ show (length sjVars) ++ ", xi is " ++ show xiVar ++ ", fi is " ++ show fiFunc) $
+  -- traceAll [show fj ++ " = " ++ show fjFunc | (fj, fjFunc) <- fjFuncs] $
+  -- trace ("trivial f_i: " ++ show trivialFiTerms) $
+  -- trace ("nontrivial f_i: " ++ show nontrivialFiTerms) $
   maybeHiFunc >>= (\(hi, hiSubst) -> Just (giFuncMatching hiSubst, hi))
   where
     xiFunc = ofVar xiVar
@@ -134,23 +136,22 @@ decomposeOne xiVar fiFunc sjVars fjFuncs =
 
     nonTrivialHiCandidates = allFuncsFromSubst (relevantFjFuncs ++ [(v, ofVar v) | v <- relevantSjVars])
     maybeHiFunc =
-      listToMaybe (filter (differsOnlyByTrivial nontrivialFiTerms . snd) nonTrivialHiCandidates)
-        >>= (\(nonTrivialHiPart, nonTrivialHiSubstPart) -> Just (nonTrivialHiPart + trivialFiTerms, nonTrivialHiSubstPart + trivialFiTerms))
+      listToMaybe (filter (differsOnlyByTrivial nontrivialFiTerms . snd)
+                          [ {-- trace ("considering f(s) = " ++ show fs) $ --} (fs, fx)
+                            | (fs, fx) <- nonTrivialHiCandidates])
+        >>= (\(nonTrivialHiPart, nonTrivialHiSubstPart) ->
+                Just (nonTrivialHiPart + trivialFiTerms, nonTrivialHiSubstPart + trivialFiTerms))
 
     -- hiSubstFunc should be written in the same variables as the desired g_i
     giFuncMatching hiSubstFunc = fiFunc + hiSubstFunc + xiFunc
 
+traceAll [] result                = result
+traceAll (msg : msgRemain) result = trace msg $ traceAll msgRemain result
 
 allFuncsFromSubst :: [(Var, Func)] -> [(Func, Func)]
 allFuncsFromSubst substList =
-  -- trace "blurp" $
-  -- traceAll (map (\(f1, f2) -> "f(s): " ++ showFunc showVarDefault f1 ++ ", f(x): " ++ showFunc showVarDefault f2) $
-  --               funcsByOrder substVars) $
   funcsByOrder substVars
   where
-    -- traceAll [] result                = result
-    -- traceAll (msg : msgRemain) result = trace msg $ traceAll msgRemain result
-
     substVars = fst . unzip $ substList
     substMap = Map.fromList substList
 

@@ -14,6 +14,7 @@ data FeynmanControl = FeynmanControl
     fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth :: Bool,
+    fcfFeature_Synthesis_Pathsum_Unitary_YoungDecompSynth :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase :: Bool,
@@ -32,6 +33,7 @@ defaultControl =
       fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = True,
       fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = False,
       fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = False,
+      fcfFeature_Synthesis_Pathsum_Unitary_YoungDecompSynth = False,
       fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = True,
       fcfFeature_Synthesis_Pathsum_Unitary_MCTRzPhase = False,
       fcfFeature_Synthesis_Pathsum_Unitary_XAGRzPhase = False,
@@ -50,7 +52,8 @@ reset_fcfFeature_Synthesis_Pathsum_Unitary_Synth fc =
   fc
     { fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = False,
       fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = False,
-      fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = False
+      fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = False,
+      fcfFeature_Synthesis_Pathsum_Unitary_YoungDecompSynth = False
     }
 
 reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc =
@@ -81,6 +84,8 @@ controlSwitchFunction "unitary-ket-mct" =
   Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Synth fc) {fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = True})
 controlSwitchFunction "unitary-ket-xag" =
   Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Synth fc) {fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = True})
+controlSwitchFunction "unitary-ket-young" =
+  Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Synth fc) {fcfFeature_Synthesis_Pathsum_Unitary_YoungDecompSynth = True})
 controlSwitchFunction "unitary-phase-original" =
   Just (\fc -> (reset_fcfFeature_Synthesis_Pathsum_Unitary_Phase fc) {fcfFeature_Synthesis_Pathsum_Unitary_MCRzPhase = True})
 controlSwitchFunction "unitary-phase-mct-rz" =

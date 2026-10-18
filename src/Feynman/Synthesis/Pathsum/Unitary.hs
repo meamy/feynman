@@ -1,5 +1,5 @@
 {-# LANGUAGE DataKinds #-}
-
+ 
 {-|
 Module      : Unitary
 Description : Extraction of Unitary path sums to circuits
@@ -48,6 +48,7 @@ import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Reversible.XAG (inputSavingXAGSynth, minimizeXAG, inputErasingXAGSynth)
+import Feynman.Synthesis.Reversible.Young (youngDecompositionSynth)
 import qualified Feynman.Synthesis.XAG.Graph as XAG
 import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
 import qualified Feynman.Synthesis.XAG.Simplify as XAG
@@ -354,6 +355,7 @@ phaseSimplificationsXAGRz sop = do
   let rzGates = xagGates ++ phaseGates ++ xagDagGates
   emitGates sop rzGates
 
+
 {-
 phaseSimplificationsXAGMBURz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 phaseSimplificationsXAGMBURz sop = do
@@ -389,6 +391,22 @@ phaseSimplificationsXAGMBURz sop = do
               let (q, r) = divVar poly x in
                 if isZero r then ((ofVar x):acc, q) else (acc, poly)
 -}
+
+phaseSimplificationsYoungDecompositionRz :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+phaseSimplificationsYoungDecompositionRz sop = do
+  prefix <- freshPrefix
+  ctx <- gets idToIndex
+  revCtx <- gets indexToID
+  sboolShavings <- shavePhase sop prefix
+  let phaseGates = [Phase (dMod2 (-1) n) [ancN] | (ancN, n, _ ) <- sboolShavings]
+  let sbools = [rename (IVar . (ctx !)) sbool | (_, _, sbool) <- sboolShavings]
+  traceU ("Phase SBools, using IVars " ++ show sbools) $ return ()
+  let xag = minimizeXAG (fromSBools (inDeg sop) sbools)
+  let (xagGates, _) = inputSavingXAGSynth xag (Map.elems revCtx) [ancN | (ancN, _, _ ) <- sboolShavings] [prefix ++ show i | i <- [1..]]
+  let xagDagGates = reverse xagGates
+  let rzGates = xagGates ++ phaseGates ++ xagDagGates
+  emitGates sop rzGates
+
 
 -- | Simplify the output ket up to non-linear transformations
 --
@@ -427,6 +445,7 @@ finalize sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = finalizeAffineSynth sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_MCTSynth = finalizeMCTSynth sop
   | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_XAGSynth = finalizeXAGSynth sop
+  | ctlEnabled fcfFeature_Synthesis_Pathsum_Unitary_YoungDecompSynth = finalizeYoungDecompSynth sop
 
 finalizeAffineSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
 finalizeAffineSynth sop = do
@@ -496,6 +515,20 @@ finalizeXAGSynth sop = do
   let (xagGates, _) = inputErasingXAGSynth fwdXAG revXAG qIDs [prefix ++ show i | i <- [1..]]
   -- reverse, because we generally are tell'ing the dagger of the circuit
   emitGates sop (reverse xagGates)
+
+finalizeYoungDecompSynth :: (HasFeynmanControl) => Pathsum DMod2 -> ExtractionState (Pathsum DMod2)
+finalizeYoungDecompSynth sop = do
+  traceU ("finalizeYoungDecompSynth " ++ show sop) $ return ()
+  revCtx <- gets indexToID
+  let qIDs = Map.elems revCtx
+  let sopClassical = dropPhase sop
+  let sbools = outVals sopClassical
+  let ivars = [IVar i | i <- [0 .. length sbools - 1]]
+  case youngDecompositionSynth (zip3 qIDs ivars sbools) of
+    Just youngGates -> 
+      -- reverse, because we generally are tell'ing the dagger of the circuit
+      emitGates sop (reverse youngGates)
+    Nothing -> error "Could not decompose"
 
 -- | Reduce the "strength" of the phase polynomial in some variable
 --

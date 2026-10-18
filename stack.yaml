@@ -5,6 +5,7 @@ extra-deps:
 
 packages:
 - .
+- ../minisat-solver-0.1
 
 # Allow a newer minor version of GHC than the snapshot specifies
-# compiler-check: newer-minor
+compiler-check: newer-minor

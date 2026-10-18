@@ -181,6 +181,17 @@ executables:
     - mtl
     - containers
     - QuickCheck
+  
+  young:
+    main:        young.hs
+    source-dirs: scripts
+    other-modules: []
+    dependencies:
+    - Feynman
+    - base
+    - mtl
+    - containers
+    - QuickCheck
 
 tests:
   FeynmanSpecs:
