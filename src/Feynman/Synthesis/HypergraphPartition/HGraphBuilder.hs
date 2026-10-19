@@ -405,6 +405,30 @@ getNumCuts numParts circ = do
 
   return (parityHyp, qIndexMap, circ)
 
+-- | Partition the qubits with KaHyPar on the parity hypergraph and return each
+-- qubit's block. The partition file has one block id per line, in vertex
+-- order, and qubit q is vertex Wire (qIndexMap ! q), i.e. line qIndexMap ! q.
+-- Parity vertices (lines after the wires) are ignored.
+partitionQubitsKaHyPar :: Int -> [Primitive] -> IO (Map ID Block)
+partitionQubitsKaHyPar numParts circ = do
+  (_, qIndexMap, _) <- getNumCuts numParts circ
+  blocks <- readPartitionFile (Cfg.hypergraphPartitionDataPath </> "partition.hgr")
+  let nQubits = Map.size qIndexMap
+  when (length blocks < nQubits) $
+    ioError . userError $
+      "partitionQubitsKaHyPar: partition file has " ++ show (length blocks)
+      ++ " entries, expected at least " ++ show nQubits
+  let byVertex = Map.fromList (zip [1 :: Int ..] blocks)
+  return $ Map.fromList [ (q, byVertex Map.! w) | (q, w) <- Map.toList qIndexMap ]
+
+-- | Read a KaHyPar partition file strictly, so the handle is closed before the
+-- next run renames or removes the file.
+readPartitionFile :: FilePath -> IO [Block]
+readPartitionFile fp = do
+  contents <- readFile fp
+  let blocks = map read (words contents) :: [Block]
+  length blocks `seq` return blocks
+
 parseHyperedgeCut :: String -> Maybe Int
 parseHyperedgeCut s =
   let linesWith = filter (isInfixOf "Hyperedge Cut") (lines s)

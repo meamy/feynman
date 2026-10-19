@@ -49,9 +49,11 @@ library
                        Feynman.Synthesis.HypergraphPartition.HGraphBuilder,
                        Feynman.Synthesis.HypergraphPartition.QIGBuilder,
                        Feynman.Synthesis.HypergraphPartition.PartitionConfigs,
+                       Feynman.Synthesis.HypergraphPartition.DistributedSynthesis,
                        Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder,
                        Feynman.Synthesis.HypergraphPartition.BeamSearch,
                        Feynman.Synthesis.HypergraphPartition.CatStateOptimizer,
+                       Feynman.Synthesis.HypergraphPartition.Report,
 
                        Feynman.Optimization.Swaps,
                        Feynman.Optimization.PhaseFold,
