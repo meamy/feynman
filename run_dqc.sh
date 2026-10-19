@@ -15,7 +15,7 @@ CIRCUITS=(
     # "gf2^6_mult"
     # "gf2^7_mult"
     # "gf2^8_mult"
-    #"gf2^9_mult"
+    # "gf2^9_mult"
     "gf2^10_mult"
     # "gf2^16_mult"
     # ham15-low
@@ -41,6 +41,7 @@ HYPERGRAPH_SRC_DIR="${FEYNMAN_DIR}/hypergraphpartitiondata"
 BENCHMARKS_BASE="/Users/duykhangnguyentruong/Development/Benchmark_Analysis_Data/Partitions"
 
 PARTITION=2
+TIMINGS_CSV="pruned_algebraic_persistent_timings_distribute_${PARTITION}.csv"
 
 OK="✅"
 BAD="❌"
@@ -50,15 +51,33 @@ TOTAL=${#CIRCUITS[@]}
 INDEX=0
 PASSED=()
 FAILED=()
+TIME_NAMES=()
+TIME_VALUES=()
 
 # Print one aligned result row: icon, step label, detail
 row() {
     printf "   %s  %-13s %s\n" "$1" "$2" "$3"
 }
 
+# Wall-clock time in seconds with millisecond precision.
+# (macOS `date` has no %N, so use perl, which ships with macOS.)
+now() {
+    perl -MTime::HiRes=time -e 'printf "%.3f\n", time'
+}
+
+# Difference of two timestamps, formatted as seconds
+elapsed() {
+    awk -v s="$1" -v e="$2" 'BEGIN { printf "%.3f", e - s }'
+}
+
 echo "Building..."
 cabal build -v0
+# Call the built binaries directly so timings don't include cabal's startup overhead
+FEYNOPT="$(cabal list-bin feynopt)"
+FEYNVER="$(cabal list-bin feynver)"
 echo ""
+
+echo "circuit,status,seconds" > "$TIMINGS_CSV"
 
 for CIRCUIT in "${CIRCUITS[@]}"; do
     INDEX=$((INDEX + 1))
@@ -66,14 +85,26 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 
     TARGET_FILE="benchmarks/qc_customized/distributed_rankSynth_${PARTITION}_${CIRCUIT}.qc"
 
-    # --- Step 1: optimise + distribute ---
-    if ! cabal run -v0 feynopt -- -inline -simplify -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > "$TARGET_FILE"; then
-        row "$BAD" "Optimize" "feynopt failed"
+    # --- Step 1: optimise + distribute (timed) ---
+    START=$(now)
+    OPT_RC=0
+    "$FEYNOPT" -inline -O2 -distribute "${PARTITION}" "benchmarks/qc/${CIRCUIT}.qc" > "$TARGET_FILE" || OPT_RC=$?
+    END=$(now)
+    DURATION=$(elapsed "$START" "$END")
+
+    TIME_NAMES+=("$CIRCUIT")
+    TIME_VALUES+=("$DURATION")
+
+    if [ "$OPT_RC" -ne 0 ]; then
+        row "$BAD" "Optimize" "feynopt failed after ${DURATION}s (exit ${OPT_RC})"
         row "-" "Verify" "skipped"
+        echo "\"${CIRCUIT}\",fail,${DURATION}" >> "$TIMINGS_CSV"
         echo ""
         FAILED+=("$CIRCUIT")
         continue
     fi
+    row "$OK" "Compiled" "${DURATION}s"
+    echo "\"${CIRCUIT}\",ok,${DURATION}" >> "$TIMINGS_CSV"
 
     # --- Step 2: distribution check (read from the generated .qc header) ---
     VERIFY_LINE=$(grep -m1 -E '^#[[:space:]]*Distribution:' "$TARGET_FILE" || true)
@@ -93,7 +124,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
 
     # --- Step 3: feynver equivalence check ---
     FEYNVER_RC=0
-    FEYNVER_OUT=$(cabal run -v0 feynver -- -channel "benchmarks/qc/${CIRCUIT}.qc" "$TARGET_FILE" 2>&1) || FEYNVER_RC=$?
+    FEYNVER_OUT=$("$FEYNVER" -channel "benchmarks/qc/${CIRCUIT}.qc" "$TARGET_FILE" 2>&1) || FEYNVER_RC=$?
     FEYNVER_LINE=$(printf '%s\n' "$FEYNVER_OUT" | grep -v '^[[:space:]]*$' | tail -n 1)
 
     if [ "$FEYNVER_RC" -eq 0 ] && printf '%s' "$FEYNVER_LINE" | grep -q '^Equal'; then
@@ -126,4 +157,14 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
         echo "   $BAD $C"
     done
 fi
+
+echo ""
+echo "Optimize + distribute time per circuit:"
+TOTAL_TIME=0
+for i in "${!TIME_NAMES[@]}"; do
+    printf "   %-16s %10ss\n" "${TIME_NAMES[$i]}" "${TIME_VALUES[$i]}"
+    TOTAL_TIME=$(awk -v a="$TOTAL_TIME" -v b="${TIME_VALUES[$i]}" 'BEGIN { printf "%.3f", a + b }')
+done
+printf "   %-16s %10ss\n" "TOTAL" "$TOTAL_TIME"
+echo "Timings saved to ${TIMINGS_CSV}"
 echo "────────────────────────────────────────"

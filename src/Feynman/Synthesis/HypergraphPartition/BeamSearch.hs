@@ -12,15 +12,23 @@ module Feynman.Synthesis.HypergraphPartition.BeamSearch
   , beamSearchWithLexicographic
   , exhaustiveSearchWith
   , exhaustiveSearchWithLexicographic
+    -- Seeded, pruned search
+  , BeamConfig(..)
+  , SearchStats(..)
+  , repairBalance
+  , restrictedNeighbours
+  , allWiresMovable
+  , prunedBeamSearch
   ) where
 
 import Feynman.Core (Block, Vertex(..))
 
-import Data.List (minimumBy, sortBy)
+import Data.List (mapAccumL, minimumBy, sortBy)
 import Data.Ord (comparing)
 
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Set (Set)
 import qualified Data.Set as Set
 
 {- Partition helpers -}
@@ -148,3 +156,95 @@ exhaustiveSearchWithLexicographic :: (Map Vertex Block -> (Int, Int))
 exhaustiveSearchWithLexicographic score seed eps =
   minimumBy (comparing snd)
     [(pm, score pm) | pm <- allBalancedWirePartitions eps seed]
+
+data BeamConfig = BeamConfig
+  { bcEpsilon  :: Double
+  , bcWidth    :: Int
+  , bcMaxDepth :: Int       
+  , bcPatience :: Maybe Int  
+  , bcMaxSwaps :: Int       
+  }
+
+data SearchStats = SearchStats
+  { statRounds      :: Int     
+  , statEvaluations :: Int     
+  , statStopReason  :: String
+  }
+
+-- Every wire may move: the unrestricted neighbourhood.
+allWiresMovable :: Map Vertex Block -> Set Vertex
+allWiresMovable = Set.fromList . wireVertices
+
+-- Move wires from the heavier block to the lighter one until the split is
+repairBalance :: Double -> Map Vertex Block -> Map Vertex Block
+repairBalance eps pm
+  | isBalanced eps pm        = pm
+  | length (wireVertices pm) < 2 = pm   -- cannot be balanced; avoid looping
+  | otherwise =
+      case [ v | v <- wireVertices pm, Map.findWithDefault 0 v pm == heavy ] of
+        (v:_) -> repairBalance eps (Map.insert v light pm)
+        []    -> pm
+  where
+    w0 = blockWireWeight 0 pm
+    w1 = blockWireWeight 1 pm
+    (heavy, light) = if w0 >= w1 then (0, 1) else (1, 0)
+
+-- Flip and swap neighbours that move at least one wire of 'movable'.
+-- Only Wire vertices are moved; parity/gate vertices never affect the score.
+restrictedNeighbours :: Double -> Int -> Set Vertex -> Map Vertex Block
+                     -> [Map Vertex Block]
+restrictedNeighbours eps maxSwaps movable pm = flips ++ swaps
+  where
+    wires   = wireVertices pm
+    side v  = Map.findWithDefault 0 v pm
+    canMove = (`Set.member` movable)
+    flips   = filter (isBalanced eps)
+                [ flipVertex v pm | v <- wires, canMove v ]
+    wires0  = [ v | v <- wires, side v == 0 ]
+    wires1  = [ v | v <- wires, side v /= 0 ]
+    swaps   = take maxSwaps
+                [ Map.insert a 1 (Map.insert b 0 pm)
+                | a <- wires0, b <- wires1, canMove a || canMove b ]
+
+-- Beam search with memoized scores and early stopping. 'movable' is
+-- recomputed for each partition, so the boundary follows the beam.
+prunedBeamSearch :: Ord s => BeamConfig -> (Map Vertex Block -> Set Vertex)
+                -> (Map Vertex Block -> s) -> Map Vertex Block -> (Map Vertex Block, s, SearchStats)
+prunedBeamSearch cfg movable score seed =
+  loop 0 0 (Map.singleton seed seedScore) 1 [seedScored]
+  where
+    width      = max 1 (bcWidth cfg)
+    seedScore  = score seed
+    seedScored = (seed, seedScore)
+
+    scoreMemo (memo, evals) pm =
+      case Map.lookup pm memo of
+        Just s  -> ((memo, evals), (pm, s))
+        Nothing -> let s = score pm
+                   in s `seq` ((Map.insert pm s memo, evals + 1), (pm, s))
+
+    -- 'beam' is always sorted best-first and non-empty.
+    loop rounds stale memo evals beam
+      | rounds >= bcMaxDepth cfg = finish beam rounds evals "depth limit"
+      | otherwise =
+          let expanded = concatMap
+                (\(pm, _) -> restrictedNeighbours (bcEpsilon cfg) (bcMaxSwaps cfg)
+                                                  (movable pm) pm)
+                beam
+              -- Current beam first, so ties keep the incumbents (monotone).
+              pool = dedupPartitions (map fst beam ++ expanded)
+              ((memo', evals'), scored) = mapAccumL scoreMemo (memo, evals) pool
+              beam'   = take width (sortBy (comparing snd) scored)
+              stale'  = if snd (head beam') < snd (head beam) then 0 else stale + 1
+              rounds' = rounds + 1
+          in if map fst beam' == map fst beam
+               then finish beam' rounds' evals' "converged (beam unchanged)"
+               else case bcPatience cfg of
+                 Just p | stale' >= p ->
+                   finish beam' rounds' evals'
+                          ("no improvement for " ++ show p ++ " rounds")
+                 _ -> loop rounds' stale' memo' evals' beam'
+
+    finish beam rounds evals why =
+      let (pm, s) = minimumBy (comparing snd) (seedScored : beam)
+      in (pm, s, SearchStats rounds evals why)
