@@ -1,7 +1,11 @@
-snapshot: lts-22.43
+snapshot: lts-24.64
 
 extra-deps:
 - parsec3-numbers-0.1.0@sha256:2f32295f9f4023f7f97da851549aaaf5e72866e98bf016a1ac3c6e8715bbaf8a,685
+- containers-0.8.1
+- parsec-3.1.18.0@sha256:28a0cb964cf4c14ac271982fa815bee21cb4ff39e8f2b97efe035e63ad6857aa,4572
+- text-2.1.4@sha256:32823fd40b02db9b4ef4c527c9c3e6c1dcd365b8a79521f9d78d2c0a0a8d64f1,11602
+- binary-0.8.9.3@sha256:8b03c7fd5a7f6803280fba87e38d534beb1dc92fec975de5bd36200633996ef2,6576
 
 packages:
 - .

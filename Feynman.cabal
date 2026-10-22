@@ -54,7 +54,6 @@ library
       Feynman.Frontend.OpenQASM3.Syntax
       Feynman.Frontend.OpenQASM3.Utils
       Feynman.Graph
-      Feynman.Optimization.Classical
       Feynman.Optimization.Clifford
       Feynman.Optimization.PhaseFold
       Feynman.Optimization.StateFold
@@ -111,7 +110,6 @@ library
     , integer-gmp
     , minisat-solver
     , mtl
-    , multi-containers
     , multiset
     , parsec
     , parsec3-numbers
@@ -336,6 +334,31 @@ executable qc2qasm
     , base
     , bytestring
     , filepath
+  default-language: Haskell2010
+
+executable young
+  main-is: young.hs
+  hs-source-dirs:
+      scripts
+  default-extensions:
+      BangPatterns
+      ConstraintKinds
+      ExistentialQuantification
+      FlexibleContexts
+      FlexibleInstances
+      GADTs
+      ImplicitParams
+      ImportQualifiedPost
+      Rank2Types
+      TupleSections
+      TypeFamilies
+  ghc-options: -O2 -Wno-unrecognised-pragmas
+  build-depends:
+      Feynman
+    , QuickCheck
+    , base
+    , containers
+    , mtl
   default-language: Haskell2010
 
 test-suite FeynmanSpecs

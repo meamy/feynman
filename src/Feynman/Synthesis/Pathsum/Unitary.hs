@@ -48,7 +48,7 @@ import Feynman.Synthesis.Reversible
 import Feynman.Synthesis.Pathsum.Clifford
 import Feynman.Synthesis.Pathsum.Util
 import Feynman.Synthesis.Reversible.XAG (inputSavingXAGSynth, minimizeXAG, inputErasingXAGSynth)
-import Feynman.Synthesis.Reversible.Young (youngDecompositionSynth)
+import Feynman.Synthesis.Reversible.Young (youngDecompositionSynth, solveHiByEnumeration, solveHiByGaussianElimination)
 import qualified Feynman.Synthesis.XAG.Graph as XAG
 import qualified Feynman.Synthesis.XAG.MinMultSat as XAG
 import qualified Feynman.Synthesis.XAG.Simplify as XAG
@@ -524,7 +524,7 @@ finalizeYoungDecompSynth sop = do
   let sopClassical = dropPhase sop
   let sbools = outVals sopClassical
   let ivars = [IVar i | i <- [0 .. length sbools - 1]]
-  case youngDecompositionSynth (zip3 qIDs ivars sbools) of
+  case youngDecompositionSynth solveHiByGaussianElimination (zip3 qIDs ivars sbools) of
     Just youngGates -> 
       -- reverse, because we generally are tell'ing the dagger of the circuit
       emitGates sop (reverse youngGates)

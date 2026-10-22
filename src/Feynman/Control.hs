@@ -9,6 +9,7 @@ import qualified Debug.Trace
 data FeynmanControl = FeynmanControl
   { -- Log each synthesis step as it occurs
     fcfTrace_Synthesis_Pathsum_Unitary :: Bool,
+    fcfTrace_Synthesis_Reversible_Young :: Bool,
     fcfTrace_Synthesis_XAG :: Bool,
     fcfTrace_Graph :: Bool,
     fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth :: Bool,
@@ -28,6 +29,7 @@ defaultControl :: FeynmanControl
 defaultControl =
   FeynmanControl
     { fcfTrace_Synthesis_Pathsum_Unitary = False,
+      fcfTrace_Synthesis_Reversible_Young = False,
       fcfTrace_Synthesis_XAG = False,
       fcfTrace_Graph = False,
       fcfFeature_Synthesis_Pathsum_Unitary_AffineSynth = True,
@@ -76,6 +78,7 @@ isControlSwitch s = isJust (controlSwitchFunction s)
 
 controlSwitchFunction :: String -> Maybe (FeynmanControl -> FeynmanControl)
 controlSwitchFunction "trace-unitary" = Just (\fc -> fc {fcfTrace_Synthesis_Pathsum_Unitary = True})
+controlSwitchFunction "trace-young" = Just (\fc -> fc {fcfTrace_Synthesis_Reversible_Young = True})
 controlSwitchFunction "trace-xag" = Just (\fc -> fc {fcfTrace_Synthesis_XAG = True})
 controlSwitchFunction "trace-graph" = Just (\fc -> fc {fcfTrace_Graph = True})
 controlSwitchFunction "unitary-ket-original" =
