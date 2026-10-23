@@ -1,7 +1,7 @@
-module Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder
-  ( module Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder
-  , module Feynman.Synthesis.HypergraphPartition.DistributedSynthesis
-  , module Feynman.Synthesis.HypergraphPartition.Report
+module Feynman.Synthesis.Ranksynth.DistributedCircuitBuilder
+  ( module Feynman.Synthesis.Ranksynth.DistributedCircuitBuilder
+  , module Feynman.Synthesis.Ranksynth.DistributedSynthesis
+  , module Feynman.Synthesis.Ranksynth.Report
   ) where
 import Feynman.Core (Primitive(..), ID, Block, Vertex(..),
                      isZBasisPhaseGate, getArgs)
@@ -10,10 +10,10 @@ import Feynman.Algebra.Linear
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 import qualified Feynman.Synthesis.HypergraphPartition.HGraphBuilder as HG
 import qualified Feynman.Synthesis.HypergraphPartition.QIGBuilder as QIG
-import Feynman.Synthesis.HypergraphPartition.BeamSearch
-import Feynman.Synthesis.HypergraphPartition.CatStateOptimizer (fusePersistentCats, preservesZValue)
-import Feynman.Synthesis.HypergraphPartition.DistributedSynthesis
-import Feynman.Synthesis.HypergraphPartition.Report
+import Feynman.Synthesis.Ranksynth.BeamSearch
+import Feynman.Synthesis.Ranksynth.CatStateOptimizer (fusePersistentCats, preservesZValue)
+import Feynman.Synthesis.Ranksynth.DistributedSynthesis
+import Feynman.Synthesis.Ranksynth.Report
 
 import Data.List (foldl', groupBy, sort)
 import Data.Ord (comparing)
@@ -387,7 +387,6 @@ runAlgebraicSearch s sp = do
   return distributedCirc
 
 {- Strategy 2: algebraic score with persistence tie-break, finalists fused -}
-
 runPersistenceTieBreakSearch :: SplitSearchSettings -> SplitProblem -> IO [Primitive]
 runPersistenceTieBreakSearch s sp = do
   let circ      = spCirc sp
@@ -487,7 +486,6 @@ runPersistenceTieBreakSearch s sp = do
   return (evaluatedCircuit winner)
 
 {- Strategy 3: synthesize + cat-fuse every candidate -}
-
 runFusedSearch :: SplitSearchSettings -> SplitProblem -> IO [Primitive]
 runFusedSearch s sp = do
   let circ      = spCirc sp
@@ -552,5 +550,5 @@ buildDistributedCircuit numParts qubits circ =
     settings = defaultSplitSearchSettings
                  { ssValidateScore = False
                  , ssShowSteps     = False
-                 , ssCompareRawBaseline = False
+                 , ssCompareRawBaseline = True
                  }

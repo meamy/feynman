@@ -1,4 +1,4 @@
-module Feynman.Synthesis.HypergraphPartition.CatStateOptimizer
+module Feynman.Synthesis.Ranksynth.CatStateOptimizer
   ( fusePersistentCats
   , CatSpan(..)
   , findCatSpans

@@ -14,7 +14,7 @@ import Feynman.Core (Primitive,
                      idsW,
                      ids, isCNOT, Primitive (CNOT))
 
-import  Feynman.Synthesis.HypergraphPartition.DistributedCircuitBuilder (
+import  Feynman.Synthesis.Ranksynth.DistributedCircuitBuilder (
       buildDistributedCircuit, takeDistReport)
 
 import qualified Feynman.Frontend.DotQC as DotQC

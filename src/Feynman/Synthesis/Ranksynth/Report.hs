@@ -1,7 +1,7 @@
-module Feynman.Synthesis.HypergraphPartition.Report where
+module Feynman.Synthesis.Ranksynth.Report where
 import Feynman.Core (Primitive(..), ID, Vertex(..), isZBasisPhaseGate)
 import Feynman.Algebra.Linear
-import Feynman.Synthesis.HypergraphPartition.DistributedSynthesis
+import Feynman.Synthesis.Ranksynth.DistributedSynthesis
 
 import Data.List (groupBy, intercalate, sortBy)
 

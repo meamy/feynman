@@ -1,4 +1,4 @@
-module Feynman.Synthesis.HypergraphPartition.DistributedSynthesis where
+module Feynman.Synthesis.Ranksynth.DistributedSynthesis where
 import Feynman.Core (Primitive(..), ID, Block, Vertex(..), PartitionData,
                      isZBasisPhaseGate,
                      catEntangler, catDisentangler,

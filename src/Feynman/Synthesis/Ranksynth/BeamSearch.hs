@@ -1,4 +1,4 @@
-module Feynman.Synthesis.HypergraphPartition.BeamSearch
+module Feynman.Synthesis.Ranksynth.BeamSearch
   ( wireVertices
   , blockWireWeight
   , isBalanced

@@ -16,12 +16,18 @@ CIRCUITS=(
     # "gf2^7_mult"
     # "gf2^8_mult"
     # "gf2^9_mult"
-    "gf2^10_mult"
+    # "gf2^10_mult"
     # "gf2^16_mult"
+    # grover_5
+    # ham15-high
     # ham15-low
     # ham15-med
     # hwb6
-    mod_adder_1024
+    # hwb8
+    # hwb10
+    # hwb12
+    # mod_adder_1024
+    # "mod_adder_1048576"
     # mod_mult_55
     # mod_red_21
     # mod5_4
@@ -30,9 +36,9 @@ CIRCUITS=(
     # qcla_mod_7
     # rc_adder_6
     # tof_3
-    # tof_4
-    # tof_5
-    # tof_10
+    tof_4
+    tof_5
+    tof_10
     # vbe_adder_3
 )
 
@@ -41,7 +47,7 @@ HYPERGRAPH_SRC_DIR="${FEYNMAN_DIR}/hypergraphpartitiondata"
 BENCHMARKS_BASE="/Users/duykhangnguyentruong/Development/Benchmark_Analysis_Data/Partitions"
 
 PARTITION=2
-TIMINGS_CSV="pruned_algebraic_persistent_timings_distribute_${PARTITION}.csv"
+TIMINGS_CSV="pruned_fused_timings_distribute_${PARTITION}.csv"
 
 OK="✅"
 BAD="❌"
