@@ -9,12 +9,13 @@ import Data.Array.IArray (Array)
 import Data.Bifunctor (bimap)
 import Data.Bits ((.|.), shiftL)
 import Data.BitVector qualified as BitVector
+import Data.BitVector ((@.))
 import Data.Foldable (foldl')
 import Data.IntMap qualified as IntMap
 import Data.IntMap (IntMap)
 import Data.IntSet qualified as IntSet
 import Data.IntSet (IntSet)
-import Data.List (partition, zip4, unzip3)
+import Data.List (intercalate, partition, sort, zip4, unzip3)
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Maybe (fromJust, listToMaybe)
@@ -35,7 +36,9 @@ import Feynman.Synthesis.Pathsum.Util
 type Term = PowerProduct Var
 type Func = SBool Var
 
-type SolveHiMethod = Var -> Func -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)
+type SolveHiMethod = Var -> Func -> [Var] -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)
+
+type Basis = Map BitVector.BV (Set BitVector.BV, Func)
 
 
 traceY :: (HasFeynmanControl) => String -> a -> a
@@ -46,7 +49,7 @@ traceY msg val
 
 -- take a boolean function and synthesize input-erasing
 -- returns ExtractionGates
-youngDecompositionSynth :: (HasFeynmanControl) => (Var -> Func -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)) -> [(ID, Var, Func)] -> Maybe [ExtractionGates]
+youngDecompositionSynth :: (HasFeynmanControl) => SolveHiMethod -> [(ID, Var, Func)] -> Maybe [ExtractionGates]
 youngDecompositionSynth solveHi idXiSbools = do
   decomposedFuncs <-
     -- all vars in all terms in all SBools must be IVar i, i >= 0
@@ -57,8 +60,8 @@ youngDecompositionSynth solveHi idXiSbools = do
     (idsList, xiVars, sbools) = unzip3 idXiSbools
     n = length sbools
     k = foldl' max 0 [i | (IVar i) <- xiVars]
-    fiVars = [IVar ((max k 100) + i) | i <- [1 .. n]]
-    siVars = [IVar ((max (k + n) 200) + i) | i <- [1 .. n]]
+    fiVars = [IVar ((max k 100) + i) | i <- [0 .. n-1]]
+    siVars = [IVar ((max (k + n) 200) + i) | i <- [0 .. n-1]]
     varToID = Map.fromList (zip xiVars idsList ++ zip fiVars idsList ++ zip siVars idsList)
 
     extractCircuit :: [(Var, Func, Func)] -> Maybe [ExtractionGates]
@@ -81,17 +84,25 @@ youngDecompositionSynth solveHi idXiSbools = do
 
 
 decomposeAll :: (HasFeynmanControl) => SolveHiMethod -> [(Var, Var, Var, Func)] -> Maybe [(Func, Func)]
-decomposeAll solveHi funcs = decomposeRemain funcs [] >>= (Just . reverse)
+decomposeAll solveHi funcs =
+  traceY ("decomposing [" ++ concat ["\n  " ++ show xiVar ++ " -> " ++ show fiVar ++ " = " ++ show fiFunc
+                                       ++ ", using temp " ++ show siVar
+                                      | (xiVar, fiVar, siVar, fiFunc) <- funcs] ++ "]") $
+  decomposeRemain funcs [] >>= (Just . reverse)
   where
     decomposeRemain :: [(Var, Var, Var, Func)] -> [(Var, Func, Func)] -> Maybe [(Func, Func)]
     decomposeRemain [] soFar = Just [(gi, hi) | (_, gi, hi) <- soFar]
-    decomposeRemain ((xiVar, fiVar, siVar, fiFunc):remain) soFar = do
-      (hi, hiSubst) <- solveHi xiVar fiFunc sjVars fjFuncs
+    decomposeRemain ((xiVar, fiVar, siVar, fiFunc):remain) soFar =
+      traceY ("decomposeRemain level " ++ show (length soFar) ++ ": " ++ show fiVar ++ " = " ++ show fiFunc
+              ++ "; g_i excluding " ++ show xiVar) $ do
+      (hi, hiSubst) <- solveHi xiVar fiFunc xjVars sjVars fjFuncs
       -- hiSubst should be written in the same variables as the desired g_i
       let gi = fiFunc + hiSubst + ofVar xiVar
+      traceY ("  found g_i = " ++ show gi ++ ", h_i = " ++ show hi ++ ", h_i(x) = " ++ show hiSubst) $ return ()
       decomposeRemain (substRemain gi) ((siVar, gi, hi) : soFar)
       where
         sjVars = [sjVar | (sjVar, _, _) <- soFar]
+        xjVars = [xjVar | (xjVar, _, _, _) <- remain]
         fjFuncs = [(fjVar, fjFunc) | (_, fjVar, _, fjFunc) <- remain]
 
         -- Rewrite the remaining f_j polynomials in terms of s_i, so that x_i
@@ -108,7 +119,7 @@ decomposeAll solveHi funcs = decomposeRemain funcs [] >>= (Just . reverse)
         -- we're synthesizing is written exactly in terms of what we have to
         -- hand; it saves us doing inversions).
         substRemain gi = [(xjVar, fjVar, sjVar, subst xiVar (gi + ofVar siVar) fjFunc)
-                          | (xjVar, fjVar, sjVar, fjFunc) <- remain]
+                           | (xjVar, fjVar, sjVar, fjFunc) <- remain]
 
 
 -- With f(x) a reversible function from F_2^n -> F_2^n, decompose f_i(x) into
@@ -120,21 +131,22 @@ decomposeAll solveHi funcs = decomposeRemain funcs [] >>= (Just . reverse)
 -- Takes: the f_i we are decomposing and its input x_i; the s_j's, j < i; and
 --        f_j's vars and polynomials in x, j > i
 -- Returns: if found, Just (h_i(q_i), h_i(p_i)); otherwise Nothing
-solveHiByGaussianElimination :: (HasFeynmanControl) => Var -> Func -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)
-solveHiByGaussianElimination xiVar fiFunc sjVars fjFuncs =
+solveHiByGaussianElimination :: (HasFeynmanControl) => SolveHiMethod
+solveHiByGaussianElimination xiVar fiFunc xjVars sjVars fjFuncs =
   traceY ("solveHiByGaussianElimination") $
-  traceY ("  fjFuncs: " ++ show fjFuncs) $
-  traceY ("  idxMap: " ++ show idxMap) $
-  traceY ("  varMap: " ++ show varMap) $
+  -- traceY ("  fjFuncs: " ++ show fjFuncs) $
+  -- traceY ("  idxMap: " ++ show idxMap) $
+  -- traceY ("  varMap: " ++ show varMap) $
   if any ((/= 1) . fst) (toTermList fiFunc) then error ("Bad coefficient (not 1) in " ++ show fiFunc) else
-    traceY ("  fiFunc: " ++ show fiFunc) $
-    traceY ("  support fiFunc: " ++ show (support fiFunc)) $
-    traceY ("  fiPoly: " ++ show fiPoly) $
-    traceY ("  trivialBasis: " ++ show trivialBasis) $
-    solveHiWithBasis genBasis (polynomialBits (ofVar xiVar + fiFunc), 0)
+    traceY ("  target: " ++ show targetFunc) $
+    -- traceY ("  trivialBasis: " ++ prettyBasis "\n    " trivialBasis) $
+    solveHiWithBasis genBasis (polynomialBits targetFunc, 0)
+      >>= (\giHiFunc -> let hiFunc = nontrivialFunc (xjVars ++ sjVars) giHiFunc
+                         in Just (hiFunc, targetFunc + hiFunc + giHiFunc))
   where
-    trivialVarSet = Set.fromList (xiVar : sjVars)
-    allVars = Set.toList (foldl' Set.union trivialVarSet [vars f | (_, f) <- fjFuncs])
+    targetFunc = fiFunc + ofVar xiVar
+
+    allVars = sort (xiVar : xjVars ++ sjVars)
     allVarIs = [vi | (IVar vi) <- allVars]
     n = length allVarIs
 
@@ -155,9 +167,9 @@ solveHiByGaussianElimination xiVar fiFunc sjVars fjFuncs =
     multPolyBits x y = foldl' addVarBits Set.empty
                               [xi .|. yj | xi <- Set.toList x, yj <- Set.toList y]
     
-    reduce :: Basis -> Set BitVector.BV -> Func -> (BitVector.BV, (Set BitVector.BV, Func))
+    reduce :: (HasFeynmanControl) => Basis -> Set BitVector.BV -> Func -> (BitVector.BV, (Set BitVector.BV, Func))
     reduce basis gSide hSide
-      | traceY ("  reduce: " ++ show gSide ++ " <-> " ++ show hSide) $ False = undefined
+      | traceY ("  reduce: " ++ prettyPoly gSide ++ " <-> " ++ show hSide) $ False = undefined
       -- No terms, gSide is completely reduced to 0
       | Set.null gSide = traceY ("    fully reduced (is 0)") $ (zeroBits, (gSide, hSide))
       | otherwise =
@@ -170,33 +182,44 @@ solveHiByGaussianElimination xiVar fiFunc sjVars fjFuncs =
       where
         leadBits = Set.elemAt 0 gSide
 
-    addToBasis :: Basis -> (Set BitVector.BV, Func) -> (Basis)
+    addToBasis :: (HasFeynmanControl) => Basis -> (Set BitVector.BV, Func) -> Basis
     addToBasis basis (gSidePoly, hSideFunc) =
       if Set.null reducedGSide then basis else (Map.insert leadBits (reducedGSide, reducedHSide) basis)
       where
         (leadBits, (reducedGSide, reducedHSide)) = reduce basis gSidePoly hSideFunc
 
-    fiPoly = polynomialBits fiFunc
+    -- ofTermList (filter (not . isTrivialHiTerm) (toTermList hF))
 
-    trivialBasis :: Map BitVector.BV (Set BitVector.BV, Func)
+    trivialBasis :: (HasFeynmanControl) => Basis
     trivialBasis = Map.fromList ((zeroBits, (Set.singleton zeroBits, 1))
                                    : [(varBits v, (Set.singleton (varBits v), ofVar v))
-                                     | v <- sjVars])
-    genBasis = foldl' addToBasis trivialBasis [(polynomialBits fjFunc, ofVar fjVar)
-                                              | (fjVar, fjFunc) <- fjFuncs]
+                                       | v <- xjVars ++ sjVars])
+    genBasis =
+      let ?feynmanControl = ?feynmanControl { fcfTrace_Synthesis_Reversible_Young = False }
+       in foldl' addToBasis trivialBasis [(polynomialBits fjFunc, ofVar fjVar)
+                                           | (fjVar, fjFunc) <- fjFuncs]
 
     productBasis bx by =
       foldl' addToBasis bx [(multPolyBits xBits yBits, xFunc * yFunc)
-                           | (xBits, xFunc) <- Map.elems bx, (yBits, yFunc) <- Map.elems by]
+                             | (xBits, xFunc) <- Map.elems bx, (yBits, yFunc) <- Map.elems by]
 
+    prettyBasis pfx b =
+      "[" ++ intercalate "," [pfx ++ prettyMono lead ++ ": " ++ prettyPoly gp ++ " <=> " ++ show hp
+                               | (lead, (gp, hp)) <- Map.toList b] ++ "]"
+    prettyPoly p | Set.null p = "0"
+                 | otherwise = intercalate " + " (map prettyMono (Set.toList p))
+    prettyMono 0 = "1"
+    prettyMono m = intercalate " " ['z' : show k | k <- [0..BitVector.size m - 1], m @. k]
+
+    solveHiWithBasis :: Basis -> (Set BitVector.BV, Func) -> Maybe Func
     solveHiWithBasis basis (gSide, hSide)
-      | traceY ("  solve - basis: " ++ show basis) $
-        traceY ("          gSide: " ++ show gSide) $
-        traceY ("          hSide: " ++ show hSide) $
-        False = undefined
+      -- | traceY ("  solve - basis: " ++ prettyBasis "\n            " basis) $
+      --   traceY ("          gSide: " ++ prettyPoly gSide) $
+      --   traceY ("          hSide: " ++ show hSide) $
+      --   False = undefined
 
       -- done?
-      | null reducedGSide = Just (0, reducedHSide)
+      | null reducedGSide = Just reducedHSide
       -- basis no longer expanding? Solution is impossible
       | expandedBasis == basis = Nothing
       -- recurse
@@ -204,8 +227,16 @@ solveHiByGaussianElimination xiVar fiFunc sjVars fjFuncs =
       where
         expandedBasis = (productBasis basis genBasis)
         (leadBits, (reducedGSide, reducedHSide)) = reduce basis gSide hSide
-        
-type Basis = Map BitVector.BV (Set BitVector.BV, Func)
+
+
+-- The "trivial" part of the function we're constructing is the terms of
+-- g_i + h_i (or equivalently f + x_i), where the terms don't contain x_i.
+-- Those terms can be synthesized directly into g_i. The hard part is
+-- figuring out how to get any terms including x_i, which must necessarily
+-- be computed in h_i.
+nontrivialFunc :: [Var] -> Func -> Func
+nontrivialFunc trivVars f = ofTermList (filter isNontrivial (toTermList f))
+  where isNontrivial (_, vs) = not . Set.null $ (getVars (vs ./. monomial trivVars))
 
 
 -- With f(x) a reversible function from F_2^n -> F_2^n, decompose f_i(x) into
@@ -217,50 +248,27 @@ type Basis = Map BitVector.BV (Set BitVector.BV, Func)
 -- Takes: the f_i we are decomposing and its input x_i; the s_j's, j < i; and
 --        f_j's vars and polynomials in x, j > i
 -- Returns: if found, Just (h_i(q_i), h_i(p_i)); otherwise Nothing
-solveHiByEnumeration :: (HasFeynmanControl) => Var -> Func -> [Var] -> [(Var, Func)] -> Maybe (Func, Func)
-solveHiByEnumeration xiVar fiFunc sjVars fjFuncs =
+solveHiByEnumeration :: (HasFeynmanControl) => SolveHiMethod
+solveHiByEnumeration xiVar fiFunc xjVars sjVars fjFuncs =
+  traceY ("enumerating h_i for " ++ show xiVar ++ ": " ++ intercalate ", " (map show sjVars)
+            ++ concat ["\n  " ++ show fjVar ++ " = " ++ show fjFunc | (fjVar, fjFunc) <- fjFuncs]) $
+  traceY ("  trivial vars: " ++ show (xjVars ++ sjVars)) $
+  traceY ("  target h_i terms: " ++ show (nontrivialHiFunc targetFunc)) $
   -- h_i should be written using s_j's, f_j's
-  listToMaybe (filter (differsOnlyByTrivial nontrivialFiTerms . snd)
-                      [ {-- traceY ("considering f(s) = " ++ show fs) $ --} (fs, fx)
+  listToMaybe (filter (differsOnlyByTrivial targetFunc . snd)
+                      [ traceY ("considering h_i ~= " ++ show fs) $  (fs, fx)
                         | (fs, fx) <- nonTrivialHiCandidates])
-    >>= (\(nonTrivialHiPart, nonTrivialHiSubstPart) ->
-            Just (nonTrivialHiPart + trivialFiTerms, nonTrivialHiSubstPart + trivialFiTerms))
   where
-    xiFunc = ofVar xiVar
-
-    trivialVars :: Term
-    trivialVars = monomial sjVars
-    isTrivialHiTerm :: (a, Term) -> Bool
-    isTrivialHiTerm (_, vs) = Set.null (getVars (vs ./. trivialVars))
-    nontrivialHiTerms hF = ofTermList (filter (not . isTrivialHiTerm) (toTermList hF))
-    differsOnlyByTrivial hA hB =
-      traceY ("differs? nt hA = " ++ (show (nontrivialHiTerms hA)) ++ "; nt hB = "
-                                 ++ (show (nontrivialHiTerms hB)) ++ "; hA + hB = "
-                                 ++ (show (nontrivialHiTerms hA + nontrivialHiTerms hB))) $
-      isZero (nontrivialHiTerms hA + nontrivialHiTerms hB)
-
-    -- The "trivial" part of the function we're constructing is the terms of
-    -- g_i + h_i (or equivalently f + x_i), where the terms only contain s_j
-    -- as variables (where j > i). Those are trivial because we can just
-    -- return them directly, they're not substituted.
-    -- "Nontrivial" is everything else in the function we're constructing,
-    -- that is, the terms of g_i + h_i (or equivalently f + x_i), where the
-    -- terms contain at least one variable not in s_j (where j > i).
-    (trivialFiTerms, nontrivialFiTerms) =
-      bimap ofTermList ofTermList . partition isTrivialHiTerm
-                                     . toTermList $ xiFunc + fiFunc
-
-    relevantFjFuncs = fjFuncs
-    relevantSjVars = filter (`Set.member` (Set.fromList sjVars)) (Set.toList (vars fiFunc))
-
-    nonTrivialHiCandidates = allFuncsFromSubst (relevantFjFuncs ++ [(v, ofVar v) | v <- relevantSjVars])
-
--- traceAllY [] result                = result
--- traceAllY (msg : msgRemain) result = traceY msg $ traceAllY msgRemain result
+    targetFunc = fiFunc + ofVar xiVar
+    nontrivialHiFunc = nontrivialFunc (xjVars ++ sjVars)
+    differsOnlyByTrivial aFunc = isZero . (nontrivialHiFunc aFunc +) . nontrivialHiFunc
+    nonTrivialHiCandidates =
+      allFuncsFromSubst (fjFuncs ++ [(v, ofVar v) | v <- sjVars, Set.member v (vars fiFunc)])
 
 
 allFuncsFromSubst :: (HasFeynmanControl) => [(Var, Func)] -> [(Func, Func)]
 allFuncsFromSubst substList =
+  traceY ("allFuncsFromSubst " ++ show substList) $
   funcsByOrder substVars
   where
     substVars = fst . unzip $ substList

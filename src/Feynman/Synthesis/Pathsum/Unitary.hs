@@ -525,6 +525,7 @@ finalizeYoungDecompSynth sop = do
   let sbools = outVals sopClassical
   let ivars = [IVar i | i <- [0 .. length sbools - 1]]
   case youngDecompositionSynth solveHiByGaussianElimination (zip3 qIDs ivars sbools) of
+  -- case youngDecompositionSynth solveHiByEnumeration (zip3 qIDs ivars sbools) of
     Just youngGates -> 
       -- reverse, because we generally are tell'ing the dagger of the circuit
       emitGates sop (reverse youngGates)
