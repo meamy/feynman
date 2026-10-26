@@ -25,6 +25,9 @@ Setup*
 
 hypergraphpartitiondata/
 benchmarks/qc_customized/
+benchmarks/qc_cnotdihedral/
+benchmarks/qasm_cnotdihedral/
+benchmarks/
 
 # haskell
 dist

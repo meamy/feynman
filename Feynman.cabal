@@ -209,3 +209,14 @@ executable hs
                        containers >= 0.6.3.1,
                        QuickCheck >= 2.8.2
   default-language:    Haskell2010
+
+executable gen-cnotdihedral
+  main-is:             GenCNOTDihedral.hs
+  buildable:           True
+  ghc-options:         -O2
+  hs-source-dirs:      scripts
+  build-depends:       Feynman,
+                       base,
+                       containers >= 0.6.3.1,
+                       directory
+  default-language:    Haskell2010

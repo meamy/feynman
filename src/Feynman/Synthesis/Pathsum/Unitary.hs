@@ -32,7 +32,8 @@ import Test.QuickCheck (Arbitrary(..),
                         listOf1,
                         suchThat,
                         chooseInt,
-                        oneof)
+                        oneof,
+                        vectorOf)
 
 import qualified Feynman.Core as Core
 
@@ -562,6 +563,11 @@ genH n = do
   x <- chooseInt (0,n)
   return $ H (var x)
 
+genX :: Int -> Gen Primitive
+genX n = do
+  x <- chooseInt (0, n)
+  return $ X (var x)
+
 -- | Checks that the path sum of a Clifford+T circuit is indeed Unitary
 prop_Unitary_is_Unitary :: CliffordT -> Bool
 prop_Unitary_is_Unitary (CliffordT xs) = isUnitary $ simpleAction xs
@@ -646,3 +652,5 @@ ctx = mkctx $ initialctx
 generateCliffordT :: Int -> Int -> IO [Primitive]
 generateCliffordT n k = generate customArbitrary where
   customArbitrary = resize k $ listOf1 $ oneof [genH n, genT n, genCX n]
+
+generateCNOTDihedral n k = generate $ vectorOf k $ oneof [genT n, genCX n, genX n]
