@@ -334,55 +334,86 @@ defaultOptions = Options {
   useQASM3 = False }
 
 
+-- Optimization presets
+presetO2, presetO3, presetO4, presetAPF, presetQPF, presetPPF :: [Pass]
+presetO2  = [Simplify, Phasefold, Simplify, CT, Simplify, MCT]
+presetO3  = [CNOTMin, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
+presetO4  = [CNOTMin, Cliff, Paulifold 1, Simplify, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
+presetAPF = [Simplify, Paulifold 1, Simplify, Statefold 1, Statefold 1, Phasefold, Simplify, CT, Simplify, MCT]
+presetQPF = [Simplify, Paulifold 1, Simplify, Statefold 2, Statefold 2, Phasefold, Simplify, CT, Simplify, MCT]
+presetPPF = [Simplify, Paulifold 1, Simplify, Statefold 0, Statefold 0, Phasefold, Simplify, CT, Simplify, MCT]
+
+-- Option record helpers
+addPass :: Pass -> Options -> Options
+addPass p options = options { passes = p : passes options }
+
+addPasses :: [Pass] -> Options -> Options
+addPasses ps options = options { passes = ps ++ passes options }
+
+isQC, isQASM, isCircuitFile :: FilePath -> Bool
+isQC f   = ".qc"   `isSuffixOf` f
+isQASM f = ".qasm" `isSuffixOf` f
+isCircuitFile f = isQC f || isQASM f
+
 parseArgs :: Bool -> Options -> [String] -> IO ()
-parseArgs doneSwitches options []     = printHelp
-parseArgs doneSwitches options (x:xs) = case x of
-  f | doneSwitches -> runFile f
-  "-h"           -> printHelp
-  "-purecircuit" -> parseArgs doneSwitches options {pureCircuit = True} xs
-  "-inline"      -> parseArgs doneSwitches options {passes = Inline:passes options} xs
-  "-unroll"      -> parseArgs doneSwitches options {passes = Unroll:passes options} xs
-  "-mctExpand"   -> parseArgs doneSwitches options {passes = MCT:passes options} xs
-  "-toCliffordT" -> parseArgs doneSwitches options {passes = CT:passes options} xs
-  "-simplify"    -> parseArgs doneSwitches options {passes = Simplify:passes options} xs
-  "-phasefold"   -> parseArgs doneSwitches options {passes = Phasefold:passes options} xs
-  "-statefold"   -> parseArgs doneSwitches options {passes = (Statefold $ read (head xs)):passes options} (tail xs)
-  "-paulifold"   -> parseArgs doneSwitches options {passes = (Paulifold $ read (head xs)):passes options} (tail xs)
-  "-cnotmin"     -> parseArgs doneSwitches options {passes = CNOTMin:passes options} xs
-  "-tpar"        -> parseArgs doneSwitches options {passes = TPar:passes options} xs
-  "-clifford"    -> parseArgs doneSwitches options {passes = Cliff:passes options} xs
-  "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs
-  "-czcx"        -> parseArgs doneSwitches options {passes = CX:passes options} xs
-  "-decompile"   -> parseArgs doneSwitches options {passes = Decompile:passes options} xs
-  "-O2"          -> parseArgs doneSwitches options {passes = o2 ++ passes options} xs
-  "-O3"          -> parseArgs doneSwitches options {passes = o3 ++ passes options} xs
-  "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs
-  "-apf"         -> parseArgs doneSwitches options {passes = apf ++ passes options} xs
-  "-qpf"         -> parseArgs doneSwitches options {passes = qpf ++ passes options} xs
-  "-ppf"         -> parseArgs doneSwitches options {passes = ppf ++ passes options} xs
-  "-verify"      -> parseArgs doneSwitches options {verify = True} xs
-  "-benchmark"   -> benchmarkFolder (head xs) >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
-  "-qasm3"       -> parseArgs doneSwitches options {useQASM3 = True} xs
-  "-invgen"      -> generateInvariants (head xs)
-  "--"           -> parseArgs True options xs
-  "Small"        -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
-  "Med"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
-  "All"          -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
-  "POPL25"       -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
-  "POPL25QASM"   -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25QASM
-  f | ((drop (length f - 3) f) == ".qc") || ((drop (length f - 5) f) == ".qasm") -> runFile f
-  f | otherwise -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
-  where o2  = [Simplify,Phasefold,Simplify,CT,Simplify,MCT]
-        o3  = [CNOTMin,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        o4  = [CNOTMin,Cliff,Paulifold 1,Simplify,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        apf = [Simplify,Paulifold 1,Simplify,Statefold 1,Statefold 1,Phasefold,Simplify,CT,Simplify,MCT]
-        qpf = [Simplify,Paulifold 1,Simplify,Statefold 2,Statefold 2,Phasefold,Simplify,CT,Simplify,MCT]
-        ppf = [Simplify,Paulifold 1,Simplify,Statefold 0,Statefold 0,Phasefold,Simplify,CT,Simplify,MCT]
-        runFile f | (drop (length f - 3) f) == ".qc"   = B.readFile f >>= runDotQC (passes options) (verify options) f
-        runFile f | (drop (length f - 5) f) == ".qasm" =
-          if useQASM3 options then readFile f >>= runQASM3 (passes options) (verify options) (pureCircuit options) f
-                              else readFile f >>= runQASM (passes options) (verify options) (pureCircuit options) f
-        runFile f = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp
+parseArgs doneSwitches options args = case args of
+  [] -> printHelp
+
+  -- If switches were terminated by '--', treat the next argument as the circuit file:
+  arg : _ | doneSwitches -> runFile arg
+
+  -- Flags
+  "-h"           : _  -> printHelp
+  "-purecircuit" : xs -> parseArgs False (options { pureCircuit = True }) xs
+  "-verify"      : xs -> parseArgs False (options { verify = True }) xs
+  "-qasm3"       : xs -> parseArgs False (options { useQASM3 = True }) xs
+  "--"           : xs -> parseArgs True  options xs
+
+  -- Single passes
+  "-inline"      : xs -> parseArgs False (addPass Inline options) xs
+  "-unroll"      : xs -> parseArgs False (addPass Unroll options) xs
+  "-mctExpand"   : xs -> parseArgs False (addPass MCT options) xs
+  "-toCliffordT" : xs -> parseArgs False (addPass CT options) xs
+  "-simplify"    : xs -> parseArgs False (addPass Simplify options) xs
+  "-phasefold"   : xs -> parseArgs False (addPass Phasefold options) xs
+  "-cnotmin"     : xs -> parseArgs False (addPass CNOTMin options) xs
+  "-tpar"        : xs -> parseArgs False (addPass TPar options) xs
+  "-clifford"    : xs -> parseArgs False (addPass Cliff options) xs
+  "-cxcz"        : xs -> parseArgs False (addPass CZ options) xs
+  "-czcx"        : xs -> parseArgs False (addPass CX options) xs
+  "-decompile"   : xs -> parseArgs False (addPass Decompile options) xs
+
+  -- Parameterized passes
+  "-statefold"   : d : xs   -> parseArgs False (addPass (Statefold $ read d) options) xs
+  "-paulifold"   : d : xs   -> parseArgs False (addPass (Paulifold $ read d) options) xs
+  "-benchmark"   : path : _ -> benchmarkFolder path >>= runBenchmarks (benchPass $ passes options) (benchVerif $ verify options)
+  "-invgen"      : file : _ -> generateInvariants file
+
+  -- Preset pipelines
+  "-O2"          : xs -> parseArgs False (addPasses presetO2 options) xs
+  "-O3"          : xs -> parseArgs False (addPasses presetO3 options) xs
+  "-O4"          : xs -> parseArgs False (addPasses presetO4 options) xs
+  "-apf"         : xs -> parseArgs False (addPasses presetAPF options) xs
+  "-qpf"         : xs -> parseArgs False (addPasses presetQPF options) xs
+  "-ppf"         : xs -> parseArgs False (addPasses presetPPF options) xs
+
+  -- Benchmark suites
+  "Small"        : _  -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksSmall
+  "Med"          : _  -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksMedium
+  "All"          : _  -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksAll
+  "POPL25"       : _  -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25
+  "POPL25QASM"   : _  -> runBenchmarks (benchPass $ passes options) (benchVerif $ verify options) benchmarksPOPL25QASM
+
+  -- Input circuit files
+  f : _ | isCircuitFile f -> runFile f
+  f : _                   -> putStrLn ("Unrecognized option \"" ++ f ++ "\"") >> printHelp
+  where
+    runFile f
+      | isQC f   = B.readFile f >>= runDotQC (passes options) (verify options) f
+      | isQASM f = do
+          let runner = if useQASM3 options then runQASM3 else runQASM
+          readFile f >>= runner (passes options) (verify options) (pureCircuit options) f
+      | otherwise = putStrLn ("Unrecognized file type \"" ++ f ++ "\"") >> printHelp
 
 main :: IO ()
 main = getArgs >>= parseArgs False defaultOptions

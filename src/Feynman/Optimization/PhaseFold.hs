@@ -366,7 +366,10 @@ applyStmt stmt = case stmt of
   WGate l gate -> applyGate (gate, l)
   WSeq _ xs    -> mapM_ applyStmt xs
   WReset _ v   -> getSt v >>= \bv -> setSt v nil
-  WMeasure _ v -> getSt v >> return ()
+  -- As I undersatnd the code, increaseDim increases the dimension by 1 
+  -- so that T gate before measurement and after measurement can be distinguished. 
+  -- T gates can't be merged by adding phases that generates and S gate.
+  WMeasure _ v -> getSt v >> increaseDim >>= \k -> setSt v (var k)
   WIf _ s1 s2  -> do
     ctx <- get
     let vars  = Map.keys $ ket ctx

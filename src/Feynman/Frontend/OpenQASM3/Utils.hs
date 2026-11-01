@@ -204,7 +204,9 @@ buildModel node = evalState (go node) () where
       -- [Identifier, Expression..]
     AliasDeclStmt -> trace "Unimplemented (alias stmt)" $ return $ WSkip c
       -- [IndexedIdentifier, (Expression | MeasureExpr)]
-    AssignmentStmt _ -> return $ WSkip c
+    AssignmentStmt _ -> case children!!1 of
+      Node MeasureExpr _ _ -> go (children!!1)
+      _                    -> return $ WSkip c
       -- [(HardwareQubit | IndexedIdentifier)..]
     BarrierStmt -> trace "Unimplemented (barrier stmt)" $ return $ WSkip c
     BoxStmt    -> go (children!!1)
