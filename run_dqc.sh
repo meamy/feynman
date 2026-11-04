@@ -61,7 +61,7 @@ case "$SUITE" in
     default)
         SRC_DIR="benchmarks/qc"
         OUT_DIR="benchmarks/qc_customized"
-        TIMINGS_CSV="pruned_algebraic_timings_distribute_${PARTITION}.csv"
+        TIMINGS_CSV="fused_timings_distribute_${PARTITION}.csv"
         EBITS_CSV="ebits_distribute_${PARTITION}.csv"
         ;;
     cnotdihedral)

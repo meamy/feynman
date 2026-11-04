@@ -20,6 +20,14 @@ import Control.Monad (foldM)
 import Control.Monad.State.Strict (runState)
 
 
+-- | Gates absorbed into a phase-polynomial chunk. X is affine (it only flips
+-- the constant bit TPar already tracks), so CNOT + X + Z-phases form one
+-- affine phase polynomial. Every chunking site must use this one definition.
+isPP :: Primitive -> Bool
+isPP (CNOT _ _) = True
+isPP (X _)      = True
+isPP g          = isZBasisPhaseGate g
+
 verifyDist :: [Primitive] -> PartitionData -> Bool
 verifyDist circuit initialPartitions = go circuit initialPartitions
   where
@@ -272,7 +280,9 @@ distSynth ids finalMat numQPUs phases parityToPart qIndexMap partMap =
   in
     (phaseGates ++ routedLinearGates ++ resetGates, chunkEbits)
 
-extractPhasesAndMatrix :: [ID] -> [Primitive] -> F2Mat -> ([Phase], F2Mat)
+-- | Returns (phase terms, linear part A, affine bits b) such that the chunk maps
+-- |x> to w^f(x) |A x + b>, up to the global phase held in (phase finalSt).
+extractPhasesAndMatrix :: [ID] -> [Primitive] -> F2Mat -> ([Phase], F2Mat, [Bool])
 extractPhasesAndMatrix ids circ inMat =
   let
       n = length ids
@@ -297,7 +307,10 @@ extractPhasesAndMatrix ids circ inMat =
       finalVecs = [ fst (qvals finalSt Map.! v) | v <- ids ]
       finalMat  = fromList finalVecs
 
-  in (phases, finalMat)
+      -- 5. Affine bits: True means an X must be applied after the linear part
+      finalAff  = [ snd (qvals finalSt Map.! v) | v <- ids ]
+
+  in (phases, finalMat, finalAff)
 
 {- Helpers for usage of matroid intersection-}
 matroidPhaseSplit :: F2Vec -> F2Vec -> [F2Vec] -> ([F2Vec], [F2Vec], Int)
@@ -350,23 +363,23 @@ synthesizeUnderQubitSplit circ ids0 ids1 =
       numQpu0   = length ids0
       n         = length sortedIds
 
-      isPP (CNOT _ _) = True
-      isPP g | isZBasisPhaseGate g = True
-      isPP _ = False
-
       chunks = groupBy (\g1 g2 -> isPP g1 == isPP g2) circ
 
-      -- Consecutive CNOT/phase gates always land in one chunk, so every such
+      -- Consecutive CNOT/X/phase gates always land in one chunk, so every such
       -- chunk starts from a non-PP chunk (or the circuit start): its input
       -- is the identity, which is why no A matrix is needed.
 
       processChunk (accCirc, accEbits) chunk
         | not (isPP (head chunk)) = (accCirc ++ chunk, accEbits)
         | otherwise =
-            let (phases, finalMat) = extractPhasesAndMatrix sortedIds chunk (identity n)
-                outB               = Map.fromList (zip sortedIds (toList finalMat))
-                (gates, ebits)     = synthDistributedMatroid sortedIds numQpu0 outB phases
-            in (accCirc ++ gates, accEbits + ebits)
+            let (phases, finalMat, finalAff) =
+                  extractPhasesAndMatrix sortedIds chunk (identity n)
+                outB           = Map.fromList (zip sortedIds (toList finalMat))
+                (gates, ebits) = synthDistributedMatroid sortedIds numQpu0 outB phases
+                -- Output is A x + b: X on every wire whose affine bit is set,
+                -- AFTER the linear synthesis. Single-qubit, so 0 ebits.
+                xFix           = [ X q | (q, True) <- zip sortedIds finalAff ]
+            in (accCirc ++ gates ++ xFix, accEbits + ebits)
   in foldl' processChunk ([], 0) chunks
 
 data ChunkSummary = ChunkSummary
@@ -378,19 +391,15 @@ data ChunkSummary = ChunkSummary
 
   }
 
--- | Summarize every CNOT/phase chunk once, in the given qubit order.
+-- | Summarize every CNOT/X/phase chunk once, in the given qubit order.
 summarizeChunks :: [ID] -> [Primitive] -> [ChunkSummary]
 summarizeChunks ids circ =
   [ summarize chunk | chunk <- chunks, isPP (head chunk) ]
   where
     n = length ids
 
-    isPP (CNOT _ _) = True
-    isPP g | isZBasisPhaseGate g = True
-    isPP _ = False
-
     chunks = groupBy (\g1 g2 -> isPP g1 == isPP g2) circ
 
     summarize chunk =
-      let (phases, finalMat) = extractPhasesAndMatrix ids chunk (identity n)
+      let (phases, finalMat, _) = extractPhasesAndMatrix ids chunk (identity n)
       in ChunkSummary { chunkParities = map fst phases, chunkFinal = finalMat }

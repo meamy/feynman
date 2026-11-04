@@ -59,7 +59,7 @@ reportSynthesisSteps circ ids0 ids1 = mapM_ step (zip [1 :: Int ..] chunks)
       | not (isPP (head chunk)) =
           reportDist $ "Chunk " ++ show k ++ " (copied as-is): " ++ list (map show chunk)
       | otherwise = do
-          let (phases, finalMat) = extractPhasesAndMatrix sortedIds chunk (identity n)
+          let (phases, finalMat, _) = extractPhasesAndMatrix sortedIds chunk (identity n)
               (s0, s1, mv) = matroidPhaseSplit mask0 mask1 (map fst phases)
               imports s lm rm = if null s then [] else toList (snd (rewriteParities s lm rm))
               imp0         = imports s0 mask0 mask1
