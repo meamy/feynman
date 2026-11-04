@@ -19,12 +19,19 @@ qasmDir = "benchmarks/qasm_cnotdihedral"
 -- | (index, n qubits, k gates)
 --   n grows by 1 every 3 circuits (3 .. 12), k grows steadily up to maxGates
 --   (23, 46, 70, ... 700). Edit these to change the sizes or the number of circuits.
-numCircuits, maxGates :: Int
+numCircuits, minQubits, maxQubits, maxGates :: Int
 numCircuits = 40
+minQubits   = 3
+maxQubits   = 30
 maxGates    = 900
 
 schedule :: [(Int, Int, Int)]
-schedule = [ (i, 3 + (i - 1) `div` 3, maxGates * i `div` numCircuits) | i <- [1 .. numCircuits] ]
+schedule =
+  [ (i, n, k)
+  | i <- [1 .. numCircuits]
+  , let n = minQubits + (maxQubits - minQubits) * (i - 1) `div` (numCircuits - 1)
+        k = maxGates * i `div` numCircuits
+  ]
 
 -- | The n qubits of a circuit: q0 .. q(n-1).
 --   Matches the names genT / genX / genCX use (they pick q0 .. q(m) for argument m).

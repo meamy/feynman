@@ -3,8 +3,7 @@ module Feynman.Synthesis.Ranksynth.DistributedCircuitBuilder
   , module Feynman.Synthesis.Ranksynth.DistributedSynthesis
   , module Feynman.Synthesis.Ranksynth.Report
   ) where
-import Feynman.Core (Primitive(..), ID, Block, Vertex(..),
-                     isZBasisPhaseGate, getArgs)
+import Feynman.Core (Primitive(..), ID, Block, Vertex(..), getArgs)
 import Feynman.Algebra.Linear
 
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
@@ -77,14 +76,12 @@ phaseImportsForSplit ids ids0 cs =
     (s0, s1, cost) = matroidPhaseSplit mask0 mask1 ps
     tag d          = zipWith (\i p -> ((d, i), reorderParity ordered ids p)) [0 ..]
 
--- Indices [start,end) of CNOT/Z-phase chunks in the ORIGINAL circuit.
+-- Indices [start,end) of CNOT/X/Z-phase chunks in the ORIGINAL circuit.
 phaseChunkBounds :: [Primitive] -> [(Int, Int)]
 phaseChunkBounds circ =
   [ (start, start + length chunk)
   | (start, chunk) <- zip offsets chunks, isPP (head chunk) ]
   where
-    isPP (CNOT _ _) = True
-    isPP g = isZBasisPhaseGate g
     chunks = groupBy (\a b -> isPP a == isPP b) circ
     offsets = scanl (+) 0 (map length chunks)
 
@@ -409,7 +406,6 @@ runPersistenceTieBreakSearch s sp = do
         lexicographicSplitScore ids summaries bounds invalidations
           (fst (splitOfPartMap qIndexMap pm))
 
-      -- The ORIGINAL (12-ebit benchmark) ranking, unchanged.
       (baselineMap, baselineScore)
         | not useBeam = (seedMap, rawScoreOf seedMap)
         | exact       = exhaustiveQubitSplitAlgebraic circ qIndexMap seedMap eps
@@ -546,9 +542,9 @@ buildDistributedCircuit :: Int -> [ID] -> [Primitive] -> IO [Primitive]
 buildDistributedCircuit numParts qubits circ =
   buildDistributedCircuitWith strategy settings numParts qubits circ
   where
-    strategy = PersistenceTieBreakSearch
+    strategy = AlgebraicSearch
     settings = defaultSplitSearchSettings
-                 { ssValidateScore = False
+                 { ssValidateScore = True
                  , ssShowSteps     = False
-                 , ssCompareRawBaseline = True
+                 , ssCompareRawBaseline = False
                  }
