@@ -32,7 +32,8 @@ import Feynman.Optimization.PhaseFold
 import Feynman.Optimization.StateFold
 import Feynman.Optimization.TPar
 import Feynman.Optimization.Clifford
-import Feynman.Synthesis.Pathsum.Unitary hiding (MCT)
+import Feynman.Optimization.Swaps (pushSwaps)
+import Feynman.Synthesis.Pathsum.Unitary hiding (MCT, pushSwaps)
 import Feynman.Verification.Symbolic
 
 import System.Environment (getArgs)
@@ -81,6 +82,7 @@ data Pass = Triv
           | Decompile
           | Distribute Int
           | SynthDist Int
+          | PushSwaps
 
 data Options = Options { 
   passes :: [Pass],
@@ -128,6 +130,7 @@ dotQCPass pass = case pass of
   CZ          -> optimizeDotQC (\_ _ -> expandCNOT)
   CX          -> optimizeDotQC (\_ _ -> expandCZ)
   Decompile   -> decompileDotQC
+  PushSwaps   -> optimizeDotQC (\_ _ -> pushSwaps)
   Distribute k -> \qc ->  -- Modified: bind the parameter 'k'
     let qc' = optimizeDotQC (\qubits _ -> unsafePerformIO . buildDistributedCircuit k qubits) qc
         -- Extract all IDs present in the new synthesized circuit body
@@ -209,6 +212,7 @@ qasmPass pureCircuit pass = case pass of
   Cliff       -> QASM2.applyOpt (\_ _ -> simplifyCliffords) pureCircuit
   CZ          -> QASM2.applyOpt (\_ _ -> expandCNOT) pureCircuit
   CX          -> QASM2.applyOpt (\_ _ -> expandCZ) pureCircuit
+  PushSwaps   -> QASM2.applyOpt (\_ _ -> pushSwaps) pureCircuit
   Decompile   -> id
 
 runQASM :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
@@ -255,6 +259,7 @@ qasm3Pass pureCircuit pass = case pass of
   Cliff       -> id
   CZ          -> id
   CX          -> id
+  PushSwaps   -> id
   Decompile   -> id
 
 runQASM3 :: [Pass] -> Bool -> Bool -> String -> String -> IO ()
@@ -353,6 +358,7 @@ printHelp = mapM_ putStrLn lines
           "  -decompile\t\tDecompiles a Clifford+T circuit into multiply-controlled gates",
           "  -cxcz\t\t\tReplaces CNOT gates with H and CZ",
           "  -czcx\t\t\tReplaces CZ gates with H and CNOT",
+          "  -pushswaps\t\tPush all SWAP gates to the end of the circuit",
           "  -distribute <k>\tDistribute circuit into <k> partitions using KaHyPar",
           "",
           "Optimization passes:",
@@ -421,6 +427,7 @@ parseArgs doneSwitches options (x:xs) = case x of
   "-cxcz"        -> parseArgs doneSwitches options {passes = CZ:passes options} xs
   "-czcx"        -> parseArgs doneSwitches options {passes = CX:passes options} xs
   "-decompile"   -> parseArgs doneSwitches options {passes = Decompile:passes options} xs
+  "-pushswaps"   -> parseArgs doneSwitches options {passes = PushSwaps:passes options} xs
   "-O2"          -> parseArgs doneSwitches options {passes = o2 ++ passes options} xs
   "-O3"          -> parseArgs doneSwitches options {passes = o3 ++ passes options} xs
   "-O4"          -> parseArgs doneSwitches options {passes = o4 ++ passes options} xs

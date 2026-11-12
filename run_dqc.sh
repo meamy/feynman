@@ -150,7 +150,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     # --- Step 1: optimise + distribute (timed) ---
     START=$(now)
     OPT_RC=0
-    "$FEYNOPT" -inline -O2 -simplify -distribute "${PARTITION}" "$SOURCE_FILE" > "$TARGET_FILE" || OPT_RC=$?
+    "$FEYNOPT" -inline -O2 -simplify -distribute "${PARTITION}" -pushswaps  "$SOURCE_FILE" > "$TARGET_FILE" || OPT_RC=$?
     END=$(now)
     DURATION=$(elapsed "$START" "$END")
 
