@@ -100,6 +100,7 @@ FAILED=()
 TIME_NAMES=()
 TIME_VALUES=()
 EBIT_VALUES=()
+ANCILLA_VALUES=()
 
 # Print one aligned result row: icon, step label, detail
 row() {
@@ -120,6 +121,17 @@ elapsed() {
 # E-bit count from a distributed .qc file: the "# Ebit cost: N" line of the report
 read_ebits() {
     EBITS=$(grep -m1 -E '^#[[:space:]]*Ebit cost:' "$1" | grep -oE '[0-9]+' | head -n 1 || true)
+}
+
+# Peak ancilla count from a distributed .qc file:
+#   ANCILLAS     <- "# Max ancillas in use at once: N"  (the output circuit)
+#   ANCILLAS_OLD <- "# Max ancillas in use at once (resets at chunk end): M"
+#                   (only written by AlgebraicSearch; empty otherwise)
+read_ancillas() {
+    ANCILLAS=$(grep -m1 -E '^#[[:space:]]*Max ancillas in use at once:' "$1" \
+               | grep -oE '[0-9]+' | head -n 1 || true)
+    ANCILLAS_OLD=$(grep -m1 -E '^#[[:space:]]*Max ancillas in use at once \(resets at chunk end\):' "$1" \
+                   | grep -oE '[0-9]+' | head -n 1 || true)
 }
 
 # Append one row to the e-bit CSV:
@@ -163,6 +175,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
         echo "\"${CIRCUIT}\",fail,${DURATION}" >> "$TIMINGS_CSV"
         record "$CIRCUIT" "" "$DURATION" "feynopt failed" "skipped"
         EBIT_VALUES+=("-")
+        ANCILLA_VALUES+=("-")
         echo ""
         FAILED+=("$CIRCUIT")
         continue
@@ -173,6 +186,16 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
     read_ebits "$TARGET_FILE"
     EBIT_VALUES+=("${EBITS:--}")
     row "$OK" "E-bits" "${EBITS:-not found}"
+
+    read_ancillas "$TARGET_FILE"
+    ANCILLA_VALUES+=("${ANCILLAS:--}")
+    if [ -z "$ANCILLAS" ]; then
+        row "$WARN" "Max ancillas" "not found in output"
+    elif [ -n "$ANCILLAS_OLD" ]; then
+        row "$OK" "Max ancillas" "${ANCILLAS} (resets at chunk end: ${ANCILLAS_OLD})"
+    else
+        row "$OK" "Max ancillas" "${ANCILLAS}"
+    fi
 
     # --- Step 2: distribution check (read from the generated .qc header) ---
     VERIFY_LINE=$(grep -m1 -E '^#[[:space:]]*Distribution:' "$TARGET_FILE" || true)
@@ -230,14 +253,15 @@ if [ "${#FAILED[@]}" -gt 0 ]; then
 fi
 
 echo ""
-echo "E-bits and optimize + distribute time per circuit:"
-printf "   %-28s %8s %11s\n" "circuit" "e-bits" "time"
+echo "E-bits, max ancillas and optimize + distribute time per circuit:"
+printf "   %-28s %8s %9s %11s\n" "circuit" "e-bits" "ancillas" "time"
 TOTAL_TIME=0
 for i in "${!TIME_NAMES[@]}"; do
-    printf "   %-28s %8s %10ss\n" "${TIME_NAMES[$i]}" "${EBIT_VALUES[$i]}" "${TIME_VALUES[$i]}"
+    printf "   %-28s %8s %9s %10ss\n" "${TIME_NAMES[$i]}" "${EBIT_VALUES[$i]}" \
+           "${ANCILLA_VALUES[$i]}" "${TIME_VALUES[$i]}"
     TOTAL_TIME=$(awk -v a="$TOTAL_TIME" -v b="${TIME_VALUES[$i]}" 'BEGIN { printf "%.3f", a + b }')
 done
-printf "   %-28s %8s %10ss\n" "TOTAL" "" "$TOTAL_TIME"
+printf "   %-28s %8s %9s %10ss\n" "TOTAL" "" "" "$TOTAL_TIME"
 echo "Timings saved to ${TIMINGS_CSV}"
 echo "E-bits saved to  ${EBITS_CSV}"
 echo "────────────────────────────────────────"

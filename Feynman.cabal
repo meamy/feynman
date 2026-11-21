@@ -48,6 +48,7 @@ library
 
                        Feynman.Synthesis.HypergraphPartition.HGraphBuilder,
                        Feynman.Synthesis.HypergraphPartition.QIGBuilder,
+                       Feynman.Synthesis.HypergraphPartition.HGraphParities,
                        Feynman.Synthesis.HypergraphPartition.PartitionConfigs,
                        
                        Feynman.Synthesis.Ranksynth.DistributedSynthesis,

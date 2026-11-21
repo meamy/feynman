@@ -8,7 +8,7 @@ import Feynman.Algebra.Linear
 
 import qualified Feynman.Synthesis.HypergraphPartition.PartitionConfigs as Cfg
 import qualified Feynman.Synthesis.HypergraphPartition.HGraphBuilder as HG
-import qualified Feynman.Synthesis.HypergraphPartition.QIGBuilder as QIG
+import qualified Feynman.Synthesis.HypergraphPartition.HGraphParities as HGP
 import Feynman.Synthesis.Ranksynth.BeamSearch
 import Feynman.Synthesis.Ranksynth.CatStateOptimizer (fusePersistentCats, preservesZValue)
 import Feynman.Synthesis.Ranksynth.DistributedSynthesis
@@ -283,7 +283,7 @@ data SplitStrategy
 -- | Knobs shared by all strategies. A knob a strategy does not use is ignored.
 data SplitSearchSettings = SplitSearchSettings
   { ssUseBeamSearch      :: Bool
-  , ssUseQIGSeed         :: Bool
+  , ssUseParitySeed      :: Bool
   , ssEpsilon            :: Double
   , ssBeamWidth          :: Int
   , ssDepth              :: Int
@@ -297,7 +297,7 @@ data SplitSearchSettings = SplitSearchSettings
 defaultSplitSearchSettings :: SplitSearchSettings
 defaultSplitSearchSettings = SplitSearchSettings
   { ssUseBeamSearch      = True
-  , ssUseQIGSeed         = False
+  , ssUseParitySeed      = False
   , ssEpsilon            = Cfg.epsilon
   , ssBeamWidth          = 8
   , ssDepth              = 14
@@ -324,9 +324,9 @@ mkSplitProblem s qubits circ = do
       -- Naive split: wires 1..half (declared order) on QPU 0, the rest on QPU 1.
       naiveSeed = Map.fromList [ (Wire w, if w <= half then 0 else 1) | w <- [1 .. n] ]
   seedMap <-
-    if ssUseQIGSeed s
+    if ssUseParitySeed s
     then do
-      (_, asg) <- QIG.partitionQIG 2 qubits circ
+      (_, asg) <- HGP.partitionParityHG 2 qubits circ
       return $ Map.fromList [ (Wire w, b) | (q, b) <- Map.toList asg
                                           , Just w <- [Map.lookup q qIndexMap] ]
     else return naiveSeed
@@ -336,7 +336,7 @@ mkSplitProblem s qubits circ = do
 {- Shared reporting helpers -}
 
 seedLabel :: SplitSearchSettings -> String
-seedLabel s = if ssUseQIGSeed s then "QIG" else "naive equal split"
+seedLabel s = if ssUseParitySeed s then "parity hypergraph" else "naive equal split"
 
 searchModeLabel :: SplitSearchSettings -> Int -> String
 searchModeLabel s n
@@ -346,6 +346,60 @@ searchModeLabel s n
 
 partitionsOf :: [ID] -> [ID] -> Map ID Int
 partitionsOf ids0 ids1 = Map.fromList ([ (q, 0) | q <- ids0 ] ++ [ (q, 1) | q <- ids1 ])
+
+-- | Bell-pair ancillas introduced by distribution (bellA*, bellB*, bellL*).
+-- Same prefix test verifyDist uses.
+isBellAncilla :: ID -> Bool
+isBellAncilla q = take 4 q == "bell"
+
+-- | Peak number of Bell-pair ancillas live at the same time in a distributed
+-- circuit. An ancilla is live from the first gate that touches it until its
+-- Reset (a measured-but-not-yet-reset ancilla still occupies a qubit, and is
+-- still read as a classical control). An ID freed by Reset and touched again
+-- later is counted again from that point.
+maxAncillasInUse :: [Primitive] -> Int
+maxAncillasInUse = snd . foldl' step (Set.empty, 0)
+  where
+    step (live, peak) gate = case gate of
+      Reset q | isBellAncilla q -> (Set.delete q live, peak)
+      _ -> let live' = foldr Set.insert live (filter isBellAncilla (getArgs gate))
+           in  live' `seq` (live', max peak (Set.size live'))
+
+reportAncillas :: [Primitive] -> IO ()
+reportAncillas circ =
+  reportDist $ "Max ancillas in use at once: " ++ show (maxAncillasInUse circ)
+
+-- | Move each Reset of a Bell ancilla up to right after the last gate that
+-- touches that ancilla. A Reset acts only on its own qubit, so it commutes
+-- with every gate it is moved past: the circuit's action, the number of Bell
+-- pairs and the ebit count are all unchanged. Ancillas are just freed as
+-- soon as they are done instead of at the end of the chunk, which lowers the
+-- peak ancilla count (e.g. a 'bell2' half is freed right after its
+-- correction CNOT, and the bellA pairs are freed before the bellB ones start).
+-- A Reset with no use of its ancilla since the previous Reset stays put.
+resetAncillasEarly :: [Primitive] -> [Primitive]
+resetAncillasEarly circ = concat [ emit i g | (i, g) <- indexed ]
+  where
+    indexed = zip [0 :: Int ..] circ
+
+    -- attach:   gate index -> ancillas to Reset right after that gate
+    -- movedIdx: indices of the original Resets that were moved
+    -- lastUse:  ancilla -> index of its last non-Reset gate so far
+    (attach, movedIdx, _) = foldl' plan (Map.empty, Set.empty, Map.empty) indexed
+
+    plan (att, mv, lastUse) (i, g) = case g of
+      Reset q
+        | isBellAncilla q, Just j <- Map.lookup q lastUse ->
+            ( Map.insertWith (flip (++)) j [q] att  -- keep original Reset order
+            , Set.insert i mv
+            , Map.delete q lastUse )
+        | otherwise -> (att, mv, Map.delete q lastUse)
+      _ -> ( att, mv
+           , foldr (\q -> Map.insert q i) lastUse (filter isBellAncilla (getArgs g)) )
+
+    emit i g
+      | Set.member i movedIdx = []
+      | otherwise             = g : map Reset (Map.findWithDefault [] i attach)
 
 {- Strategy 1: algebraic score, no fusion -}
 runAlgebraicSearch :: SplitSearchSettings -> SplitProblem -> IO [Primitive]
@@ -362,17 +416,26 @@ runAlgebraicSearch s sp = do
       scoreOf pm = algebraicSplitCost ids summaries (fst (splitOfPartMap qIndexMap pm))
       cfg = BeamConfig { bcEpsilon = eps, bcWidth = ssBeamWidth s, bcMaxDepth = ssDepth s
                        , bcPatience = ssPatience s, bcMaxSwaps = 400 }
-      (bestMap, searchScore)
-        | not (ssUseBeamSearch s)  = (seedMap, scoreOf seedMap)
-        | n <= ssExactSplitLimit s = exhaustiveSearchWith scoreOf seedMap eps
-        | otherwise                = let (pm, sc, _) = prunedBeamSearch cfg allWiresMovable scoreOf seedMap
-                                     in (pm, sc)
+      (bestMap, searchScore, statsLine)
+        | not (ssUseBeamSearch s)  = (seedMap, scoreOf seedMap, "no search")
+        | n <= ssExactSplitLimit s =
+            let (pm, sc) = exhaustiveSearchWith scoreOf seedMap eps
+                count    = length (allBalancedWirePartitions eps seedMap)
+            in (pm, sc, "exhaustive, " ++ show count ++ " splits scored")
+        | otherwise =
+            let (pm, sc, st) = prunedBeamSearch cfg allWiresMovable scoreOf seedMap
+            in (pm, sc, "beam, " ++ show (statRounds st) ++ " rounds, "
+                        ++ show (statEvaluations st) ++ " splits scored, stopped: "
+                        ++ statStopReason st)
 
       (ids0, ids1) = splitOfPartMap qIndexMap bestMap
-      (distributedCirc, totalEbits) = synthesizeUnderQubitSplit circ ids0 ids1
+      (synthCirc, totalEbits) = synthesizeUnderQubitSplit circ ids0 ids1
+      -- Free each Bell ancilla right after its last use (ebits unchanged).
+      distributedCirc = resetAncillasEarly synthCirc
       scoreName = "Edmonds phase + exact ULDU ranks (no synthesis in search)"
 
-  reportDist $ "Qubit assignment: " ++ searchModeLabel s n ++ " from " ++ seedLabel s
+  reportDist $ "Qubit assignment: " ++ statsLine ++ ", from " ++ seedLabel s
+  reportDist $ "Seed score: " ++ show (scoreOf seedMap)
   reportQpus ids0 ids1
   when (ssShowSteps s) $ reportSynthesisSteps circ ids0 ids1
   reportDist $ "Search score (" ++ scoreName ++ "): " ++ show searchScore
@@ -380,6 +443,9 @@ runAlgebraicSearch s sp = do
     reportDist $ "Algebraic score validation: " ++
                  (if searchScore == totalEbits then "PASS" else "MISMATCH")
   reportDist $ "Ebit cost: " ++ show totalEbits
+  reportAncillas distributedCirc
+  reportDist $ "Max ancillas in use at once (resets at chunk end): " ++
+               show (maxAncillasInUse synthCirc)
   reportDistribution (verifyDist distributedCirc (partitionsOf ids0 ids1))
   return distributedCirc
 
@@ -478,6 +544,7 @@ runPersistenceTieBreakSearch s sp = do
                show (evaluatedPredicted winner)
   reportDist $ "Actual fusion saving: " ++ show (evaluatedSaved winner)
   reportDist $ "Ebit cost: " ++ show (evaluatedEbits winner)
+  reportAncillas (evaluatedCircuit winner)
   reportDistribution (evaluatedValid winner)
   return (evaluatedCircuit winner)
 
@@ -509,6 +576,7 @@ runFusedSearch s sp = do
       (ids0, ids1)        = splitOfPartMap qIndexMap bestMap
       (rawCirc, rawEbits) = synthesizeUnderQubitSplit circ ids0 ids1
       (optCirc, saved)    = fusePersistentCats rawCirc
+      distCirc            = resetAncillasEarly optCirc
       totalEbits          = max 0 (rawEbits - saved)
 
   reportDist $ "Qubit assignment: " ++ statsLine ++ ", from " ++ seedLabel s
@@ -522,8 +590,9 @@ runFusedSearch s sp = do
   reportDist $ "Raw ebits (before fusion): " ++ show rawEbits
   reportDist $ "Fusion saving: " ++ show saved
   reportDist $ "Ebit cost: " ++ show totalEbits
-  reportDistribution (verifyDist optCirc (partitionsOf ids0 ids1))
-  return optCirc
+  reportAncillas distCirc
+  reportDistribution (verifyDist distCirc (partitionsOf ids0 ids1))
+  return distCirc
 
 buildDistributedCircuitWith :: SplitStrategy -> SplitSearchSettings
                             -> Int -> [ID] -> [Primitive] -> IO [Primitive]
@@ -547,4 +616,5 @@ buildDistributedCircuit numParts qubits circ =
                  { ssValidateScore = True
                  , ssShowSteps     = False
                  , ssCompareRawBaseline = False
+                 , ssUseParitySeed = False
                  }
