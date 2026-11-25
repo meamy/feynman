@@ -283,7 +283,8 @@ data SplitStrategy
 -- | Knobs shared by all strategies. A knob a strategy does not use is ignored.
 data SplitSearchSettings = SplitSearchSettings
   { ssUseBeamSearch      :: Bool
-  , ssUseParitySeed      :: Bool
+  , ssUseParitySeed      :: Bool       -- seed from the parity hypergraph (HGraphParities)
+  , ssUseCNOTSeed        :: Bool       -- seed from the CNOT hypergraph (HGraphBuilder)
   , ssEpsilon            :: Double
   , ssBeamWidth          :: Int
   , ssDepth              :: Int
@@ -298,6 +299,7 @@ defaultSplitSearchSettings :: SplitSearchSettings
 defaultSplitSearchSettings = SplitSearchSettings
   { ssUseBeamSearch      = True
   , ssUseParitySeed      = False
+  , ssUseCNOTSeed        = False
   , ssEpsilon            = Cfg.epsilon
   , ssBeamWidth          = 8
   , ssDepth              = 14
@@ -323,20 +325,30 @@ mkSplitProblem s qubits circ = do
       qIndexMap = Map.fromList (zip qubits [1 ..])
       -- Naive split: wires 1..half (declared order) on QPU 0, the rest on QPU 1.
       naiveSeed = Map.fromList [ (Wire w, if w <= half then 0 else 1) | w <- [1 .. n] ]
+      toWireMap asg = Map.fromList [ (Wire w, b) | (q, b) <- Map.toList asg
+                                                 , Just w <- [Map.lookup q qIndexMap] ]
   seedMap <-
-    if ssUseParitySeed s
-    then do
-      (_, asg) <- HGP.partitionParityHG 2 qubits circ
-      return $ Map.fromList [ (Wire w, b) | (q, b) <- Map.toList asg
-                                          , Just w <- [Map.lookup q qIndexMap] ]
-    else return naiveSeed
+    case (ssUseParitySeed s, ssUseCNOTSeed s) of
+      (True, True) -> ioError . userError $
+        "mkSplitProblem: ssUseParitySeed and ssUseCNOTSeed are both set; pick one"
+      (True, False) -> do
+        (_, asg) <- HGP.partitionParityHG 2 qubits circ
+        return (toWireMap asg)
+      (False, True) -> do
+        (_, asg) <- HG.partitionCNOTHG 2 qubits circ
+        -- Wires KaHyPar did not place (e.g. no CNOTs at all) keep the naive block.
+        return (Map.union (toWireMap asg) naiveSeed)
+      (False, False) -> return naiveSeed
   return SplitProblem { spQubits = qubits, spCirc = circ
                       , spQIndex = qIndexMap, spSeed = seedMap }
 
 {- Shared reporting helpers -}
 
 seedLabel :: SplitSearchSettings -> String
-seedLabel s = if ssUseParitySeed s then "parity hypergraph" else "naive equal split"
+seedLabel s
+  | ssUseParitySeed s = "parity hypergraph"
+  | ssUseCNOTSeed s   = "CNOT hypergraph"
+  | otherwise         = "naive equal split"
 
 searchModeLabel :: SplitSearchSettings -> Int -> String
 searchModeLabel s n
@@ -614,7 +626,5 @@ buildDistributedCircuit numParts qubits circ =
     strategy = AlgebraicSearch
     settings = defaultSplitSearchSettings
                  { ssValidateScore = True
-                 , ssShowSteps     = False
-                 , ssCompareRawBaseline = False
-                 , ssUseParitySeed = False
+                 , ssUseCNOTSeed = True
                  }

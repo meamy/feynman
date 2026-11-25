@@ -41,9 +41,12 @@ vertexNum (Wire i) = i
 vertexNum (GateIdx i) = i
 
 packCircuit :: [Primitive] -> Circuit
-packCircuit circ = Circuit { qubits = ids circ,
-                             inputs = Set.fromList (ids circ),
-                             decls  = [main] }
+packCircuit circ = packCircuitWith (ids circ) circ
+
+packCircuitWith :: [ID] -> [Primitive] -> Circuit
+packCircuitWith qs circ = Circuit { qubits = qs,
+                                    inputs = Set.fromList qs,
+                                    decls  = [main] }
     where main = Decl { name = "main",
                         params = [],
                         body = Seq $ map Gate circ
@@ -355,16 +358,49 @@ hypToString nQubits mParities (Hypergraph vs hs) =
     showVertex (Wire i)    = show i
     showVertex (GateIdx i) = show i
 
+-- | KaHyPar input (fmt 11: edge and vertex weights) for the CNOT hypergraph
+-- from 'buildHypergraph'. Each edge line starts with its weight (1 for a
+-- control run, 2 for a target run). Vertices 1..nQubits are wires (weight 1)
+-- and nQubits+1..nQubits+nGates are CNOT gates (weight 0), so the balance
+-- constraint counts qubits only. The vertex count is given explicitly so a
+-- qubit with no CNOT still gets its own (isolated) vertex.
+cnotHypToString :: Int -> Int -> Hypergraph -> String
+cnotHypToString nQubits nGates (Hypergraph _ hs) =
+  unlines $ header : (edgeLines ++ weightLines)
+  where
+    header      = unwords [show (length hs), show (nQubits + nGates), "11"]
+    edgeLines   = [ unwords (show w : map (show . vertexNum) (Set.toList hedge))
+                  | (hedge, w) <- hs ]
+    weightLines = replicate nQubits "1" ++ replicate nGates "0"
+
+-- | Partition the qubits with KaHyPar on the CNOT hypergraph
+-- ('buildHypergraph') and return each qubit's block. Qubit q is wire
+-- (position of q in 'qubitsList' + 1), so pass the same list the caller
+-- numbers its wires with. CNOT-gate vertices are ignored in the result.
+-- A circuit with no CNOTs has no hyperedges; then KaHyPar is not run and
+-- the map is empty, so the caller should fall back to its own split.
+partitionCNOTHG :: Int -> [ID] -> [Primitive] -> IO (Hypergraph, Map ID Block)
+partitionCNOTHG numParts qubitsList circ = do
+  let nQubits = length qubitsList
+      nGates  = length (filter isCNOT circ)
+      k       = min numParts (max 1 nQubits)
+      (_, hyp@(Hypergraph _ hs), qIndexMap) =
+        buildHypergraph (packCircuitWith qubitsList circ)
+  if null hs
+    then return (hyp, Map.empty)
+    else do
+      runKaHyPar k (cnotHypToString nQubits nGates hyp)
+      blocks <- readPartitionFile (Cfg.hypergraphPartitionDataPath </> "partition.hgr")
+      when (length blocks < nQubits) $
+        ioError . userError $
+          "partitionCNOTHG: partition file has " ++ show (length blocks)
+          ++ " entries, expected at least " ++ show nQubits
+      let byVertex = Map.fromList (zip [1 :: Int ..] blocks)
+      return (hyp, Map.fromList [ (q, byVertex Map.! w) | (q, w) <- Map.toList qIndexMap ])
+
 getNumCuts :: Int -> [Primitive] -> IO (Hypergraph, Map ID Int, [Primitive])
 getNumCuts numParts circ = do
-  let tempDir      = Cfg.hypergraphPartitionDataPath
-      hypergraphFN = "hypergraph.hgr"
-      partitionFN  = "partition.hgr"
-      hypergraphFP = tempDir </> hypergraphFN
-      partitionFP  = tempDir </> partitionFN
-      kahypar      = Cfg.kahyparPath
-      
-      qubitsList   = ids circ
+  let qubitsList   = ids circ
       nQubits      = length qubitsList
       parities     = extractParities qubitsList circ
       mParities    = length parities
@@ -374,9 +410,24 @@ getNumCuts numParts circ = do
   let parityHyp = buildParityHypergraph qubitsList parities circ
   let qIndexMap = Map.fromList (zip qubitsList [1..])
 
-  -- 2. Clean/Prepare directory and serialize graph data
+  -- 2. Serialize graph data, run KaHyPar, keep its partition as partition.hgr
+  runKaHyPar k (hypToString nQubits mParities parityHyp)
+
+  return (parityHyp, qIndexMap, circ)
+
+-- | Write 'contents' as hypergraph.hgr, run KaHyPar (km1, k blocks) on it,
+-- and move the partition file it writes to partition.hgr in the same folder.
+runKaHyPar :: Int -> String -> IO ()
+runKaHyPar k contents = do
+  let tempDir      = Cfg.hypergraphPartitionDataPath
+      hypergraphFN = "hypergraph.hgr"
+      partitionFN  = "partition.hgr"
+      hypergraphFP = tempDir </> hypergraphFN
+      partitionFP  = tempDir </> partitionFN
+      kahypar      = Cfg.kahyparPath
+
   createDirectoryIfMissing True tempDir
-  writeFile hypergraphFP (hypToString nQubits mParities parityHyp)
+  writeFile hypergraphFP contents
 
   let args = [ "-h", hypergraphFP, "-k", show k, "-e", show Cfg.epsilon, "-o", "km1", "-m", "direct", "-p", Cfg.subalgorithm,"-w", "true" ]
   (ec, out, err) <- readProcessWithExitCode kahypar args ""
@@ -402,8 +453,6 @@ getNumCuts numParts circ = do
   -- case parseHyperedgeCut out of
   --   Just cut -> putStrLn $ "# Hyperedge cut (ebits metric): " ++ show cut ++ "\n"
   --   Nothing  -> hPutStrLn stderr "Warning: could not parse Hyperedge Cut from KaHyPar output."
-
-  return (parityHyp, qIndexMap, circ)
 
 -- | Partition the qubits with KaHyPar on the parity hypergraph and return each
 -- qubit's block. The partition file has one block id per line, in vertex
